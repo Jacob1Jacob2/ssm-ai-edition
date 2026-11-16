@@ -981,20 +981,24 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         }
 
         if (sieging && trySiegeJump(t, dist, map)) return
-        var forward=0f
-        var strafe=0f
-        var jump=false
-        if(step!=null) {
-            val (f,s,j)=stepInputs(step) ?: return
-            forward=f;strafe=s;jump=j
-        } else if(dist>reach-.4 && sees) {
-            val input=inputToward(t.location);forward=input.first;strafe=input.second
-        } else if(d.strafes && dist<reach+1) {
-            if(tick>=nextStrafeFlip){strafeDir=if(rng.nextBoolean())1f else -1f;nextStrafeFlip=tick+20}
-            strafe=strafeDir*.65f
+        if (!sieging) prowlGoal = null
+        // With no way to them, keep moving around them looking for one instead of standing and staring.
+        if (!(sieging && dist > reach + 0.6 && prowl(t, dist, sees, map))) {
+            var forward=0f
+            var strafe=0f
+            var jump=false
+            if(step!=null) {
+                val (f,s,j)=stepInputs(step) ?: return
+                forward=f;strafe=s;jump=j
+            } else if(dist>reach-.4 && sees) {
+                val input=inputToward(t.location);forward=input.first;strafe=input.second
+            } else if(d.strafes && dist<reach+1) {
+                if(tick>=nextStrafeFlip){strafeDir=if(rng.nextBoolean())1f else -1f;nextStrafeFlip=tick+20}
+                strafe=strafeDir*.65f
+            }
+            val (appliedForward,appliedStrafe)=applyMovement(step,forward,strafe,jump,map)
+            checkStuck(dist>reach+1,appliedForward,appliedStrafe)
         }
-        val (appliedForward,appliedStrafe)=applyMovement(step,forward,strafe,jump,map)
-        checkStuck(dist>reach+1,appliedForward,appliedStrafe)
         if(decide && holdUntilTick<0 && bowReleaseTick==0L && tick>=nextBowTick && dist in 5.0..25.0 && player.hasLineOfSight(t)) {
             val kit=KitService.getKitForPlayer(player)?.id
             if(kit=="skeleton" || kit=="zombie") {
@@ -1016,6 +1020,58 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
 
     private var engageRange = 7.0
     private var nextSiegeJumpTick = 0L
+    private var prowlGoal: Location? = null
+    private var prowlUntil = 0L
+    private var prowlRestUntil = 0L
+
+    /**
+     * The opponent is somewhere no route leads (a perch, a ledge, a roof). A player in that spot
+     * does not stand and stare: they circle, try the other side, go up a level, and take the jump
+     * when one opens up. So the bot walks to one piece of ground near the opponent after another,
+     * pausing a moment at each to look (and for [trySiegeJump] and its ranged moves to get their
+     * chance from the new angle). Returns true while it is on the move.
+     */
+    private fun prowl(t: Player, dist: Double, sees: Boolean, map: GameMapDef): Boolean {
+        // Mid-shot the bot keeps its aim rather than walking it off.
+        if (holdUntilTick >= 0 || bowReleaseTick > 0L || shot != null || gapJump != null) return false
+        val here = player.location
+        var goal = prowlGoal
+        if (goal != null && (tick >= prowlUntil || goal.world != here.world ||
+                (hypot(goal.x - here.x, goal.z - here.z) < 1.2 && abs(goal.y - here.y) < 1.5))) {
+            // Arrived (or it is taking too long): have a look from here before moving on.
+            prowlGoal = null; goal = null
+            prowlRestUntil = tick + rng.nextInt(8, 26)
+            route.clear(); routeSearch = null; nextRouteTick = tick
+        }
+        if (goal == null) {
+            if (tick < prowlRestUntil) return false
+            val nav = ArenaNav.of(player.world, map.voidLevel.toInt(), canDoubleJump())
+            val at = t.location
+            for (attempt in 1..8) {
+                val angle = rng.nextDouble() * Math.PI * 2
+                val radius = 2.5 + rng.nextDouble() * 8.0
+                // Ground around their height first, else whatever is underneath.
+                val probe = Location(at.world, at.x + cos(angle) * radius, at.y + rng.nextInt(-1, 4), at.z + sin(angle) * radius)
+                val node = nav.nearest(probe, 14.0, 3.0) ?: continue
+                val spot = Location(at.world, node.x + .5, node.y.toDouble(), node.z + .5)
+                // Somewhere new, not the block the bot is already on.
+                if (hypot(spot.x - here.x, spot.z - here.z) < 3.0 && abs(spot.y - here.y) < 2.0) continue
+                goal = spot
+                break
+            }
+            val chosen = goal ?: run { prowlRestUntil = tick + 20; return false }
+            prowlGoal = chosen
+            prowlUntil = tick + 140
+            route.clear(); routeSearch = null; nextRouteTick = tick
+            dbg("no way to ${t.name}; trying from ${chosen.blockX},${chosen.blockY},${chosen.blockZ}")
+        }
+        // Keep facing them while they are in range to be shot at; otherwise run where it is going.
+        travel(prowlGoal!!, map, face = !(sees && dist <= engageRange)) {
+            prowlGoal = null
+            prowlRestUntil = tick + 5
+        }
+        return true
+    }
 
     /** Faces the way the route goes, a node ahead when the next one is underfoot, so the bot sprints. */
     private fun lookAlongRoute(step: RouteStep) {
