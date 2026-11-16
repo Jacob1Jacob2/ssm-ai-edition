@@ -12,6 +12,7 @@ import kotlin.random.Random
 
 /** Four snowballs per held burst, nine bursts per tank; three seconds to refill. */
 class BlizzardAbility(player: Player) : ClassicKitAbility("blizzard", player) {
+    override val countsOwnUses get()=true
     private var firing=false
     private var energy=0.0
     fun refill() { energy=1.0 }
@@ -21,11 +22,12 @@ class BlizzardAbility(player: Player) : ClassicKitAbility("blizzard", player) {
     private val snow=mutableMapOf<Block,BlockState>()
     override fun setup() {
         super.setup()
+        if(borrowed!=null)energy=1.0
         runnables.add(repeatingTask(1) {
             if (game?.getState() != dev.betrix.superSmashMobsBrawl.minigames.MinigameState.IN_PROGRESS) return@repeatingTask
             clock++
             if(!firing)energy=(energy+1.0/60.0).coerceAtMost(1.0)
-            player.exp=energy.toFloat()
+            if(borrowed==null)player.exp=energy.toFloat()
         })
     }
     override fun canActivate(sendMessage:Boolean)=!firing && energy>=1.0/9.0 && super.canActivate(sendMessage)
@@ -35,6 +37,7 @@ class BlizzardAbility(player: Player) : ClassicKitAbility("blizzard", player) {
             if(age>1 && (!player.isBlocking || !isCorrectItemForAbility(player.inventory.itemInMainHand)))return@loop false
             if(age%4==0) {
                 if(energy+0.00001<1.0/9.0)return@loop false
+                if(!spendUse())return@loop false
                 energy=(energy-1.0/9.0).coerceAtLeast(0.0)
                 repeat(4) {launchSnowball()}
                 player.world.playSound(player.location,Sound.BLOCK_SNOW_STEP,0.1f,0.5f)

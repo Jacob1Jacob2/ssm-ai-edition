@@ -324,6 +324,16 @@ class CombatFrameworkTest : StringSpec({
         plan(ArenaItem.CLOUD_IN_A_BOTTLE, fight, BotDifficulty.NORMAL) shouldBe null
         plan(ArenaItem.CLOUD_IN_A_BOTTLE, fight.copy(falling = true), BotDifficulty.NORMAL) shouldBe ItemAim.NONE
     }
+    "the new items: a trampoline for a fall, a mist for someone staying put, a mystery opened at once" {
+        plan(ArenaItem.POCKET_TRAMPOLINE, fight) shouldBe null
+        plan(ArenaItem.POCKET_TRAMPOLINE, fight.copy(falling = true, airJump = true)) shouldBe null
+        plan(ArenaItem.POCKET_TRAMPOLINE, fight.copy(falling = true, airJump = false)) shouldBe ItemAim.NONE
+        plan(ArenaItem.POISON_MIST, fight) shouldBe null
+        plan(ArenaItem.POISON_MIST, fight.copy(targetSpeed = 0.0)) shouldBe ItemAim.LOBBED
+        plan(ArenaItem.POISON_MIST, fight.copy(targetDistance = 30.0, targetSpeed = 0.0)) shouldBe null
+        plan(ArenaItem.POISON_MIST, fight, BotDifficulty.NORMAL) shouldBe ItemAim.LOBBED
+        plan(ArenaItem.MYSTERY_ABILITY, calm) shouldBe ItemAim.NONE
+    }
     "the teleporter answers an opponent nothing can walk to" {
         plan(ArenaItem.INSTANT_TELEPORTER, fight.copy(targetDistance = 15.0, targetUnreachable = true)) shouldBe ItemAim.TARGET
         plan(ArenaItem.INSTANT_TELEPORTER, fight.copy(targetDistance = 15.0), BotDifficulty.NORMAL) shouldBe ItemAim.TARGET

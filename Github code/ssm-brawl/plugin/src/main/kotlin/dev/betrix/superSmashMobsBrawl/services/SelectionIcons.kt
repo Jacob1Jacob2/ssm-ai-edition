@@ -27,7 +27,7 @@ object SelectionIcons {
         files["assets/ssm/models/item/selection_lighting.json"] =
             """{"gui_light":"front","elements":[]}""".toByteArray()
         val lighting=Json.parseToJsonElement("""{"type":"minecraft:model","model":"ssm:item/selection_lighting"}""")
-        for (name in listOf("tnt", "ice", "skeleton_skull", "oak_pressure_plate")) {
+        for (name in listOf("tnt", "ice", "skeleton_skull", "oak_pressure_plate", "slime_block")) {
             val path="assets/ssm/items/selected_minecraft_$name.json"
             val root=Json.parseToJsonElement(requireNotNull(files[path]).decodeToString()).jsonObject
             val composite=root.getValue("model").jsonObject

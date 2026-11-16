@@ -40,4 +40,29 @@ class ItemCatalogTest : StringSpec({
         ArenaItem.restoreSelection(null) shouldBe ArenaItem.entries.toSet()
         ArenaItem.restoreSelection(oldAll, ArenaItem.CATALOG_VERSION) shouldBe ArenaItem.entries.toSet() - ArenaItem.DIAMOND_HELMET
     }
+    "the trampoline, the mist and the mystery join a selection that had everything before them" {
+        val fresh = setOf(ArenaItem.POCKET_TRAMPOLINE, ArenaItem.POISON_MIST, ArenaItem.MYSTERY_ABILITY)
+        fresh.map { it.rarity } shouldBe listOf(ItemRarity.UNCOMMON, ItemRarity.UNCOMMON, ItemRarity.LEGENDARY)
+        val before = (ArenaItem.entries.toSet() - fresh).joinToString("|") { it.id }
+        // Saved by the previous version with everything enabled: the three are switched on.
+        ArenaItem.restoreSelection(before, 1) shouldBe ArenaItem.entries.toSet()
+        // Someone who had switched Food off keeps a hand-picked list: nothing is added behind their back.
+        val picky = (ArenaItem.entries.toSet() - fresh - ArenaItem.FOOD).joinToString("|") { it.id }
+        ArenaItem.restoreSelection(picky, 1) shouldBe ArenaItem.entries.toSet() - fresh - ArenaItem.FOOD
+        // Saved by this version without them: they were switched off on purpose.
+        ArenaItem.restoreSelection(before, ArenaItem.CATALOG_VERSION) shouldBe ArenaItem.entries.toSet() - fresh
+    }
+    "a mystery ability comes from another kit, never from the excluded four, and counts its uses" {
+        val rules = dev.betrix.superSmashMobsBrawl.abilities.MysteryRules
+        val kits = mapOf("squid" to listOf("ink_shotgun", "super_squid", "fish_flurry"), "villager" to listOf("trade_scatter", "villager_arts", "sonic_hurr"),
+            "phantom" to listOf("phantom_flight", "ravenous_membrane"), "polar_bear" to listOf("fish_gun", "cub_carrier"),
+            "blaze" to listOf("inferno", "firefly"), "slime" to listOf("slime_rocket", "slime_slam"), "snowman" to listOf("blizzard", "ice_path"))
+        val drawn = rules.candidates(kits, "squid", emptySet()).map { it.second }
+        drawn.toSet() shouldBe setOf("sonic_hurr", "ravenous_membrane", "cub_carrier", "inferno", "firefly", "slime_rocket", "slime_slam", "blizzard", "ice_path")
+        // Not one the player is already holding from an earlier Mystery Ability.
+        ("inferno" in rules.candidates(kits, "squid", setOf("inferno")).map { it.second }) shouldBe false
+        rules.candidates(kits, "blaze", emptySet()).first { it.second == "blizzard" } shouldBe ("snowman" to "blizzard")
+        listOf("ink_shotgun", "blizzard", "inferno").map(rules::uses) shouldBe listOf(7, 50, 75)
+        listOf("ink_shotgun", "slime_rocket", "blizzard").map(rules::cooldownScale) shouldBe listOf(0.5, 1.0, 0.5)
+    }
 })

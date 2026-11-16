@@ -75,20 +75,20 @@ class StaticLaserAbility(player: Player) :
                     return@repeatingTask
                 }
 
-                player.exp = min(maxCharge, player.exp + chargePerTick)
+                bar = min(maxCharge, bar + chargePerTick)
 
                 player.world.playSound(
                     player.location,
                     Sound.BLOCK_FIRE_EXTINGUISH,
-                    0.25f + player.exp,
-                    0.75f + player.exp,
+                    0.25f + bar,
+                    0.75f + bar,
                 )
 
                 setSheepColor(
                     if (Math.random() > 0.5) DyeColor.YELLOW else DyeColor.BLACK
                 )
 
-                if (player.exp >= maxCharge) {
+                if (bar >= maxCharge) {
                     stopCharging()
                     fireLaser()
                     cancel()
@@ -106,13 +106,13 @@ class StaticLaserAbility(player: Player) :
     }
 
     private fun fireLaser() {
-        if (player.exp <= 0.2) {
+        if (bar <= 0.2) {
             setSheepColor(DyeColor.WHITE)
-            player.exp = 0f
+            bar = 0f
             return
         }
 
-        val chargeLevel = player.exp
+        val chargeLevel = bar
         val effectiveRange = range * chargeLevel
 
         val start = player.eyeLocation
@@ -183,7 +183,7 @@ class StaticLaserAbility(player: Player) :
         )
 
         setSheepColor(DyeColor.WHITE)
-        player.exp = 0f
+        bar = 0f
     }
 
     private fun drawLaserBeam(start: Location, end: Location) {

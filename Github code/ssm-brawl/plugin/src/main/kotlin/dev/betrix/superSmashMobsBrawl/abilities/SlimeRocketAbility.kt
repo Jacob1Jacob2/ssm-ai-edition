@@ -75,7 +75,7 @@ class SlimeRocketAbility(player: Player) : BrawlAbility("slime_rocket", player) 
 
                 // Check if exp is too low or max duration reached
                 if (
-                    player.exp < minExpToCharge ||
+                    (borrowed == null && player.exp < minExpToCharge) ||
                         elapsedMs >= maxChargeDurationMs
                 ) {
                     stopCharging(false)
@@ -84,7 +84,7 @@ class SlimeRocketAbility(player: Player) : BrawlAbility("slime_rocket", player) 
                 }
 
                 // Drain exp only during the first 3 seconds
-                if (elapsedMs < maxChargeTimeMs) {
+                if (elapsedMs < maxChargeTimeMs && borrowed == null) {
                     player.exp = (player.exp - expDrainPerTick).coerceAtLeast(0f)
                 }
 

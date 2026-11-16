@@ -11,9 +11,10 @@ import org.bukkit.inventory.ItemStack
 import org.bukkit.util.Vector
 
 class BouncyBaconAbility(player: Player) : ClassicKitAbility("bouncy_bacon", player) {
-    override fun canActivate(sendMessage:Boolean)=player.exp>=PigEnergy.cost(player,0.225f)&&super.canActivate(sendMessage)
+    private fun cost()=if(borrowed!=null)0f else PigEnergy.cost(player,0.225f)
+    override fun canActivate(sendMessage:Boolean)=player.exp>=cost()&&super.canActivate(sendMessage)
     override fun activate() {
-        val cost=PigEnergy.cost(player,0.225f)
+        val cost=cost()
         if(player.exp<cost)return
         player.exp=(player.exp-cost).coerceAtLeast(0f)
         super.activate()
@@ -23,7 +24,7 @@ class BouncyBaconAbility(player: Player) : ClassicKitAbility("bouncy_bacon", pla
             collision={at,step->collision(at,step,.3)},
             hit={target,at->hit(target,4.0,metadata.double("projectileKnockback")?:.9,at)},
             eat={cooked ->
-                player.exp=(player.exp+.05f).coerceAtMost(1f)
+                if(borrowed==null)player.exp=(player.exp+.05f).coerceAtMost(1f)
                 player.world.playSound(player.location,Sound.ENTITY_GENERIC_EAT,2f,1f)
                 if(cooked) {
                     player.health=(player.health+1.0).coerceAtMost(player.getAttribute(Attribute.MAX_HEALTH)!!.value)

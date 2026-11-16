@@ -94,78 +94,8 @@ open class BrawlKit(val id: String, val player: Player) : KoinComponent {
         }
 
         kitData.abilities.forEach {
-            abilities.add(
-                when (it.id) {
-                    "fish_gun" -> PolarBearFishAbility(player)
-                    "cub_carrier" -> PolarBearCubAbility(player)
-                    "bitter_smash" -> BitterSmashAbility(player)
-                    "goated_hurr" -> GoatedHurrAbility(player)
-                    "goated_ram" -> GoatedRamAbility(player)
-                    "mushroom_wall" -> MushroomWallAbility(player)
-                    "ravenous_membrane" -> RavenousMembraneAbility(player)
-                    "phantom_flight" -> PhantomFlightAbility(player)
-                    "inferno" -> InfernoAbility(player)
-                    "firefly" -> FireflyAbility(player)
-                    "cub_tackle" -> CubTackleAbility(player)
-                    "wolf_strike" -> WolfStrikeAbility(player)
-                    "magma_blast" -> MagmaBlastAbility(player)
-                    "flame_dash" -> FlameDashAbility(player)
-                    "guided_wither_skull" -> GuidedWitherSkullAbility(player)
-                    "wither_image" -> WitherImageAbility(player)
-                    "sonic_hurr" -> SonicHurrAbility(player)
-                    "trade_scatter" -> TradeScatterAbility(player)
-                    "villager_arts" -> VillagerArtsAbility(player)
-                    "sulphur_bomb" -> SulphurBombAbility(player)
-                    "explode" -> ExplodeAbility(player)
-                    "roped_arrow" -> RopedArrowAbility(player)
-                    "bone_blast" -> BoneBlastAbility(player)
-                    "angry_herd" -> AngryHerdAbility(player)
-                    "milk_spiral" -> MilkSpiralAbility(player)
-                    "blink" -> BlinkAbility(player)
-                    "block_toss" -> BlockTossAbility(player)
-                    "egg_blaster" -> EggBlasterAbility(player)
-                    "chicken_missile" -> ChickenMissileAbility(player)
-                    "needler" -> NeedlerAbility(player)
-                    "spin_web" -> SpinWebAbility(player)
-                    "daze_potion" -> DazePotionAbility(player)
-                    "bat_wave" -> BatWaveAbility(player)
-                    "ink_shotgun" -> InkShotgunAbility(player)
-                    "super_squid" -> SuperSquidAbility(player)
-                    "fish_flurry" -> FishFlurryAbility(player)
-                    "bouncy_bacon" -> BouncyBaconAbility(player)
-                    "baby_bacon_bomb" -> BabyBaconBombAbility(player)
-                    "whirlpool_axe" -> WhirlpoolAxeAbility(player)
-                    "water_splash" -> WaterSplashAbility(player)
-                    "target_laser" -> TargetLaserAbility(player)
-                    "bile_blaster" -> BileBlasterAbility(player)
-                    "deaths_grasp" -> DeathsGraspAbility(player)
-                    "slime_rocket" -> SlimeRocketAbility(player)
-                    "slime_slam" -> SlimeSlamAbility(player)
-                    "iron_hook" -> IronHookAbility(player)
-                    "seismic_slam" -> SeismicSlamAbility(player)
-                    "blizzard" -> BlizzardAbility(player)
-                    "ice_path" -> IcePathAbility(player)
-                    "snow_turret" -> SnowTurretAbility(player)
-                    "fissure" -> FissureAbility(player)
-                    "strawbury_swirl" -> StrawburySwirlAbility(player)
-                    "moostrike" -> MoostrikeAbility(player)
-                    "fungal_trampoline" -> FungalTrampolineAbility(player)
-                    "bone_kick" -> BoneKickAbility(player)
-                    "bone_rush" -> BoneRushAbility(player)
-                    "hoof_bash" -> HoofBashAbility(player)
-                    "harvest_rush" -> HarvestRushAbility(player)
-                    "gliding_gallop" -> GlidingGallopAbility(player)
-                    "static_laser" -> StaticLaserAbility(player)
-                    "wool_mine" -> WoolMineAbility(player)
-                    "wooly_rocket" -> WoolyRocketAbility(player)
-                    else -> {
-                        logger.severe(
-                            "No ability found with id ${it.id} reference on kit ${kitData.id}"
-                        )
-                        return@forEach
-                    }
-                }
-            )
+            val ability = createAbility(it.id, player)
+            if (ability == null) logger.severe("No ability found with id ${it.id} reference on kit ${kitData.id}") else abilities.add(ability)
         }
 
         kitData.passives.forEach {
@@ -241,6 +171,7 @@ open class BrawlKit(val id: String, val player: Player) : KoinComponent {
         // (Upstream used Attribute.valueOf("GENERIC_ATTACK_SPEED"), which no longer exists, so this
         // was silently skipped.)
         player.getAttribute(Attribute.ATTACK_SPEED)?.baseValue = 32.0
+        dev.betrix.superSmashMobsBrawl.services.KitStatsService.showArmor(player, kitData.id)
         // Clear offhand to avoid shield mechanics
         try {
             player.inventory.setItemInOffHand(ItemStack.of(Material.AIR))
@@ -260,6 +191,7 @@ open class BrawlKit(val id: String, val player: Player) : KoinComponent {
         if (tornDown) return
         tornDown = true
         dev.betrix.superSmashMobsBrawl.items.DiamondHelmet.clear(player)
+        dev.betrix.superSmashMobsBrawl.services.KitStatsService.showArmor(player, null)
         dev.betrix.superSmashMobsBrawl.services.MatchCompass.remove(player)
         dev.betrix.superSmashMobsBrawl.smash.SmashService.clear(player)
         invincible = false
@@ -293,5 +225,90 @@ open class BrawlKit(val id: String, val player: Player) : KoinComponent {
         player.clearActivePotionEffects()
 
         player.sendDebugMessage("The $id kit has been removed")
+    }
+
+    /** A Mystery Ability tool: one more ability for this life, set up at once. */
+    fun borrow(ability: BrawlAbility) {
+        if (tornDown) return
+        abilities.add(ability)
+        ability.setup()
+    }
+
+    /** Takes a spent borrowed ability away again. Does nothing once the kit itself is gone. */
+    fun release(ability: BrawlAbility) {
+        if (abilities.remove(ability)) runCatching { ability.teardown() }
+            .onFailure { logger.warning("Kit $id release of ${ability.id} failed for ${player.name}: $it") }
+    }
+
+    fun abilityIds(): List<String> = abilities.map { it.id }
+
+    companion object {
+        /** The ability with this id for [player], or null for an id nothing implements. */
+        fun createAbility(id: String, player: Player): BrawlAbility? =
+            when (id) {
+        "fish_gun" -> PolarBearFishAbility(player)
+        "cub_carrier" -> PolarBearCubAbility(player)
+        "bitter_smash" -> BitterSmashAbility(player)
+        "goated_hurr" -> GoatedHurrAbility(player)
+        "goated_ram" -> GoatedRamAbility(player)
+        "mushroom_wall" -> MushroomWallAbility(player)
+        "ravenous_membrane" -> RavenousMembraneAbility(player)
+        "phantom_flight" -> PhantomFlightAbility(player)
+        "inferno" -> InfernoAbility(player)
+        "firefly" -> FireflyAbility(player)
+        "cub_tackle" -> CubTackleAbility(player)
+        "wolf_strike" -> WolfStrikeAbility(player)
+        "magma_blast" -> MagmaBlastAbility(player)
+        "flame_dash" -> FlameDashAbility(player)
+        "guided_wither_skull" -> GuidedWitherSkullAbility(player)
+        "wither_image" -> WitherImageAbility(player)
+        "sonic_hurr" -> SonicHurrAbility(player)
+        "trade_scatter" -> TradeScatterAbility(player)
+        "villager_arts" -> VillagerArtsAbility(player)
+        "sulphur_bomb" -> SulphurBombAbility(player)
+        "explode" -> ExplodeAbility(player)
+        "roped_arrow" -> RopedArrowAbility(player)
+        "bone_blast" -> BoneBlastAbility(player)
+        "angry_herd" -> AngryHerdAbility(player)
+        "milk_spiral" -> MilkSpiralAbility(player)
+        "blink" -> BlinkAbility(player)
+        "block_toss" -> BlockTossAbility(player)
+        "egg_blaster" -> EggBlasterAbility(player)
+        "chicken_missile" -> ChickenMissileAbility(player)
+        "needler" -> NeedlerAbility(player)
+        "spin_web" -> SpinWebAbility(player)
+        "daze_potion" -> DazePotionAbility(player)
+        "bat_wave" -> BatWaveAbility(player)
+        "ink_shotgun" -> InkShotgunAbility(player)
+        "super_squid" -> SuperSquidAbility(player)
+        "fish_flurry" -> FishFlurryAbility(player)
+        "bouncy_bacon" -> BouncyBaconAbility(player)
+        "baby_bacon_bomb" -> BabyBaconBombAbility(player)
+        "whirlpool_axe" -> WhirlpoolAxeAbility(player)
+        "water_splash" -> WaterSplashAbility(player)
+        "target_laser" -> TargetLaserAbility(player)
+        "bile_blaster" -> BileBlasterAbility(player)
+        "deaths_grasp" -> DeathsGraspAbility(player)
+        "slime_rocket" -> SlimeRocketAbility(player)
+        "slime_slam" -> SlimeSlamAbility(player)
+        "iron_hook" -> IronHookAbility(player)
+        "seismic_slam" -> SeismicSlamAbility(player)
+        "blizzard" -> BlizzardAbility(player)
+        "ice_path" -> IcePathAbility(player)
+        "snow_turret" -> SnowTurretAbility(player)
+        "fissure" -> FissureAbility(player)
+        "strawbury_swirl" -> StrawburySwirlAbility(player)
+        "moostrike" -> MoostrikeAbility(player)
+        "fungal_trampoline" -> FungalTrampolineAbility(player)
+        "bone_kick" -> BoneKickAbility(player)
+        "bone_rush" -> BoneRushAbility(player)
+        "hoof_bash" -> HoofBashAbility(player)
+        "harvest_rush" -> HarvestRushAbility(player)
+        "gliding_gallop" -> GlidingGallopAbility(player)
+        "static_laser" -> StaticLaserAbility(player)
+        "wool_mine" -> WoolMineAbility(player)
+        "wooly_rocket" -> WoolyRocketAbility(player)
+                else -> null
+            }
     }
 }

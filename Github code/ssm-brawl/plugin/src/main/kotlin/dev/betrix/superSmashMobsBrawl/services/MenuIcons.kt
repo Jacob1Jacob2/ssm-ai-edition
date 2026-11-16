@@ -41,6 +41,16 @@ object MenuIcons {
         1200->Material.DIAMOND_BLOCK;else->Material.NETHERITE_BLOCK
     }
     fun star(item:ItemStack,index:Int) {SmashItems.styleStar(item,index)}
+    /**
+     * Kit id -> the vanilla item model of its menu icon, for the small copy drawn on an
+     * opponent's head in Choose Opponents. Sheep and Wither Skeleton are 3D and handled apart.
+     */
+    val flatCornerIcons=mapOf("skeleton" to "bow","iron_golem" to "iron_ingot","spider" to "spider_eye","slime" to "slime_ball",
+        "enderman" to "ender_pearl","squid" to "ink_sac","creeper" to "coal","wolf" to "bone","magma_cube" to "magma_cream",
+        "snowman" to "snowball","zombie" to "rotten_flesh","cow" to "milk_bucket","horse" to "iron_horse_armor","pig" to "porkchop",
+        "blaze" to "blaze_powder","chicken" to "egg","guardian" to "prismarine_shard","witch" to "potion","villager" to "emerald",
+        "goat" to "goat_horn","mooshroom" to "red_mushroom","phantom" to "phantom_membrane","polar_bear" to "cod")
+    val cornerIcons:Set<String> =flatCornerIcons.keys+setOf("sheep","wither_skeleton")
     fun kit(id:String,fallback:Material)=ItemStack.of(when(id) {
         "skeleton"->Material.BOW;"wolf"->Material.BONE;"spider"->Material.SPIDER_EYE;"sheep"->Material.PLAYER_HEAD;"polar_bear"->Material.COD;else->fallback
     }).apply {
@@ -70,7 +80,30 @@ object MenuAssets {
         files["assets/ssm/textures/item/opponent_selected.png"] = selectionShimmer()
         files["assets/ssm/textures/item/opponent_selected.png.mcmeta"] = """{"animation":{"frametime":2,"interpolate":false}}""".toByteArray()
         files["assets/ssm/models/item/opponent_selected_overlay.json"] = """{"gui_light":"front","ambientocclusion":false,"textures":{"layer0":"ssm:item/opponent_selected"},"elements":[{"from":[0,0,8],"to":[16,16,8],"shade":false,"light_emission":15,"faces":{"south":{"uv":[0,0,16,16],"texture":"#layer0"},"north":{"uv":[16,0,0,16],"texture":"#layer0"}}}],"display":{"gui":{"translation":[0,0,8]}}}""".toByteArray()
-        files["assets/ssm/items/opponent_selected.json"] = """{"model":{"type":"minecraft:composite","models":[{"type":"minecraft:special","base":"minecraft:item/template_skull","model":{"type":"minecraft:player_head"},"transformation":{"left_rotation":[1,0,0,0],"right_rotation":[0,0,0,1],"scale":[1,1,1],"translation":[0.5,0,0.5]}},{"type":"minecraft:model","model":"ssm:item/opponent_selected_overlay"}]}}""".toByteArray()
+        // Choose Opponents heads: [front lighting, the head, the selection overlay, the kit icon].
+        // The lighting layer comes first because the first layer decides how the whole icon is
+        // lit; without it the overlay and the kit icon are shaded like the side of a block and
+        // come out dark, which the same overlay in Choose Items does not.
+        val skull=""""transformation":{"left_rotation":[1,0,0,0],"right_rotation":[0,0,0,1],"scale":[1,1,1],"translation":[0.5,0,0.5]}"""
+        val lighting="""{"type":"minecraft:model","model":"ssm:item/selection_lighting"}"""
+        val head="""{"type":"minecraft:special","base":"minecraft:item/template_skull","model":{"type":"minecraft:player_head"},$skull}"""
+        val overlay="""{"type":"minecraft:model","model":"ssm:item/opponent_selected_overlay"}"""
+        // A quarter-size copy of the kit's menu icon in the bottom-left corner, in front of the head.
+        fun corner(rotation:String="0,0,0",lift:Double=0.0)=""""display":{"gui":{"rotation":[$rotation],"translation":[-4,${-4+lift},12],"scale":[0.5,0.5,0.5]}}"""
+        val cases=MenuIcons.flatCornerIcons.map {(kit,model) ->
+            files["assets/ssm/models/item/kit_corner_$kit.json"]="""{"parent":"minecraft:item/$model",${corner()}}""".toByteArray()
+            // A potion with nothing in it is tinted by the item; on a head there is no potion, so say the colour.
+            val tint=if(kit=="witch")""","tints":[{"type":"minecraft:constant","value":-13083194}]""" else ""
+            """{"when":"$kit","model":{"type":"minecraft:model","model":"ssm:item/kit_corner_$kit"$tint}}"""
+        }.toMutableList()
+        files["assets/ssm/models/item/kit_corner_sheep.json"]="""{"parent":"ssm:item/wool_head",${corner("30,225,0")}}""".toByteArray()
+        cases+="""{"when":"sheep","model":{"type":"minecraft:model","model":"ssm:item/kit_corner_sheep"}}"""
+        // The vanilla skull sits 3 above the middle of its tile; at half size that is 1.5.
+        files["assets/ssm/models/item/kit_corner_skull.json"]="""{"parent":"minecraft:item/template_skull",${corner("30,45,0",1.5)}}""".toByteArray()
+        cases+="""{"when":"wither_skeleton","model":{"type":"minecraft:special","base":"ssm:item/kit_corner_skull","model":{"type":"minecraft:head","kind":"wither_skeleton"},$skull}}"""
+        val kitIcon="""{"type":"minecraft:select","property":"minecraft:custom_model_data","index":0,"cases":[${cases.joinToString(",")}],"fallback":{"type":"minecraft:empty"}}"""
+        files["assets/ssm/items/opponent.json"] = """{"model":{"type":"minecraft:composite","models":[$lighting,$head,$kitIcon]}}""".toByteArray()
+        files["assets/ssm/items/opponent_selected.json"] = """{"model":{"type":"minecraft:composite","models":[$lighting,$head,$overlay,$kitIcon]}}""".toByteArray()
         // Shadow Walk keeps the vanilla skeleton skull, with an animated glint when enabled.
         files["assets/ssm/textures/item/shadow_walk_enabled.png"] = selectionShimmer(showCheck=false)
         files["assets/ssm/textures/item/shadow_walk_enabled.png.mcmeta"] = """{"animation":{"frametime":2,"interpolate":false}}""".toByteArray()

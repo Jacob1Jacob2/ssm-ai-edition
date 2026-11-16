@@ -45,6 +45,28 @@ class KitStatsTest : StringSpec({
         // A cooldown saved for an ability the kit no longer has is ignored.
         KitStats(cooldowns = mapOf("gone" to 1.0)).verdict(squid) shouldBe KitVerdict.NORMAL
     }
+    "only the tool of the changed ability changes its look" {
+        // A shorter Ink Shotgun: that tool is Buffed, the other two stay as they are.
+        val quick = KitStats(cooldowns = mapOf("ink_shotgun" to 2.0))
+        quick.toolVerdict(squid, "ink_shotgun", first = true) shouldBe KitVerdict.BUFFED
+        quick.toolVerdict(squid, "super_squid", first = false) shouldBe KitVerdict.NORMAL
+        quick.toolVerdict(squid, "fish_flurry", first = false) shouldBe KitVerdict.NORMAL
+        // One shorter and one longer: wood on the one, gold on the other.
+        val mixed = KitStats(cooldowns = mapOf("super_squid" to 4.0, "fish_flurry" to 20.0))
+        mixed.toolVerdict(squid, "ink_shotgun", first = true) shouldBe KitVerdict.NORMAL
+        mixed.toolVerdict(squid, "super_squid", first = false) shouldBe KitVerdict.BUFFED
+        mixed.toolVerdict(squid, "fish_flurry", first = false) shouldBe KitVerdict.NERFED
+        // Armor, damage and regen belong to the whole kit and show on its first tool only.
+        val tanky = KitStats(armor = 8.0)
+        tanky.toolVerdict(squid, "ink_shotgun", first = true) shouldBe KitVerdict.BUFFED
+        tanky.toolVerdict(squid, "super_squid", first = false) shouldBe KitVerdict.NORMAL
+        KitStats(damage = 2.0).toolVerdict(squid, "ink_shotgun", first = true) shouldBe KitVerdict.NERFED
+        // A value that only restates the normal one changes nothing.
+        KitStats(armor = 5.0, cooldowns = mapOf("ink_shotgun" to 6.0)).toolVerdict(squid, "ink_shotgun", first = true) shouldBe KitVerdict.NORMAL
+    }
+    "every kit in the kit menu has a small icon for an opponent's head" {
+        (dev.betrix.superSmashMobsBrawl.services.KitMenuLayout.slots.keys - dev.betrix.superSmashMobsBrawl.services.MenuIcons.cornerIcons) shouldBe emptySet()
+    }
     "changes survive being saved and loaded, and junk in the file is dropped" {
         val mine = KitStats(0.3, 4.0, null, mapOf("ink_shotgun" to 0.0, "fish_flurry" to 9.0))
         KitStats.decode(mine.encode()) shouldBe mine

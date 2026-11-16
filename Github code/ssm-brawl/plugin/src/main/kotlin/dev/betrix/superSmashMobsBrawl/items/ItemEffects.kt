@@ -121,6 +121,10 @@ class ItemEffects(private val arena: ItemArena) {
                 world.playSound(destination, Sound.ENTITY_ENDERMAN_TELEPORT, 1f, 1f)
             }
             ArenaItem.CLOUD_IN_A_BOTTLE -> cloud(p)
+            ArenaItem.POCKET_TRAMPOLINE -> trampoline(p)
+            ArenaItem.POISON_MIST -> thrown(p, kind, 60) { at -> mist(p, at) }
+            // Swaps itself for the borrowed tool, so there is nothing left to use up afterwards.
+            ArenaItem.MYSTERY_ABILITY -> return dev.betrix.superSmashMobsBrawl.abilities.MysteryAbility.grant(p)
             ArenaItem.JETPACK -> { p.velocity = p.velocity.setY(.9); p.fallDistance = 0f
                 world.spawnParticle(Particle.LARGE_SMOKE, p.location, 20, .3, .1, .3, .03); world.playSound(p.location, Sound.ENTITY_FIREWORK_ROCKET_LAUNCH, .8f, 1.8f) }
             ArenaItem.FOOD, ArenaItem.AWESOME_SOUP -> {
@@ -352,6 +356,43 @@ class ItemEffects(private val arena: ItemArena) {
         } }
         world.playSound(p.location, Sound.BLOCK_SNOW_BREAK, 1f, 1f)
     }
+    /** A 3x3 slime pad in the free blocks right under the feet, and a launch straight up. */
+    private fun trampoline(p: Player) {
+        val center = p.location.clone().subtract(0.0, 1.0, 0.0).block
+        val blocks = mutableListOf<org.bukkit.block.Block>()
+        for (x in -1..1) for (z in -1..1) {
+            val block = center.getRelative(x,0,z)
+            if (block.isEmpty) { arena.terrain.changeBlock(block, Material.SLIME_BLOCK); blocks += block }
+        }
+        p.fallDistance = 0f; p.velocity = p.velocity.setY(TRAMPOLINE_LAUNCH)
+        blocks.shuffled().forEachIndexed { i, block -> arena.later(100 + i * 2) {
+            if (block.type == Material.SLIME_BLOCK) {
+                world.spawnParticle(Particle.ITEM_SLIME, block.location.add(.5,.5,.5), 8, .3,.3,.3,.01); block.setType(Material.AIR, false)
+            }
+        } }
+        world.spawnParticle(Particle.ITEM_SLIME, p.location, 30, .8, .1, .8, .05)
+        world.playSound(p.location, Sound.BLOCK_SLIME_BLOCK_PLACE, 1f, 1f)
+        world.playSound(p.location, Sound.ENTITY_SLIME_JUMP, 1f, .8f)
+    }
+    /** A cloud that lingers for five seconds. Everyone in it, the thrower too, is poisoned once, for six seconds. */
+    private fun mist(owner: Player, at: Location) {
+        val poisoned = mutableSetOf<UUID>()
+        val green = Particle.DustOptions(Color.fromRGB(96, 190, 60), 1.8f)
+        world.playSound(at, Sound.ENTITY_PUFFER_FISH_BLOW_UP, 1.2f, .8f)
+        world.playSound(at, Sound.BLOCK_FIRE_EXTINGUISH, .6f, .6f)
+        arena.loop(MIST_TICKS) { age ->
+            if (age % 3 == 0) {
+                world.spawnParticle(Particle.DUST, at.clone().add(0.0, .9, 0.0), 45, MIST_RADIUS * .55, .9, MIST_RADIUS * .55, 0.0, green)
+                world.spawnParticle(Particle.SNEEZE, at.clone().add(0.0, .6, 0.0), 6, MIST_RADIUS * .5, .6, MIST_RADIUS * .5, .01)
+            }
+            if (age % 20 == 0) world.playSound(at, Sound.ENTITY_PUFFER_FISH_BLOW_OUT, .5f, .7f)
+            arena.players().filter { it.location.distanceSquared(at) <= MIST_RADIUS * MIST_RADIUS && poisoned.add(it.uniqueId) }.forEach { victim ->
+                potion(victim, PotionEffectType.POISON, POISON_TICKS)
+                if (victim != owner) dev.betrix.superSmashMobsBrawl.services.CombatLogService.recordKnockback(victim, owner, ArenaItem.POISON_MIST.label)
+            }
+            true
+        }
+    }
     private fun rain(p: Player) {
         val target=aim(p)
         repeat(6) {
@@ -452,5 +493,12 @@ class ItemEffects(private val arena: ItemArena) {
         world.spawnParticle(Particle.FLAME,at,180,radius*.4,.8,radius*.4,.12)
         world.spawnParticle(Particle.LARGE_SMOKE,at,100,radius*.4,.8,radius*.4,.1)
     }
-    companion object { val cloneOwners = mutableMapOf<UUID, Player>() }
+    companion object {
+        val cloneOwners = mutableMapOf<UUID, Player>()
+        /** About fifteen blocks up. */
+        const val TRAMPOLINE_LAUNCH = 1.6
+        const val MIST_RADIUS = 3.5
+        const val MIST_TICKS = 100
+        const val POISON_TICKS = 120
+    }
 }

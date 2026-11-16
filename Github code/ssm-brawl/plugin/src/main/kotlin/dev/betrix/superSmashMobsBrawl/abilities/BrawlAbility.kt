@@ -56,6 +56,44 @@ abstract class BrawlAbility(val id: String, val player: Player) : Manageable(), 
     protected lateinit var hotbarItemStack: ItemStack
         private set
 
+    /** Set before [setup] when this ability came out of a Mystery Ability instead of the player's kit. */
+    var borrowed: Borrowed? = null
+
+    private var ownBar = 0f
+    /**
+     * The XP bar, for abilities that show a charge on it. A borrowed ability keeps the number to
+     * itself, so the bar of the kit the player is really playing is left alone.
+     */
+    protected var bar: Float
+        get() = if (borrowed != null) ownBar else player.exp
+        set(value) { if (borrowed != null) ownBar = value else player.exp = value }
+
+    /** True for abilities that fire many times per click and count each shot themselves ([spendUse]). */
+    protected open val countsOwnUses: Boolean get() = false
+
+    /**
+     * Takes one use off a borrowed tool. False when it had none left. The tool leaves the hotbar
+     * with its last use; what it already launched plays out, and the ability is taken off the kit
+     * a little later.
+     */
+    protected fun spendUse(): Boolean {
+        val lent = borrowed ?: return true
+        if (lent.uses <= 0) return false
+        lent.uses--
+        for (slot in 0..8) {
+            val item = player.inventory.getItem(slot) ?: continue
+            if (!MysteryAbility.isBorrowed(item) || getAbilityId(item) != id) continue
+            if (lent.uses == 0) player.inventory.setItem(slot, null)
+            else { MysteryAbility.showUses(item, lent); player.inventory.setItem(slot, item) }
+        }
+        if (lent.uses == 0) {
+            player.playSound(player.location, org.bukkit.Sound.ENTITY_ITEM_BREAK, .8f, 1f)
+            val kit = kitService.getKitForPlayer(player)
+            gg.flyte.twilight.scheduler.delay(200) { kit?.release(this@BrawlAbility) }
+        }
+        return true
+    }
+
     // A scheduler/projectile callback keeps its original cast even after the tool expires.
     private var callbackBoost: Double? = null
     protected val itemBoost: Double get() = callbackBoost ?: dev.betrix.superSmashMobsBrawl.items.ItemService.castScale(player, id)
@@ -136,11 +174,12 @@ abstract class BrawlAbility(val id: String, val player: Player) : Manageable(), 
     }
 
     override fun setup() {
-        hotbarItemStack = (kitData?.id ?: "hub").let { kit -> dev.betrix.superSmashMobsBrawl.services.KitStatsService.dress(player, kit,
+        val lent = borrowed
+        hotbarItemStack = if (lent != null) MysteryAbility.tool(lent, id) else (kitData?.id ?: "hub").let { kit -> dev.betrix.superSmashMobsBrawl.services.KitStatsService.dress(player, kit, id,
             dev.betrix.superSmashMobsBrawl.services.KitPresentation.abilityItem(kit, id)) }
 
         val hotBarItemSlot =
-            when (player.inventory.getItem(abilityData.itemSlot)) {
+            if (lent != null) lent.slot else when (player.inventory.getItem(abilityData.itemSlot)) {
                 null -> abilityData.itemSlot
                 else -> {
                     plugin.logger.warning(
@@ -175,6 +214,11 @@ abstract class BrawlAbility(val id: String, val player: Player) : Manageable(), 
     override fun teardown() {
         if (::hotbarItemStack.isInitialized) {
             player.inventory.remove(hotbarItemStack)
+        }
+        // A borrowed tool has changed since it was handed out (its uses), so find it by its mark.
+        if (borrowed != null) for (slot in 0..8) {
+            val item = player.inventory.getItem(slot) ?: continue
+            if (MysteryAbility.isBorrowed(item) && getAbilityId(item) == id) player.inventory.setItem(slot, null)
         }
 
         listeners.forEach { it.unregister() }
@@ -259,6 +303,7 @@ abstract class BrawlAbility(val id: String, val player: Player) : Manageable(), 
     }
 
     protected open fun activate() {
+        if (!countsOwnUses) spendUse()
         dev.betrix.superSmashMobsBrawl.items.ItemService.beginCast(player, id)
         setCooldown()
         // Avoid client-side item cooldown visuals affecting combat rhythm; we keep only our timers
@@ -289,6 +334,8 @@ abstract class BrawlAbility(val id: String, val player: Player) : Manageable(), 
 
     protected open val effectiveCooldown: Double
         get() {
+            // A borrowed ability has its own cooldown, whatever the player did to their kit.
+            borrowed?.let { return abilityData.cooldown.toDouble() * it.cooldownScale }
             // A player may have changed this cooldown on their own copy of the kit (Change Kit Stats).
             val seconds = dev.betrix.superSmashMobsBrawl.services.KitStatsService.cooldown(player, kitData?.id, id) ?: abilityData.cooldown.toDouble()
             return dev.betrix.superSmashMobsBrawl.smash.SmashService.session(player)?.cooldown(seconds) ?: seconds
@@ -299,6 +346,7 @@ abstract class BrawlAbility(val id: String, val player: Player) : Manageable(), 
 
     protected open fun canActivate(sendMessage: Boolean = true): Boolean {
         if(minigameService.getMinigameForPlayer(player)?.getState()==dev.betrix.superSmashMobsBrawl.minigames.MinigameState.STARTING)return false
+        if (borrowed?.let { it.uses <= 0 } == true) return false
         if (isOnCooldown()) {
             if (sendMessage) {
                 val component =

@@ -65,7 +65,7 @@ class ExplodeAbility(player: Player) : BrawlAbility("explode", player) {
         player.setGravity(false)
 
         player.velocity = Vector()
-        player.exp = 0f
+        bar = 0f
 
         runnables.add(
             repeatingTask(1) {
@@ -78,7 +78,7 @@ class ExplodeAbility(player: Player) : BrawlAbility("explode", player) {
                 player.velocity = Vector()
                 player.fallDistance = 0f
                 val elapsed = System.currentTimeMillis() - currentTimeAtActivation
-                player.exp = min(elapsed / (fuseTimeTicks * 50f), 0.9999f)
+                bar = min(elapsed / (fuseTimeTicks * 50f), 0.9999f)
 
                 // Classic Explode ramps the hiss by elapsed seconds, including its
                 // final fuse tick, immediately followed by one full-volume blast.
@@ -138,6 +138,6 @@ class ExplodeAbility(player: Player) : BrawlAbility("explode", player) {
 
     private fun resetPlayerData() {
         player.setGravity(true)
-        player.exp = 0f
+        bar = 0f
     }
 }

@@ -53,8 +53,9 @@ object KitPresentation : KoinComponent {
 
     fun equipPreview(player: Player, kit: KitDef) {
         kit.abilities.forEach { entry ->
-            data.getAbility(entry.id)?.let { player.inventory.setItem(it.itemSlot, KitStatsService.dress(player, kit.id, abilityItem(kit.id, it.id, true))) }
+            data.getAbility(entry.id)?.let { player.inventory.setItem(it.itemSlot, KitStatsService.dress(player, kit.id, it.id, abilityItem(kit.id, it.id, true))) }
         }
+        KitStatsService.showArmor(player, kit.id)
         kit.passives.firstOrNull { it.id == "arrow_recharge" }?.let { entry ->
             val defaults = data.getPassive(entry.id)?.metadata
             val slot = entry.overrides?.metadata?.get("arrowHotbarSlot")?.content?.toIntOrNull()
@@ -71,6 +72,7 @@ object KitPresentation : KoinComponent {
     }
 
     fun clearPreview(player: Player) {
+        KitStatsService.showArmor(player, null)
         for (slot in 0 until player.inventory.size) if (isPreview(player.inventory.getItem(slot))) player.inventory.setItem(slot, null)
         if (isPreview(player.itemOnCursor)) player.setItemOnCursor(null)
     }

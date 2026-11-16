@@ -37,6 +37,16 @@ data class KitStats(val regen: Double? = null, val armor: Double? = null, val da
         return if (better) KitVerdict.BUFFED else KitVerdict.NERFED
     }
 
+    /**
+     * How one ability's tool looks. A cooldown belongs to its own tool only; health regen, armor
+     * and attack damage belong to the whole kit and show on the kit's [first] tool.
+     */
+    fun toolVerdict(base: KitBase, abilityId: String, first: Boolean): KitVerdict {
+        val t = trimmed(base)
+        return KitStats(t.regen.takeIf { first }, t.armor.takeIf { first }, t.damage.takeIf { first },
+            t.cooldowns.filterKeys { it == abilityId }).verdict(base)
+    }
+
     /** "regen=0.3;armor=5.0;cd.ink_shotgun=4.0" */
     fun encode(): String = (listOfNotNull(regen?.let { "regen=$it" }, armor?.let { "armor=$it" }, damage?.let { "damage=$it" }) +
         cooldowns.toSortedMap().map { (id, seconds) -> "cd.$id=$seconds" }).joinToString(";")

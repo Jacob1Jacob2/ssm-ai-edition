@@ -14,12 +14,15 @@ import java.util.UUID
 
 /** Classic Inferno throws separate blaze-powder embers, with travel time and gravity. */
 class InfernoAbility(player: Player) : ClassicKitAbility("inferno", player) {
+    override val countsOwnUses get() = true
     private var firing = false
     private var energy = 0.0
     fun refill() { energy=1.0 }
     override fun setup() {
         super.setup()
-        player.addPotionEffect(PotionEffect(PotionEffectType.SPEED, Int.MAX_VALUE, 0, false, false))
+        if (borrowed != null) energy = 1.0
+        // The speed belongs to the Blaze, not to a borrowed Inferno.
+        if (borrowed == null) player.addPotionEffect(PotionEffect(PotionEffectType.SPEED, Int.MAX_VALUE, 0, false, false))
         runnables.add(repeatingTask(1) {
             if (game?.getState() != dev.betrix.superSmashMobsBrawl.minigames.MinigameState.IN_PROGRESS) return@repeatingTask
             val regen = metadata.double("energyRegenPerTick") ?: 0.025
@@ -28,7 +31,7 @@ class InfernoAbility(player: Player) : ClassicKitAbility("inferno", player) {
                     dev.betrix.superSmashMobsBrawl.smash.SmashService.session(player)?.powers?.get("blaze:1")?.active == true)
             if(empowered) energy = (energy + if(firing) (metadata.double("energyCostPerTick") ?: 0.035)+regen else regen*3).coerceAtMost(1.0)
             else if(!firing) energy = (energy+regen).coerceAtMost(1.0)
-            if(dev.betrix.superSmashMobsBrawl.smash.SmashService.session(player)?.powers?.values?.none {it.spec.fuelSeconds>0} != false) player.exp = energy.toFloat()
+            if(dev.betrix.superSmashMobsBrawl.smash.SmashService.session(player)?.powers?.values?.none {it.spec.fuelSeconds>0} != false && borrowed == null) player.exp = energy.toFloat()
         })
     }
 
@@ -41,8 +44,7 @@ class InfernoAbility(player: Player) : ClassicKitAbility("inferno", player) {
             else if (energy < (metadata.double("energyCostPerTick") ?: 0.035)) false
             else {
                 energy = (energy - (metadata.double("energyCostPerTick") ?: 0.035)).coerceAtLeast(0.0)
-                launchEmber()
-                true
+                if (spendUse()) { launchEmber(); true } else false
             }
         }
     }

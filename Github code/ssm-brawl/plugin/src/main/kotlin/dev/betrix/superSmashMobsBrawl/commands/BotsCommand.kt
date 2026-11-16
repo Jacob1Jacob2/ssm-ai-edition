@@ -84,6 +84,41 @@ class BotsCommand : KoinComponent {
         )
     }
 
+    @Execute(name = "borrowtest")
+    @Description("Debug: in a running bots game, hands a bot every Mystery Ability in turn and clicks it once")
+    fun borrowTest(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        val all = dev.betrix.superSmashMobsBrawl.abilities.MysteryAbility.everything()
+        plugin.logger.info("[borrow] START ${all.size} abilities")
+        var index = 0
+        object : org.bukkit.scheduler.BukkitRunnable() {
+            override fun run() {
+                if (index >= all.size) { plugin.logger.info("[borrow] DONE"); cancel(); return }
+                val (sourceKit, id) = all[index++]
+                val bot = BotManager.onlineBots().firstOrNull {
+                    it.gameMode == org.bukkit.GameMode.SURVIVAL && it.world.name.startsWith("ssmbworld_") &&
+                        dev.betrix.superSmashMobsBrawl.services.KitService.getKitForPlayer(it)?.let { kit -> id !in kit.abilityIds() } == true &&
+                        (0..8).any { slot -> it.inventory.getItem(slot) == null }
+                }
+                if (bot == null) { plugin.logger.info("[borrow] SKIP $id: no bot free for it"); return }
+                runCatching {
+                    val kit = dev.betrix.superSmashMobsBrawl.services.KitService.getKitForPlayer(bot)!!
+                    bot.inventory.heldItemSlot = (0..8).first { slot -> bot.inventory.getItem(slot) == null }
+                    check(dev.betrix.superSmashMobsBrawl.abilities.MysteryAbility.grant(bot, sourceKit to id)) { "not granted" }
+                    val ability = kit.getAbility(id)!!
+                    val tool = bot.inventory.itemInMainHand
+                    val left = dataService.getAbility(id)?.usage == dev.betrix.superSmashMobsBrawl.models.brawlData.AbilityUsage.LEFT_CLICK
+                    org.bukkit.event.player.PlayerInteractEvent(bot,
+                        if (left) org.bukkit.event.block.Action.LEFT_CLICK_AIR else org.bukkit.event.block.Action.RIGHT_CLICK_AIR,
+                        tool, null, org.bukkit.block.BlockFace.SELF, org.bukkit.inventory.EquipmentSlot.HAND).callEvent()
+                    val lent = ability.borrowed!!
+                    plugin.logger.info("[borrow] OK $id from $sourceKit on ${bot.name} (${kit.id}): ${tool.type} uses ${lent.uses}/${lent.total} exp=${"%.2f".format(bot.exp)}")
+                    org.bukkit.Bukkit.getScheduler().runTaskLater(plugin, Runnable { kit.release(ability) }, 30L)
+                }.onFailure { plugin.logger.warning("[borrow] FAIL $id from $sourceKit on ${bot.name}: $it") }
+            }
+        }.runTaskTimer(plugin, 20L, 40L)
+    }
+
     @Execute(name = "clear")
     @Description("Remove all AI bots")
     fun clear(@Context sender: CommandSender) {

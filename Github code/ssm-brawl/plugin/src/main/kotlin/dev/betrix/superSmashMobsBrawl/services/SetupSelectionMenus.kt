@@ -56,7 +56,8 @@ object SetupSelectionMenus {
         val roster:List<BotManager.BotProfile?> = BotManager.rosterProfiles().sortedBy {it.name.lowercase()} + CustomBotService.profiles()
         val pages=((roster.size+44)/45).coerceAtLeast(1)
         val current=page.coerceIn(0,pages-1)
-        player.openInventory(brawlGui(Component.text("Choose Opponents — ${current+1}/$pages"),54) {
+        // The count first: "1/3" alone read as one of three chosen, not as the page.
+        player.openInventory(brawlGui(Component.text("Opponents ${s.selectedBotNames.size}/${s.bots} — Page ${current+1}/$pages"),54) {
             onClick {isCancelled=true}
             roster.drop(current*45).take(45).forEachIndexed {slot,profile ->
                 if(profile==null) {
@@ -74,7 +75,13 @@ object SetupSelectionMenus {
                             Component.text(if(CustomBotService.isCustom(profile.name))"Custom opponent — manual selection only" else "Built-in opponent",GRAY).decoration(TextDecoration.ITALIC,false),
                             Component.text(if(selected)"Selected — click to remove" else "Click to choose this opponent",GRAY)
                                 .decoration(TextDecoration.ITALIC,false)))
-                        if(selected) it.itemModel=org.bukkit.NamespacedKey("ssm","opponent_selected")
+                        // Every head here is drawn by the pack, lit the same way whether chosen or not.
+                        it.itemModel=org.bukkit.NamespacedKey("ssm",if(selected)"opponent_selected" else "opponent")
+                    }
+                    // The kit chosen for this opponent is drawn small in the head's bottom-left corner.
+                    s.botKits[profile.name.lowercase()]?.takeIf {it in MenuIcons.cornerIcons}?.let {kit ->
+                        setData(DataComponentTypes.CUSTOM_MODEL_DATA,
+                            io.papermc.paper.datacomponent.item.CustomModelData.customModelData().addString(kit).build())
                     }
                 }
                 set(slot,head) {

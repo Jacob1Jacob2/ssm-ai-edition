@@ -288,6 +288,11 @@ object KitService : KoinComponent, Manageable() {
         if (botName != null) {
             val setup = GameSetupService.setupOf(player)
             setup.botKits = setup.botKits + (botName.lowercase() to kit.id)
+            // Giving an opponent a kit means wanting them in the match.
+            if (setup.selectedBotNames.none { it.equals(botName, ignoreCase = true) }) {
+                if (setup.selectedBotNames.size < setup.bots) setup.selectedBotNames = setup.selectedBotNames + botName
+                else player.sendMessage(Component.text("Kit saved. Increase the player count to add $botName to the match.", net.kyori.adventure.text.format.NamedTextColor.YELLOW))
+            }
             GameSetupService.save()
             LobbyBotService.configure(player)
             SetupSelectionMenus.opponents(player, page)

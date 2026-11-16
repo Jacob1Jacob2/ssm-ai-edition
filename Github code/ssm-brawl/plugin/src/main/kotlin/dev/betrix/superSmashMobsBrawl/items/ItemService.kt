@@ -90,7 +90,8 @@ object ItemService : KoinComponent {
         if (!requested.tool) return requested
         val available = (0..8).mapNotNull { slot ->
             val held = player.inventory.getItem(slot) ?: return@mapNotNull null
-            if (held.itemMeta?.persistentDataContainer?.has(abilityKey, PersistentDataType.STRING) != true) return@mapNotNull null
+            if (held.itemMeta?.persistentDataContainer?.has(abilityKey, PersistentDataType.STRING) != true ||
+                dev.betrix.superSmashMobsBrawl.abilities.MysteryAbility.isBorrowed(held)) return@mapNotNull null
             when {
                 held.type.name.endsWith("_AXE") -> ArenaItem.DIAMOND_AXE
                 held.type.name.endsWith("_SWORD") -> ArenaItem.DIAMOND_SWORD
@@ -108,6 +109,7 @@ object ItemService : KoinComponent {
         } else if (kind.tool) {
             val suffix = kind.material.name.substringAfter("DIAMOND_")
             val slot = (0..8).firstOrNull { player.inventory.getItem(it)?.type?.name?.endsWith("_$suffix") == true &&
+                !dev.betrix.superSmashMobsBrawl.abilities.MysteryAbility.isBorrowed(player.inventory.getItem(it)) &&
                 player.inventory.getItem(it)?.itemMeta?.persistentDataContainer?.has(abilityKey, PersistentDataType.STRING) == true } ?: return false
             val item = player.inventory.getItem(slot)!!
             val id = item.itemMeta.persistentDataContainer.get(abilityKey, PersistentDataType.STRING)!!

@@ -80,20 +80,33 @@ enum class ArenaItem(val label: String, val material: Material, val uses: Int,
     RAIN_STAFF("Rain Staff", Material.GOLDEN_HOE, 125, ItemRarity.LEGENDARY,
         "Hold right-click to rain projectiles where you aim. Contains 125 volleys of six mixed projectiles, each dealing 5% health damage."),
     KNOCKBACK_ROD("Knockback Rod", Material.STICK, 8, ItemRarity.RARE,
-        "Hit an opponent for strong knockback without damage (one use). Right-click to fire a knockback projectile (two uses).");
+        "Hit an opponent for strong knockback without damage (one use). Right-click to fire a knockback projectile (two uses)."),
+    POCKET_TRAMPOLINE("Pocket Trampoline", Material.SLIME_BLOCK, 1, ItemRarity.UNCOMMON,
+        "Right-click to put a 3x3 slime pad under your feet and launch yourself high into the air. The pad fades after five seconds."),
+    POISON_MIST("Poison Mist", Material.PUFFERFISH, 1, ItemRarity.UNCOMMON,
+        "Right-click to throw. After three seconds it bursts into a mist that lingers for five seconds and poisons everyone who touches it for six seconds."),
+    MYSTERY_ABILITY("Mystery Ability", Material.ORANGE_BUNDLE, 1, ItemRarity.LEGENDARY,
+        "Right-click for a random ability from another kit, as a copper tool with seven uses and half the usual cooldown.");
 
     val id get() = name.lowercase()
     val tool get() = this in setOf(DIAMOND_AXE, DIAMOND_SHOVEL, DIAMOND_SWORD)
     val useLabel get() = if (this == DIAMOND_HELMET) "hits" else "uses"
 
     companion object {
-        const val CATALOG_VERSION = 1
+        const val CATALOG_VERSION = 2
+        /** The items each catalogue version brought in. */
+        private val addedIn get() = mapOf(1 to setOf(DIAMOND_HELMET), 2 to setOf(POCKET_TRAMPOLINE, POISON_MIST, MYSTERY_ABILITY))
 
         /** Include new drops for previous Enable All selections without resetting custom lists. */
         fun restoreSelection(saved: String?, version: Int = 0): Set<ArenaItem> {
             if (saved == null) return entries.toSet()
-            val enabled = saved.split('|').mapNotNull(::parse).toSet()
-            return if (version < 1 && enabled == entries.toSet() - DIAMOND_HELMET) entries.toSet() else enabled
+            var enabled = saved.split('|').mapNotNull(::parse).toSet()
+            for (step in version + 1..CATALOG_VERSION) {
+                // Everything that existed before this step was enabled: the new items join in.
+                val existed = entries.toSet() - addedIn.filterKeys { it >= step }.values.flatten().toSet()
+                if (enabled.containsAll(existed)) enabled = enabled + addedIn.getValue(step)
+            }
+            return enabled
         }
 
         fun parse(name: String): ArenaItem? {

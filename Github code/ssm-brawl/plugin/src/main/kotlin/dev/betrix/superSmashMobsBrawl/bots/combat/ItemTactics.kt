@@ -91,6 +91,10 @@ object ItemTactics {
             // --- recovery: careful bots keep these for a fall they cannot jump out of
             CLOUD_IN_A_BOTTLE -> at(ItemAim.NONE, s.falling && (!careful || !s.airJump))
             JETPACK -> at(ItemAim.NONE, s.falling && !s.airJump)
+            // A pad in mid-air and a launch off it: the same moment as a cloud.
+            POCKET_TRAMPOLINE -> at(ItemAim.NONE, s.falling && (!careful || !s.airJump))
+            // Whatever comes out is worth more in the hand than in the bundle.
+            MYSTERY_ABILITY -> ItemAim.NONE
             INSTANT_TELEPORTER -> when {
                 s.falling && !s.airJump -> ItemAim.ESCAPE
                 // The answer to someone sitting where nothing walks: appear next to them.
@@ -117,6 +121,8 @@ object ItemTactics {
 
             // --- three-second fuses: careful bots save them for someone who is not moving
             AIR_STRIKE -> at(ItemAim.LOBBED, within(8.0..22.0) && (!careful || still || impatient))
+            // The mist stays for five seconds, so it also works on someone who is merely near.
+            POISON_MIST -> at(ItemAim.LOBBED, within(5.0..16.0) && (!careful || still || s.targetSpeed < 0.2 || impatient))
             ICE_CUBE -> at(ItemAim.LOBBED, within(6.0..16.0) && (!careful || still || s.targetNearEdge || impatient))
             SINGULARITY_GRENADE -> at(ItemAim.LOBBED, within(6.0..16.0) && (!careful || still || impatient))
             SINGULARITY_NUKE -> at(ItemAim.LOBBED, within(9.0..18.0) && (!careful || still || impatient))

@@ -7,11 +7,12 @@ import org.bukkit.entity.Player
 
 class BabyBaconBombAbility(player: Player) : ClassicKitAbility("baby_bacon_bomb", player) {
     private var firedAt = 0L
-    override fun canActivate(sendMessage: Boolean) = player.exp >= PigEnergy.cost(player,0.35f) && System.currentTimeMillis()-firedAt >= 500 && super.canActivate(sendMessage)
+    private fun cost() = if (borrowed != null) 0f else PigEnergy.cost(player,0.35f)
+    override fun canActivate(sendMessage: Boolean) = player.exp >= cost() && System.currentTimeMillis()-firedAt >= 500 && super.canActivate(sendMessage)
     override fun activate() {
         if (System.currentTimeMillis()-firedAt < 500) return
         firedAt = System.currentTimeMillis()
-        val cost=PigEnergy.cost(player,0.35f)
+        val cost=cost()
         if(player.exp<cost)return
         player.exp-=cost
         super.activate()

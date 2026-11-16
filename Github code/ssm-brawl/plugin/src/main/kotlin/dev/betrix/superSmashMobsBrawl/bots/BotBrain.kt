@@ -1445,7 +1445,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
 
     private fun kitAbilityIds(): List<String> {
         val kit = KitService.getKitForPlayer(player) ?: return emptyList()
-        return dataService.getKit(kit.id)?.abilities?.map { it.id } ?: emptyList()
+        // The kit's own abilities, then any tool a Mystery Ability handed out.
+        val own = dataService.getKit(kit.id)?.abilities?.map { it.id } ?: emptyList()
+        return own + (kit.abilityIds() - own.toSet())
     }
 
     private fun isReady(id: String): Boolean =

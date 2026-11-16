@@ -29,8 +29,9 @@ import org.koin.core.component.inject
  * damage and ability cooldowns). The changes are kept per player and per kit, between matches.
  *
  * A kit with anything better than normal is Buffed: it plays, but its wins and kills stay off the
- * leaderboard, and its tools turn to wood. A kit that is only worse is Nerfed: it still counts,
- * and its tools turn to gold. The tool material is looks only. Bots always play the normal kit.
+ * leaderboard. A kit that is only worse is Nerfed: it still counts. The tool of a changed ability
+ * turns to wood (better) or gold (worse) and says so in its name; that is looks only. Bots always
+ * play the normal kit.
  */
 object KitStatsService : KoinComponent {
     private val plugin: SuperSmashMobsBrawl by inject()
@@ -125,20 +126,40 @@ object KitStatsService : KoinComponent {
      * Nerfed, and the word at the end of the tooltip. Only the look changes; damage and cooldowns
      * come from the kit, never from the tool.
      */
-    fun dress(player: Player, kitId: String, item: ItemStack): ItemStack {
+    fun dress(player: Player, kitId: String, abilityId: String, item: ItemStack): ItemStack {
         if (BotManager.isBot(player)) return item
         val kit = data.getKit(kitId) ?: return item
-        val verdict = verdict(player.uniqueId, kit)
+        // Each tool answers for its own cooldown; the first one also for the stats of the whole kit.
+        val verdict = statsOf(player.uniqueId, kit).toolVerdict(base(kit), abilityId, kit.abilities.firstOrNull()?.id == abilityId)
         if (verdict == KitVerdict.NORMAL) return item
         val buffed = verdict == KitVerdict.BUFFED
+        val tag = plain("[${verdict.label}]", if (buffed) NamedTextColor.RED else NamedTextColor.GOLD)
         val tool = TOOL.matchEntire(item.type.name)?.let { Material.matchMaterial((if (buffed) "WOODEN_" else "GOLDEN_") + it.groupValues[1]) }
         return (if (tool != null) item.withType(tool) else item.clone()).apply {
             editMeta { meta ->
-                meta.lore((meta.lore() ?: emptyList()) + plain("[${verdict.label}]", if (buffed) NamedTextColor.RED else NamedTextColor.GOLD))
+                // The name is what shows above the hotbar when the tool is selected.
+                meta.customName()?.let { name -> meta.customName(name.append(Component.text(" ")).append(tag)) }
+                meta.lore((meta.lore() ?: emptyList()) + tag)
             }
         }
     }
     private val TOOL = Regex("(?:WOODEN|STONE|COPPER|IRON|GOLDEN|DIAMOND|NETHERITE)_(SWORD|AXE|SHOVEL|PICKAXE|HOE)")
+
+    private val ARMOR_KEY = org.bukkit.NamespacedKey("ssm", "kit_stats_armor")
+
+    /**
+     * Makes the armor bar above the hotbar show a changed armor value (one icon is one armor).
+     * The bar is drawn from what the player wears, so the difference is added on top; a null
+     * [kitId] takes it off again.
+     */
+    fun showArmor(player: Player, kitId: String?) {
+        val attribute = player.getAttribute(org.bukkit.attribute.Attribute.ARMOR) ?: return
+        attribute.modifiers.filter { it.key == ARMOR_KEY }.forEach(attribute::removeModifier)
+        val kit = kitId?.let(data::getKit) ?: return
+        val bonus = armorBonus(player, kit)
+        if (bonus != 0.0) attribute.addTransientModifier(
+            org.bukkit.attribute.AttributeModifier(ARMOR_KEY, bonus * 2, org.bukkit.attribute.AttributeModifier.Operation.ADD_NUMBER))
+    }
 
     /** The tools a player carries around the lobby show the same wood or gold as in a match. */
     private fun refreshPreview(player: Player) {
