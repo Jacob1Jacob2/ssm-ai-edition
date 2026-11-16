@@ -82,7 +82,7 @@ object ItemTactics {
             AWESOME_SOUP -> at(ItemAim.NONE, s.health <= 0.6 - 0.25 * skill || (s.fleeing && s.health <= 0.5))
             GILDED_APPLE -> at(ItemAim.NONE, within(0.0..12.0) || s.health <= 0.6)
             REGENERATE -> at(ItemAim.NONE, s.energy <= 0.3)
-            EXTRA_LIFE -> at(ItemAim.NONE, s.lives < 5 && !s.falling && s.nearestEnemy > 14)
+            EXTRA_LIFE -> at(ItemAim.NONE, s.lives < 8 && !s.falling && s.nearestEnemy > 14)
 
             // --- movement: speed for a chase or an escape, invisibility for an approach or an escape
             SPEED -> at(ItemAim.NONE, s.fleeing || (dist != null && dist > 6))

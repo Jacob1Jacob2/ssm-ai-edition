@@ -150,7 +150,7 @@ class ItemEffects(private val arena: ItemArena) {
             ArenaItem.EXTRA_LIFE -> {
                 val team = arena.game.teamManager.findTeamOf(p) ?: return false
                 val stocks = team.metadata["stocks"] as? Int ?: return false
-                if (stocks >= 5) { extraLifeFailed(p, "You already have five lives."); return false }
+                if (stocks >= MAX_LIVES) { extraLifeFailed(p, "You already have eight lives. You cannot have more."); return false }
                 if (!channeling.add(p.uniqueId)) return false
                 val life = KitService.getKitForPlayer(p)
                 var previous = p.location
@@ -163,7 +163,7 @@ class ItemEffects(private val arena: ItemArena) {
                     } else {
                         previous = p.location; health = p.health
                         if (age == 100) {
-                            team.metadata["stocks"] = min(5, (team.metadata["stocks"] as? Int ?: stocks) + 1)
+                            team.metadata["stocks"] = min(MAX_LIVES, (team.metadata["stocks"] as? Int ?: stocks) + 1)
                             world.playSound(p.location,Sound.ITEM_TOTEM_USE,1f,1f)
                             world.spawnParticle(Particle.TOTEM_OF_UNDYING,p.location.add(0.0,1.0,0.0),120,.5,.8,.5,.25)
                             p.playEffect(EntityEffect.TOTEM_RESURRECT)
@@ -495,6 +495,8 @@ class ItemEffects(private val arena: ItemArena) {
     }
     companion object {
         val cloneOwners = mutableMapOf<UUID, Player>()
+        /** The most lives a fighter can hold, from the menu or from Extra Life. */
+        const val MAX_LIVES = 8
         /** About fifteen blocks up. */
         const val TRAMPOLINE_LAUNCH = 1.6
         const val MIST_RADIUS = 3.5

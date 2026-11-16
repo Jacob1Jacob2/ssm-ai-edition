@@ -10,7 +10,7 @@ import net.kyori.adventure.text.format.TextDecoration
 object ClassicChatService {
     private val ownerId = java.util.UUID.fromString("784cabf9-a8a2-4d39-a381-e716baaf5cbe")
     fun identity(source: org.bukkit.entity.Player): Component {
-        if (source.uniqueId == ownerId) return Component.text("100 ", NamedTextColor.DARK_RED)
+        if (source.uniqueId == ownerId) return Component.text("100 ", NamedTextColor.RED)
             .append(Component.text("GOD", NamedTextColor.WHITE).decorate(TextDecoration.BOLD))
             .append(Component.text(" ${source.name}", NamedTextColor.YELLOW))
         return dev.betrix.superSmashMobsBrawl.bots.BotManager.profileOf(source)?.let {

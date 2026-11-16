@@ -86,7 +86,8 @@ class SmashRulesTest:StringSpec({
         listOf(60,69).forEach {BotIdentity.levelColor(it) shouldBe NamedTextColor.YELLOW}
         listOf(70,79).forEach {BotIdentity.levelColor(it) shouldBe NamedTextColor.GOLD}
         listOf(80,89).forEach {BotIdentity.levelColor(it) shouldBe NamedTextColor.RED}
-        listOf(90,100).forEach {BotIdentity.levelColor(it) shouldBe NamedTextColor.DARK_RED}
+        // The top levels are plain red too: dark red was hard to read in chat.
+        listOf(90,100).forEach {BotIdentity.levelColor(it) shouldBe NamedTextColor.RED}
         BotIdentity.rankColor("elite") shouldBe NamedTextColor.AQUA
         BotIdentity.rankColor("mythic") shouldBe NamedTextColor.GREEN
         BotIdentity.rankColor("mythical") shouldBe NamedTextColor.GREEN

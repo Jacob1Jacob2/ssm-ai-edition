@@ -100,7 +100,9 @@ class TeamBasedStocksObjectiveManager(private val minigame: BrawlMinigame) :
                 }
             }
 
-        minigame.teams.forEach { team -> team.metadata["stocks"] = stocksAmount }
+        // Super Smash Mobs starts with the lives picked in Game Settings (Select Lives).
+        val lives = if (minigame.minigameDef.id == "super_smash_mobs") minigame.settings.lives.coerceIn(1, 8) else stocksAmount
+        minigame.teams.forEach { team -> team.metadata["stocks"] = lives }
 
         // Listen for death events to reduce stocks
         listeners.add(

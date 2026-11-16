@@ -57,6 +57,8 @@ object GameSetupService : KoinComponent {
         var enabledItems: Set<dev.betrix.superSmashMobsBrawl.items.ArenaItem> = dev.betrix.superSmashMobsBrawl.items.ArenaItem.entries.toSet(),
         var botPersonality: BotPersonality = BotPersonality.SILENT,
         var botKits: Map<String,String> = emptyMap(),
+        /** Lives every fighter starts the match with. */
+        var lives: Int = 4,
     ) {
         var reverseMode: ReverseMode
             get() = if (reverseRandom) ReverseMode.RANDOM else if (reverseMap) ReverseMode.ON else ReverseMode.OFF
@@ -115,6 +117,7 @@ object GameSetupService : KoinComponent {
                         parts.getOrNull(14), parts.getOrNull(15)?.toIntOrNull() ?: 0),
                     botPersonality = BotPersonality.restore(parts.getOrNull(16), legacyPersonalities),
                     botKits = parts.getOrNull(17)?.split('|')?.mapNotNull {entry -> entry.split(':').takeIf {it.size==2}?.let {it[0].lowercase() to it[1]}}?.toMap() ?: emptyMap(),
+                    lives = parts.getOrNull(18)?.toIntOrNull()?.coerceIn(1, 8) ?: 4,
                 )
         }
     }
@@ -130,7 +133,7 @@ object GameSetupService : KoinComponent {
         setups.forEach { (uuid, s) ->
             props.setProperty(
                 uuid.toString(),
-                "${s.difficulty?.name?.lowercase() ?: "mixed"},${s.players},${s.items},${s.crystals},${s.itemIntervalSeconds},${s.crystalIntervalSeconds},${s.allBotsVsPlayer},${s.botsIdle},${s.selectedBotNames.joinToString("|")},${s.enabledCrystalTiers.sortedBy {it.ordinal}.joinToString("|") {it.name}},${s.reverseMap},${s.reverseRandom},${s.reflectMode.name},${s.mapScale.name},${s.enabledItems.sortedBy { it.ordinal }.joinToString("|") { it.id }},${dev.betrix.superSmashMobsBrawl.items.ArenaItem.CATALOG_VERSION},${s.botPersonality.name},${s.botKits.entries.joinToString("|") {"${it.key}:${it.value}"}}",
+                "${s.difficulty?.name?.lowercase() ?: "mixed"},${s.players},${s.items},${s.crystals},${s.itemIntervalSeconds},${s.crystalIntervalSeconds},${s.allBotsVsPlayer},${s.botsIdle},${s.selectedBotNames.joinToString("|")},${s.enabledCrystalTiers.sortedBy {it.ordinal}.joinToString("|") {it.name}},${s.reverseMap},${s.reverseRandom},${s.reflectMode.name},${s.mapScale.name},${s.enabledItems.sortedBy { it.ordinal }.joinToString("|") { it.id }},${dev.betrix.superSmashMobsBrawl.items.ArenaItem.CATALOG_VERSION},${s.botPersonality.name},${s.botKits.entries.joinToString("|") {"${it.key}:${it.value}"}},${s.lives}",
             )
         }
         file.parentFile.mkdirs()
@@ -204,7 +207,9 @@ object GameSetupService : KoinComponent {
             COLUMN_PANES.forEachIndexed { i, pane -> set(1 + i, menuItem(pane, "")); set(37 + i, menuItem(pane, "")) }
             for (row in 1..3) set(row * 9 + 6, menuItem(Material.WHITE_STAINED_GLASS_PANE, ""))
 
-            set(8, menuItem(Material.HOPPER, "Change Lobbies", lore = listOf("Current: Lobby ${LobbyService.lobbyOf(player)}", "Choose one of five lobbies"))) { LobbyService.openMenu(player) }
+            set(8, menuItem(Material.HOPPER, "Select Lives", lore = listOf("Current: ${s.lives} ${if (s.lives == 1) "life" else "lives"}", "How many lives every fighter starts with"))) { SetupSelectionMenus.lives(player) }
+            // Moved from the top corner when Select Lives took the hopper.
+            set(52, menuItem(Material.OAK_DOOR, "Change Lobbies", lore = listOf("Current: Lobby ${LobbyService.lobbyOf(player)}", "Choose one of five lobbies"))) { LobbyService.openMenu(player) }
             set(10,menuItem(Material.BARRIER,"None",NamedTextColor.RED,listOf("Bots stand still and do not attack"),"Difficulty" in chosen && s.botsIdle)) {s.botsIdle=true;changed(player)}
             set(17,menuItem(Material.CHEST,"Choose Opponents",lore=listOf("Choose players from the bot roster",if(s.selectedBotNames.isEmpty())"Random opponents" else "${s.selectedBotNames.size}/${s.bots} chosen — random fills the rest"))) {SetupSelectionMenus.opponents(player)}
             DIFFICULTIES.forEachIndexed { i, difficulty ->
@@ -276,7 +281,7 @@ object GameSetupService : KoinComponent {
                 openMenu(player)
             }
             set(47, menuItem(Material.COPPER_SWORD, if (s.allBotsVsPlayer) "${s.bots}v1 — All Bots vs You" else "FFA — Free for All", NamedTextColor.AQUA,
-                listOf("Click to switch match mode", "Every fighter keeps four lives"),selected="Mode" in chosen)) {
+                listOf("Click to switch match mode", "Every fighter has ${s.lives} ${if (s.lives == 1) "life" else "lives"}"),selected="Mode" in chosen)) {
                 s.allBotsVsPlayer = !s.allBotsVsPlayer
                 changed(player)
             }

@@ -50,6 +50,36 @@ object SetupSelectionMenus {
         })
     }
 
+    /** One dye per number of lives, in the colour that number has on the scoreboard. */
+    private val LIFE_DYES=listOf(Material.RED_DYE,Material.ORANGE_DYE,Material.YELLOW_DYE,Material.LIME_DYE,
+        Material.LIGHT_BLUE_DYE,Material.MAGENTA_DYE,Material.WHITE_DYE,Material.CYAN_DYE)
+
+    fun lives(player:Player) {
+        val s=GameSetupService.setupOf(player)
+        player.openInventory(brawlGui(Component.text("Select Lives"),27, selectionEffects=true) {
+            onClick {isCancelled=true}
+            set(9,item(Material.REDSTONE_BLOCK,"Back to Settings")) {GameSetupService.openMenu(player)}
+            LIFE_DYES.forEachIndexed {i,dye ->
+                val count=i+1
+                val selected=s.lives==count
+                set(10+i,item(dye,"",listOf("Every fighter starts with $count ${if(count==1)"life" else "lives"}",
+                    if(selected)"Selected" else "Click to select"),selected).apply {
+                    amount=count
+                    editMeta {
+                        it.displayName(dev.betrix.superSmashMobsBrawl.utils.CombatFeedback.livesText("$count ${if(count==1)"Life" else "Lives"}",count)
+                            .decoration(TextDecoration.ITALIC,false))
+                        // There is no rainbow dye in the game: the pack draws one over the cyan dye.
+                        if(count==8)it.itemModel=org.bukkit.NamespacedKey("ssm","rainbow_dye")
+                    }
+                    SelectionIcons.mark(this,selected)
+                }) {
+                    s.lives=count
+                    GameSetupService.save();GuideMenus.ding(player);lives(player)
+                }
+            }
+        })
+    }
+
     fun opponents(player:Player,page:Int=0) {
         val s=GameSetupService.setupOf(player)
         // Null marks Add Player, separating the built-in roster from custom opponents.

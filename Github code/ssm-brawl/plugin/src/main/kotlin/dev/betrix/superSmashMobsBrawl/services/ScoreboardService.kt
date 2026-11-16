@@ -60,8 +60,8 @@ object ScoreboardService : KoinComponent {
         val rows = game.teams.flatMap { team -> team.players.map { (team.metadata["stocks"] as? Int ?: 0) to (it.name ?: "Player") } }
             .filter { it.first > 0 }
             .sortedWith(compareByDescending<Pair<Int, String>> { it.first }.thenBy { it.second })
-        val lines = mutableListOf(Component.empty(), text("Players", NamedTextColor.YELLOW, true), Component.empty())
-        rows.take(10).forEach { (lives, name) -> lines += text("$lives $name", livesColor(lives)) }
+        val lines = mutableListOf<Component>(Component.empty(), text("Players", NamedTextColor.YELLOW, true), Component.empty())
+        rows.take(10).forEach { (lives, name) -> lines += livesRow("$lives $name", lives) }
         lines += Component.empty()
         lines += text(FOOTER, NamedTextColor.GOLD).append(text(" ${game.displayCode}", NamedTextColor.DARK_GRAY))
         writeLines(board, lines)
@@ -97,14 +97,10 @@ object ScoreboardService : KoinComponent {
     private fun text(s: String, color: TextColor, bold: Boolean = false) =
         Component.text(s, color).decoration(TextDecoration.BOLD, bold)
 
-    private fun livesColor(lives: Int): NamedTextColor =
-        when {
-            lives >= 5 -> NamedTextColor.AQUA
-            lives == 4 -> NamedTextColor.GREEN
-            lives == 3 -> NamedTextColor.YELLOW
-            lives == 2 -> NamedTextColor.GOLD
-            else -> NamedTextColor.RED
-        }
+    /** A player row in the colour of their lives; eight lives are a rainbow that keeps moving. */
+    private fun livesRow(row: String, lives: Int): Component =
+        dev.betrix.superSmashMobsBrawl.utils.CombatFeedback.livesText(row, lives, (System.currentTimeMillis() / 500).toInt())
+            .decoration(TextDecoration.BOLD, false)
 
     private fun difficultyColor(d: BotDifficulty?): NamedTextColor =
         when (d) {
@@ -262,7 +258,7 @@ object ScoreboardService : KoinComponent {
         lines += Component.empty()
         shown.forEach { (lives, name) ->
             val label = Bukkit.getPlayerExact(name)?.let { BotManager.displayNameOf(it) } ?: name
-            val row = if (lives == null) text(label, NamedTextColor.WHITE) else text("$lives $label", livesColor(lives))
+            val row = if (lives == null) text(label, NamedTextColor.WHITE) else livesRow("$lives $label", lives)
             lines += if (ResourcePackService.hasPack(viewer)) row.font(ResourcePackService.SIDEBAR_PLAYER_FONT) else row
         }
         if (shown.size < rows.size) lines += text("+${rows.size - shown.size} more", NamedTextColor.GRAY).let {

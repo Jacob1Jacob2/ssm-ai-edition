@@ -114,6 +114,11 @@ object MenuAssets {
             files["assets/ssm/models/item/$name.json"]="""{"parent":"minecraft:item/generated","textures":{"layer0":"ssm:item/$name"},$CENTERED_EYE_GUI}""".toByteArray()
             files["assets/ssm/items/$name.json"]="""{"model":{"type":"minecraft:model","model":"ssm:item/$name"}}""".toByteArray()
         }
+        // Eight lives: a dye whose colours run through the rainbow.
+        files["assets/ssm/textures/item/rainbow_dye.png"] = rainbowDye()
+        files["assets/ssm/textures/item/rainbow_dye.png.mcmeta"] = """{"animation":{"frametime":2,"interpolate":false}}""".toByteArray()
+        files["assets/ssm/models/item/rainbow_dye.json"] = """{"parent":"minecraft:item/generated","textures":{"layer0":"ssm:item/rainbow_dye"}}""".toByteArray()
+        files["assets/ssm/items/rainbow_dye.json"] = """{"model":{"type":"minecraft:model","model":"ssm:item/rainbow_dye"}}""".toByteArray()
         for (name in listOf("menu_back", "menu_start")) {
             files["assets/ssm/textures/item/$name.png"] = navigationTexture(name == "menu_start")
             files["assets/ssm/models/item/$name.json"] = """{"parent":"minecraft:item/generated","textures":{"layer0":"ssm:item/$name"}}""".toByteArray()
@@ -214,6 +219,27 @@ object MenuAssets {
             }
         }
         return png(img)
+    }
+    /**
+     * A lump of dye in the shape of the vanilla ones, striped through the rainbow from left to
+     * right, with the stripes sliding along over 24 frames.
+     */
+    internal fun rainbowDye(): ByteArray {
+        // First and last filled column of each row, from row 4 down: the outline of a dye.
+        val rows=listOf(6 to 10,4 to 11,3 to 12,2 to 13,2 to 13,2 to 13,3 to 12,4 to 11,6 to 10)
+        val frames=24
+        val image=java.awt.image.BufferedImage(16,16*frames,java.awt.image.BufferedImage.TYPE_INT_ARGB)
+        fun inside(x:Int,y:Int)=rows.getOrNull(y-4)?.let {x in it.first..it.second} == true
+        for(frame in 0 until frames) for(y in 4..12) for(x in 2..13) {
+            if(!inside(x,y))continue
+            val edge=!inside(x-1,y)||!inside(x+1,y)||!inside(x,y-1)||!inside(x,y+1)
+            val hue=Math.floorMod(x*2+y-frame,frames)/frames.toFloat()
+            // Lit from the top left like the vanilla dyes, with a darker rim.
+            val light=when {edge && (y>=9||x>=11) -> .55f; edge -> .78f; y<=6 && x<=7 -> 1f; else -> .92f}
+            val saturation=if(!edge && y<=6 && x<=7).55f else .85f
+            image.setRGB(x,frame*16+y,java.awt.Color.HSBtoRGB(hue,saturation,light) or (0xFF shl 24))
+        }
+        return png(image)
     }
     private fun selectionShimmer(showCheck:Boolean=true): ByteArray {
         val image=java.awt.image.BufferedImage(16,16*24,java.awt.image.BufferedImage.TYPE_INT_ARGB)

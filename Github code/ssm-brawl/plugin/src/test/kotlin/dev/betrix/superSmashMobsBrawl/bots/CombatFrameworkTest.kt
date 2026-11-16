@@ -334,6 +334,30 @@ class CombatFrameworkTest : StringSpec({
         plan(ArenaItem.POISON_MIST, fight, BotDifficulty.NORMAL) shouldBe ItemAim.LOBBED
         plan(ArenaItem.MYSTERY_ABILITY, calm) shouldBe ItemAim.NONE
     }
+    "lives go up to eight: an extra life is worth taking until then, and each count has its colour" {
+        plan(ArenaItem.EXTRA_LIFE, calm.copy(nearestEnemy = 30.0, lives = 7)) shouldBe ItemAim.NONE
+        plan(ArenaItem.EXTRA_LIFE, calm.copy(nearestEnemy = 30.0, lives = 8)) shouldBe null
+        dev.betrix.superSmashMobsBrawl.items.ItemEffects.MAX_LIVES shouldBe 8
+        val feedback = dev.betrix.superSmashMobsBrawl.utils.CombatFeedback
+        val named = net.kyori.adventure.text.format.NamedTextColor.NAMES
+        (1..7).map { named.key(feedback.livesColor(it)) } shouldBe listOf("red", "gold", "yellow", "green", "aqua", "light_purple", "white")
+        // Eight lives: every letter its own colour, and the colours move with the shift.
+        val plainText = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
+        val rainbow = feedback.livesText("8 Jacob", 8)
+        plainText.serialize(rainbow) shouldBe "8 Jacob"
+        rainbow.children().map { it.color() }.toSet().size shouldBe 7
+        (feedback.livesText("8 Jacob", 8, 3) == rainbow) shouldBe false
+        feedback.livesText("7 Jacob", 7).children().size shouldBe 0
+    }
+    "the rainbow dye is a dye-shaped icon whose colours slide from frame to frame" {
+        val image = javax.imageio.ImageIO.read(java.io.ByteArrayInputStream(dev.betrix.superSmashMobsBrawl.services.MenuAssets.rainbowDye()))
+        image.width shouldBe 16
+        (image.height % 16) shouldBe 0
+        (image.getRGB(0, 0) ushr 24) shouldBe 0
+        (image.getRGB(8, 8) ushr 24) shouldBe 255
+        (image.getRGB(8, 8) == image.getRGB(8, 8 + 16 * 6)) shouldBe false
+        (image.getRGB(4, 8) == image.getRGB(11, 8)) shouldBe false
+    }
     "the teleporter answers an opponent nothing can walk to" {
         plan(ArenaItem.INSTANT_TELEPORTER, fight.copy(targetDistance = 15.0, targetUnreachable = true)) shouldBe ItemAim.TARGET
         plan(ArenaItem.INSTANT_TELEPORTER, fight.copy(targetDistance = 15.0), BotDifficulty.NORMAL) shouldBe ItemAim.TARGET
@@ -374,7 +398,7 @@ class CombatFrameworkTest : StringSpec({
     "an extra life is only channelled with nobody near" {
         plan(ArenaItem.EXTRA_LIFE, calm.copy(nearestEnemy = 30.0)) shouldBe ItemAim.NONE
         plan(ArenaItem.EXTRA_LIFE, calm.copy(nearestEnemy = 8.0)) shouldBe null
-        plan(ArenaItem.EXTRA_LIFE, calm.copy(nearestEnemy = 30.0, lives = 5)) shouldBe null
+        plan(ArenaItem.EXTRA_LIFE, calm.copy(nearestEnemy = 30.0, lives = 8)) shouldBe null
     }
     "skill combos are flawless for Expert and often dropped by Normal" {
         val kit = object : KitBehavior {

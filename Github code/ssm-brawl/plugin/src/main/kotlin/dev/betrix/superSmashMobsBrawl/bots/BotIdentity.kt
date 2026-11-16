@@ -14,7 +14,6 @@ object BotIdentity {
     }
     fun rollLevel(difficulty: BotDifficulty) = levels(difficulty).random()
     fun levelColor(level: Int): NamedTextColor = when {
-        level >= 90 -> NamedTextColor.DARK_RED
         level >= 80 -> NamedTextColor.RED
         level >= 70 -> NamedTextColor.GOLD
         level >= 60 -> NamedTextColor.YELLOW
