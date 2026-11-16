@@ -208,8 +208,6 @@ object GameSetupService : KoinComponent {
             for (row in 1..3) set(row * 9 + 6, menuItem(Material.WHITE_STAINED_GLASS_PANE, ""))
 
             set(8, menuItem(Material.HOPPER, "Select Lives", lore = listOf("Current: ${s.lives} ${if (s.lives == 1) "life" else "lives"}", "How many lives every fighter starts with"))) { SetupSelectionMenus.lives(player) }
-            // Moved from the top corner when Select Lives took the hopper.
-            set(52, menuItem(Material.OAK_DOOR, "Change Lobbies", lore = listOf("Current: Lobby ${LobbyService.lobbyOf(player)}", "Choose one of five lobbies"))) { LobbyService.openMenu(player) }
             set(10,menuItem(Material.BARRIER,"None",NamedTextColor.RED,listOf("Bots stand still and do not attack"),"Difficulty" in chosen && s.botsIdle)) {s.botsIdle=true;changed(player)}
             set(17,menuItem(Material.CHEST,"Choose Opponents",lore=listOf("Choose players from the bot roster",if(s.selectedBotNames.isEmpty())"Random opponents" else "${s.selectedBotNames.size}/${s.bots} chosen — random fills the rest"))) {SetupSelectionMenus.opponents(player)}
             DIFFICULTIES.forEachIndexed { i, difficulty ->
@@ -314,7 +312,7 @@ object GameSetupService : KoinComponent {
     fun startGame(player: Player) {
         val lobbyId = LobbyService.lobbyOf(player)
         if (LobbyService.busy(lobbyId)) {
-            player.sendMessage(plain("Lobby $lobbyId already has a game. Wait here or use Change Lobbies.", NamedTextColor.YELLOW))
+            player.sendMessage(plain("Lobby $lobbyId already has a game. Wait here or type /lobby to change lobbies.", NamedTextColor.YELLOW))
             return
         }
         if (minigameService.isPlayerInMinigame(player)) {

@@ -58,10 +58,17 @@ object LobbyInfoService {
             else if (s.crystalIntervalSeconds < 0) "Random 1-15 min"
             else "Every ${s.crystalIntervalSeconds / 60} min"
         return listOf(MapVoteService.selectedMapName(player),
-            "Difficulty: ${s.difficultyName} - $mode - ${opponents + 1} Players",
+            "Difficulty: ${s.difficultyName} - $mode - ${opponents + 1} Players - ${livesLabel(s.lives)}",
             "Items: $items - Smash Crystals: $crystals",
             "Reverse: ${s.reverseMode.label} - Reflect: ${s.reflectMode.label} - ${s.mapScale.label}")
     }
+
+    private fun livesLabel(lives: Int) = "$lives ${if (lives == 1) "Life" else "Lives"}"
+    /** The scoreboard colour of each number of lives, in concrete; eight is every colour in turn. */
+    private val LIFE_BLOCKS = listOf(Material.RED_CONCRETE, Material.ORANGE_CONCRETE, Material.YELLOW_CONCRETE, Material.LIME_CONCRETE,
+        Material.LIGHT_BLUE_CONCRETE, Material.MAGENTA_CONCRETE, Material.WHITE_CONCRETE)
+    private val RAINBOW_BLOCKS = listOf(Material.RED_CONCRETE, Material.ORANGE_CONCRETE, Material.YELLOW_CONCRETE, Material.LIME_CONCRETE,
+        Material.LIGHT_BLUE_CONCRETE, Material.BLUE_CONCRETE, Material.MAGENTA_CONCRETE)
 
     fun refresh() {
         val players = worlds.flatMap { it.players }.filterNot(dev.betrix.superSmashMobsBrawl.bots.BotManager::isBot).associateBy { it.uniqueId }
@@ -127,6 +134,11 @@ object LobbyInfoService {
                 })
                 val count = if (s.selectedBotNames.isEmpty()) s.bots else s.selectedBotNames.size
                 if (s.allBotsVsPlayer) { mark("${count}v1", Material.RED_CONCRETE); letters[line.indexOf("${count}v1") + "${count}v".length] = Material.LIME_CONCRETE }
+                // Last on the line, so nothing before it can be mistaken for it.
+                val label = livesLabel(s.lives)
+                val from = line.lastIndexOf(label)
+                if (from >= 0) for (i in label.indices) letters[from + i] =
+                    if (s.lives >= 8) RAINBOW_BLOCKS[i % RAINBOW_BLOCKS.size] else LIFE_BLOCKS[(s.lives - 1).coerceIn(0, LIFE_BLOCKS.lastIndex)]
             }
             // The same green-to-red scale as the dyes and candles in the settings menu.
             val scale = listOf(Material.LIME_CONCRETE, Material.YELLOW_CONCRETE, Material.ORANGE_CONCRETE, Material.RED_CONCRETE)

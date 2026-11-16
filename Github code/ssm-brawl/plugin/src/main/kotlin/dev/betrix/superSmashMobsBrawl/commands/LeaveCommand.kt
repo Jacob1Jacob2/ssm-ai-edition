@@ -14,7 +14,7 @@ import org.bukkit.entity.Player
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 
-@Command(name = "leave", aliases = ["hub", "lobby", "l"])
+@Command(name = "leave", aliases = ["hub", "l"])
 class LeaveCommand : KoinComponent {
     private val lang: LangService by inject()
     private val minigameService: MinigameService by inject()

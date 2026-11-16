@@ -697,6 +697,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
 
     private fun nearestItem(): Location? {
         ignoredItems.entries.removeIf { it.value <= tick }
+        // A Mystery Ability's copper tool is an item in hand: nothing else can be picked up with it.
+        if ((0..8).any { dev.betrix.superSmashMobsBrawl.abilities.MysteryAbility.isBorrowed(player.inventory.getItem(it)) }) return null
         val here = player.location
         return ItemService.pickupLocations(player)
             .filter { it.world == here.world && itemKey(it) !in ignoredItems && abs(it.y - here.y) < 12 }

@@ -133,6 +133,7 @@ object HubService : KoinComponent {
                 return@event
             }
             giveHubPassives(player)
+            if (!dev.betrix.superSmashMobsBrawl.bots.BotManager.isBot(player)) LobbyService.announce(player)
             if (!dev.betrix.superSmashMobsBrawl.bots.BotManager.isBot(player)) {
                 val message = lang.t("messages.players.joinServer") { "playerName" to player.name }
                 plugin.server.onlinePlayers.filter { LobbyService.sameChannel(player.uniqueId, it.uniqueId) }.forEach { it.sendMessage(message) }

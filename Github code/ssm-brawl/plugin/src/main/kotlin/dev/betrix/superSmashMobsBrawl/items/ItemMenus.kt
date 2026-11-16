@@ -45,6 +45,7 @@ object ItemMenus {
                             .decoration(TextDecoration.ITALIC, false)) else emptyList())
                     it.setEnchantmentGlintOverride(kind == ArenaItem.SHOTBOW || (select && enabled))
                 } }
+                ItemPresentation.plainTooltip(icon)
                 // Intrinsic Shotbow glint is independent of the menu selection.
                 dev.betrix.superSmashMobsBrawl.services.SelectionIcons.mark(icon, select && enabled)
                 set(9 + index, icon) {

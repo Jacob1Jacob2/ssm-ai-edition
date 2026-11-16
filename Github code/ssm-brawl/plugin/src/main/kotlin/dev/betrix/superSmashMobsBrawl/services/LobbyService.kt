@@ -58,8 +58,15 @@ object LobbyService : KoinComponent {
         assign(player, target)
         val result = HubService.teleportToDefaultHub(player)
         if (result.isErr) { assign(player, previous); return false }
-        player.sendMessage(Component.text("Joined Lobby $target", GREEN))
+        announce(player)
         return true
+    }
+    /** "Lobby> You joined Lobby 3. Type /lobby to change lobbies." in the same style as the other notices. */
+    fun announce(player: Player) {
+        player.sendMessage(Component.text("Lobby> ", BLUE)
+            .append(Component.text("You joined ", GRAY)).append(Component.text("Lobby ${lobbyOf(player)}", YELLOW))
+            .append(Component.text(". Type ", GRAY)).append(Component.text("/lobby", YELLOW))
+            .append(Component.text(" to change lobbies.", GRAY)))
     }
     fun openMenu(player: Player) {
         player.openInventory(brawlGui(Component.text("Change Lobbies"), 27) {
@@ -73,7 +80,7 @@ object LobbyService : KoinComponent {
                     player.closeInventory(); changeLobby(player, id)
                 }
             }
-            set(22, GuideMenus.item(Material.REDSTONE_BLOCK, "Back to Settings", color = RED)) { GameSetupService.openMenu(player) }
+            set(22, GuideMenus.item(Material.REDSTONE_BLOCK, "Close", color = RED)) { player.closeInventory() }
         })
     }
     fun teardown() { hubs.clear(); reservations.clear(); channels.clear(); membership.clear() }

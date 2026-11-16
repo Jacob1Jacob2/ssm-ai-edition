@@ -173,7 +173,8 @@ object ScoreboardService : KoinComponent {
         val lines = listOf(
             Component.empty(),
             text("Players", NamedTextColor.YELLOW, bold = true),
-            text("${setup.players} (You + ${setup.bots} AI)", NamedTextColor.WHITE),
+            text("${setup.players} (You + ${setup.bots} AI)  ", NamedTextColor.WHITE)
+                .append(livesRow("${setup.lives} ${if (setup.lives == 1) "Life" else "Lives"}", setup.lives)),
             Component.empty(),
             text("Map", NamedTextColor.RED, bold = true),
             text(MapVoteService.selectedMapName(viewer), NamedTextColor.WHITE),

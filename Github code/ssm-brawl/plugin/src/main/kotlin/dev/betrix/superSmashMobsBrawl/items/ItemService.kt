@@ -81,6 +81,7 @@ object ItemService : KoinComponent {
                 .decoration(TextDecoration.ITALIC, false)))
             it.setEnchantmentGlintOverride(kind == ArenaItem.SHOTBOW || kind == ArenaItem.KNOCKBACK_ROD)
         }
+        ItemPresentation.plainTooltip(this)
         if (kind.uses > 1) ItemPresentation.durability(this, count, kind.uses)
         if (kind == ArenaItem.RAIN_STAFF) setData(io.papermc.paper.datacomponent.DataComponentTypes.BLOCKS_ATTACKS,
             io.papermc.paper.datacomponent.item.BlocksAttacks.blocksAttacks().build())
@@ -121,8 +122,10 @@ object ItemService : KoinComponent {
             player.inventory.setItem(slot, dev.betrix.superSmashMobsBrawl.utils.AbilityTools.prepare(item))
         } else {
             // Check the whole inventory, including the offhand, not just the selected slot.
+            // A Mystery Ability's copper tool is still that item, until its last use.
             if (player.inventory.contents.any { held ->
-                kind(held)?.let { !it.tool && it != ArenaItem.DIAMOND_HELMET } == true
+                kind(held)?.let { !it.tool && it != ArenaItem.DIAMOND_HELMET } == true ||
+                    dev.betrix.superSmashMobsBrawl.abilities.MysteryAbility.isBorrowed(held)
             }) return false
             val slot = (0..8).firstOrNull { player.inventory.getItem(it)?.type?.isAir != false } ?: return false
             player.inventory.setItem(slot, stack(kind).also { it.type = ItemPresentation.material(kind, player) })

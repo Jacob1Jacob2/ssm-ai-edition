@@ -120,6 +120,7 @@ class SuperSmashMobsBrawl : SuspendingJavaPlugin(), KoinComponent {
                 .commands(QueueCommand())
                 .commands(KitCommand())
                 .commands(LeaveCommand())
+                .commands(dev.betrix.superSmashMobsBrawl.commands.LobbyCommand())
                 .commands(DebugCommand())
                 .commands(ColorsCommand())
                 .commands(ScanMapsCommand())

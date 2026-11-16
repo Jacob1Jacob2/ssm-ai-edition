@@ -84,7 +84,7 @@ enum class ArenaItem(val label: String, val material: Material, val uses: Int,
     POCKET_TRAMPOLINE("Pocket Trampoline", Material.SLIME_BLOCK, 1, ItemRarity.UNCOMMON,
         "Right-click to put a 3x3 slime pad under your feet and launch yourself high into the air. The pad fades after five seconds."),
     POISON_MIST("Poison Mist", Material.PUFFERFISH, 1, ItemRarity.UNCOMMON,
-        "Right-click to throw. After three seconds it bursts into a mist that lingers for five seconds and poisons everyone who touches it for six seconds."),
+        "Right-click to throw. After three seconds it bursts into a mist that lingers for five seconds and gives everyone who touches it Poison II for six seconds."),
     MYSTERY_ABILITY("Mystery Ability", Material.ORANGE_BUNDLE, 1, ItemRarity.LEGENDARY,
         "Right-click for a random ability from another kit, as a copper tool with seven uses and half the usual cooldown.");
 

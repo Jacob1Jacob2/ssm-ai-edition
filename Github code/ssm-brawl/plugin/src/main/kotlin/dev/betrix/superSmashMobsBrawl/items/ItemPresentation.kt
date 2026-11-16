@@ -22,6 +22,13 @@ object ItemPresentation {
         }
         else -> kind.material
     }
+    /** A bundle says "Can hold a mixed stack of items" and draws an empty box: neither belongs on an arena item. */
+    fun plainTooltip(item: ItemStack) {
+        if (!item.type.name.endsWith("BUNDLE")) return
+        item.unsetData(DataComponentTypes.BUNDLE_CONTENTS)
+        item.setData(DataComponentTypes.TOOLTIP_DISPLAY, io.papermc.paper.datacomponent.item.TooltipDisplay.tooltipDisplay()
+            .addHiddenComponents(DataComponentTypes.BUNDLE_CONTENTS).build())
+    }
     /** Zero damage hides the native bar until a charge has actually been used. */
     fun durability(item: ItemStack, remaining: Int, maximum: Int) {
         item.editMeta { it.isUnbreakable = false }

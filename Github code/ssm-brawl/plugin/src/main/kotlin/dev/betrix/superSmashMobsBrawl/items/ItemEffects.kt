@@ -374,7 +374,7 @@ class ItemEffects(private val arena: ItemArena) {
         world.playSound(p.location, Sound.BLOCK_SLIME_BLOCK_PLACE, 1f, 1f)
         world.playSound(p.location, Sound.ENTITY_SLIME_JUMP, 1f, .8f)
     }
-    /** A cloud that lingers for five seconds. Everyone in it, the thrower too, is poisoned once, for six seconds. */
+    /** A cloud that lingers for five seconds. Everyone in it, the thrower too, gets Poison II once, for six seconds. */
     private fun mist(owner: Player, at: Location) {
         val poisoned = mutableSetOf<UUID>()
         val green = Particle.DustOptions(Color.fromRGB(96, 190, 60), 1.8f)
@@ -387,7 +387,7 @@ class ItemEffects(private val arena: ItemArena) {
             }
             if (age % 20 == 0) world.playSound(at, Sound.ENTITY_PUFFER_FISH_BLOW_OUT, .5f, .7f)
             arena.players().filter { it.location.distanceSquared(at) <= MIST_RADIUS * MIST_RADIUS && poisoned.add(it.uniqueId) }.forEach { victim ->
-                potion(victim, PotionEffectType.POISON, POISON_TICKS)
+                potion(victim, PotionEffectType.POISON, POISON_TICKS, 1)
                 if (victim != owner) dev.betrix.superSmashMobsBrawl.services.CombatLogService.recordKnockback(victim, owner, ArenaItem.POISON_MIST.label)
             }
             true
