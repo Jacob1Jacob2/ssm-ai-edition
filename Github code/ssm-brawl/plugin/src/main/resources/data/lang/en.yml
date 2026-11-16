@@ -1,0 +1,513 @@
+kits:
+  hub:
+    name: Hub
+    description: This is the hub kit
+    color: '#55ff55'
+  creeper:
+    name: Creeper
+    description: Low armor, rapid regeneration, and explosive knockback.
+    color: '#55ff55'
+  skeleton:
+    name: Skeleton
+    description: Keep enemies at range with arrows, Barrage, and Bone Explosion.
+    color: '#ffff55'
+  zombie:
+    name: Zombie
+    description: Versatile brawler with corrosive bile and relentless grapples
+    color: '#55ff55'
+  cow:
+    name: Cow
+    description: Build speed with Stampede, send out Angry Herd, and charge with Milk
+      Spiral.
+    color: '#55ff55'
+  pig:
+    name: Pig
+    description: Spam energy bacon to harass foes, but mind your weak recovery
+    color: '#55ff55'
+  sheep:
+    name: Sir. Sheep
+    description: Charge Static Laser, lay Wool Mines, and recover with Wooly Rocket.
+    color: '#ff00ff'
+  horse:
+    name: Skeletal Horse
+    description: Close-range kicks, rushing bones, and explosive counterattacks.
+    color: '#55ff55'
+  chicken:
+    name: Chicken
+    description: High mobility flier with eggs and a peck of explosives
+    color: '#55ff55'
+  enderman:
+    name: Enderman
+    color: '#55ff55'
+  spider:
+    name: Spider
+    description: Web-slinging skirmisher with agile mobility
+    color: '#ffff55'
+  witch:
+    name: Witch
+    description: Zone with potions and bats, but beware fragile recovery
+    color: '#55ff55'
+  squid:
+    name: Sky Squid
+    description: Squid is an all-around solid defensive kit
+    color: '#55ff55'
+  guardian:
+    name: Guardian
+    description: Control the tides with lasers, whirlpools, and resilient armor
+    color: '#55ff55'
+  slime:
+    name: Slime
+    description: Glass cannon jumper with unmatched regen and explosive bursts
+    color: '#ffff55'
+  iron_golem:
+    name: Iron Golem
+    description: Slow but tanky bruiser with devastating melee and knockback
+    color: '#ffff55'
+  snowman:
+    name: Snowman
+    description: Close-range brawler that freezes foes and excels at ledge pressure
+    color: '#55ff55'
+  mooshroom:
+    name: Mooshroom
+    description: A brawler with strawberry milk, mushroom walls and absorption.
+    color: '#55ff55'
+  blaze:
+    name: Blaze
+    color: '#55ff55'
+  wolf:
+    name: Wolf
+    color: '#55ff55'
+  magma_cube:
+    name: Magma Cube
+    color: '#55ff55'
+  wither_skeleton:
+    name: Wither Skeleton
+    color: '#55ff55'
+  villager:
+    name: Villager
+    color: '#ff00ff'
+  goat:
+    name: Goat
+    description: Charge powerful leaps, piercing screams and diving rams.
+    color: '#ffff55'
+  phantom:
+    name: Phantom
+    description: Fly, bomb enemies and scatter branching membranes.
+    color: '#ff00ff'
+  polar_bear:
+    name: Polar Bear
+    description: Catch cooked fish to build a fish barrage, throw cubs and dive into battle.
+    color: '#ff00ff'
+abilities:
+  fish_gun:
+    name: Fish Gun
+    description: Scatter raw fish for 1.5 damage each, keeping one on your crosshair. A successful volley drops one cooked fish; eat it to gain one of eight XP stacks. Stacks add fish (up to eight) and reduce recharge by 0.2 seconds. A missed volley loses two stacks.
+  cub_carrier:
+    name: Cub Carrier
+    description: Throw a killable cub with 12 health and 3 attack damage. It chases opponents until killed or your life ends.
+  bitter_smash:
+    name: Bitter Smash
+    description: Hold your sword to leap upward, then release to dive in the direction you are facing.
+  sulphur_bomb:
+    name: Sulphur Bomb
+    description: Throw an explosive coal projectile.
+  explode:
+    name: Explode
+    description: Charge an explosion that launches you and nearby opponents.
+  bone_blast:
+    name: Bone Explosion
+    description: Scatter bones and knock nearby enemies away.
+  roped_arrow:
+    name: Roped Arrow
+    description: Fire an arrow and pull yourself along its path.
+  bile_blaster:
+    name: Spew Bile
+    description: Launch a caustic bile shot that primes enemies for follow-up strikes
+  deaths_grasp:
+    name: Death's Grasp
+    description: Leap forward and collide with enemies to throw them behind you
+    hit: '{lang:prefix} <text>You hit <primary>{target}</primary> <text>with <primary>{lang:abilities.{abilityId}.name}'
+    hitBy: '{lang:prefix} <warning>{attacker}</warning> <text>hit you with <warning>{lang:abilities.{abilityId}.name}'
+  blink:
+    name: Blink
+    description: Teleport forward in the direction you are looking.
+  block_toss:
+    name: Block Toss
+    description: Hold to pick up a block, then release to throw it.
+  angry_herd:
+    name: Angry Herd
+    description: Send a herd of cows charging toward your opponents.
+  milk_spiral:
+    name: Milk Spiral
+    description: Launch a double helix of milk. Sneak to fire without moving.
+  bouncy_bacon:
+    name: Bouncy Bacon
+    description: Throw bacon that rebounds toward you. Catch it to recover energy;
+      cooked bacon also heals.
+  baby_bacon_bomb:
+    name: Baby Bacon Bomb
+    description: Detonate a baby piglet blast that pops you upward and scorches enemies
+  egg_blaster:
+    name: Egg Blaster
+    description: Hold to fire rapid eggs that slow foes
+  chicken_missile:
+    name: Chicken Missile
+    description: Launch a baby chick that explodes on impact
+  needler:
+    name: Needler
+    description: Spray a burst of piercing arrows at nearby foes
+  spin_web:
+    name: Spin Web
+    description: Launch forward while leaving a slowing web trail
+  daze_potion:
+    name: Daze Potion
+    description: Throw a water potion that shatters on impact, damaging and slowing
+      nearby foes.
+  bat_wave:
+    name: Bat Wave
+    description: Burst forward on a surge of bats to swat enemies aside
+  ink_shotgun:
+    name: Ink Shotgun
+    description: Blast close foes with a spread of ink pellets
+  super_squid:
+    name: Super Squid
+    description: Dash in a slick ink burst to reposition safely
+  fish_flurry:
+    name: Fish Flurry
+    description: Aim at the ground to summon a warning splash, followed by a rising
+      barrage of fish.
+  whirlpool_axe:
+    name: Whirlpool Axe
+    description: Hurl a spinning axe that drags foes toward its vortex
+  water_splash:
+    name: Water Splash
+    description: Burst upward on a wave of water to recover and reposition
+  target_laser:
+    name: Target Laser
+    description: Lock onto a foe with your laser to amplify damage and knockback
+  slime_rocket:
+    name: Slime Rocket
+    description: Charge up and launch a slime that grows stronger the longer you hold
+    released: '{lang:prefix} <text>You released <primary>Slime Rocket'
+  slime_slam:
+    name: Slime Slam
+    description: Crash downward and rebound to safety
+    hit: '{lang:prefix} <text>You hit <primary>{target}</primary> <text>with <primary>{lang:abilities.{abilityId}.name}'
+    hitBy: '{lang:prefix} <warning>{attacker}</warning> <text>hit you with <warning>{lang:abilities.{abilityId}.name}'
+  iron_hook:
+    name: Iron Hook
+    description: Hook enemies and yank them toward you
+  seismic_slam:
+    name: Seismic Slam
+    description: Leap high then slam to rattle every grounded foe
+  fissure:
+    name: Fissure
+    description: Smash the ground to raise a damaging fissure that launches enemies
+  blizzard:
+    name: Blizzard
+    description: Unleash a flurry of snow that blankets enemies in frost
+  ice_path:
+    name: Ice Path
+    description: Ride a slippery trail of ice to recover or chase foes
+  snow_turret:
+    name: Snow Turret
+    description: Summon a frosty sentry that peppers enemies with snowballs
+  strawbury_swirl:
+    name: Strawberry Swirl
+    description: Spray strawberry milk for 4.5 damage. Knock enemies into walls for
+      3.5 additional damage.
+  moostrike:
+    name: Moostrike
+    description: Grab a nearby enemy and slam them into the ground for devastating
+      impact
+  fungal_trampoline:
+    name: Fungal Trampoline
+    description: Create a mushroom trampoline that launches anyone standing on it.
+      Recharges in 12 seconds.
+  bone_kick:
+    name: Bone Kick
+    description: Brace yourself and kick nearby enemies away.
+  bone_rush:
+    name: Bone Rush
+    description: Rush forward in a stream of bones. Sneak to stay in place.
+  static_laser:
+    name: Static Laser
+    description: Charge a beam and release it toward your opponents.
+  wool_mine:
+    name: Wool Mine
+    description: Throw an explosive block of wool that launches nearby opponents.
+  wooly_rocket:
+    name: Wooly Rocket
+    description: Launch yourself forward in a burst of flaming wool.
+  inferno:
+    name: Inferno
+    description: Hold your sword to throw individual burning embers that arc through
+      the air.
+  firefly:
+    name: Firefly
+    description: Charge, then fly forward invincibly. Strong hits interrupt the charge.
+  cub_tackle:
+    name: Cub Tackle
+    description: Throw a wolf cub that slows and drags down its target. The cub lasts
+      3.5 seconds.
+  wolf_strike:
+    name: Wolf Strike
+    description: Leap into an enemy. Tackled targets receive extra knockback.
+  magma_blast:
+    name: Magma Blast
+    description: Fire a deflectable magma ball and recoil in the opposite direction.
+  flame_dash:
+    name: Flame Dash
+    description: Dash horizontally in flames, then explode. Right-click again to end
+      early.
+  guided_wither_skull:
+    name: Guided Wither Skull
+    description: Hold to guide a skull with your aim. Release to launch it.
+  wither_image:
+    name: Wither Image
+    description: Summon a fighting clone. Right-click again to swap places.
+  wither_swap:
+    name: Wither Swap
+    description: Swap positions with your image. Two-second recharge.
+  sonic_hurr:
+    name: Sonic Hurr
+    description: Shout a cone of sound that damages and knocks back enemies.
+  trade_scatter:
+    name: Trade Scatter
+    description: Scatter trade goods and propel yourself according to your active
+      art.
+  villager_arts:
+    name: Villager Arts
+    description: Right-click to prepare an art; press drop to activate it for ten
+      seconds. Each art recharges separately.
+  goated_hurr:
+    name: Goated Hurr
+    description: A piercing musical scream grows from 1 to 9 damage over 14 blocks.
+  goated_ram:
+    name: Goated Ram
+    description: Launch upward, then click again to ram down and forward. Gain Speed
+      I and stronger melee attacks.
+  mushroom_wall:
+    name: Spore Wall
+    description: Raise a red mushroom wall. Touching enemies take damage and knockback.
+  ravenous_membrane:
+    name: Ravenous Membrane
+    description: Throw a membrane that splits into five on hit. Fragments bounce twice
+      and can split again.
+  phantom_flight:
+    name: Phantom Flight
+    description: Fly using energy. Sneak to drop bombs. Higher flight drains more
+      fuel; recharge on the ground.
+maps:
+  blue_forest:
+    name: Blue Forest
+    description: The pirates have taken over!
+  campsite:
+    name: Campsite
+    description: A cozy getaway
+minigames:
+  prototyping:
+    name: Prototyping
+    description: For all of your testing needs
+  two_player_duels:
+    name: 1v1 Duels
+    description: A competitive 1v1 game mode
+  mystery_kit:
+    name: Mystery Kits
+    description: Respawn with a random kit after each death!
+  super_smash_mobs:
+    name: Super Smash Mobs
+    description: Four lives. Last mob standing wins.
+prefix: <blue>Game></blue><reset>
+messages:
+  debug: '{lang:prefix} <text-dark>[DEBUG] {message}'
+  colors:
+    header: '{lang:prefix} <gradient:accent:ui-shadow>Theme Colors</gradient> <text-muted>({count}
+      colors)'
+    entry: <{hex}>● {name}</{hex}> <text-muted>- <{hex}>Sample text in this color</{hex}>
+  kick:
+    serverStarting: Server is still starting! Please come back in a moment
+  commands:
+    onlyPlayers: <warning>Only players can execute this command</warning>
+    debug:
+      enabled: <success>Debug mode enabled!</success>
+      disabled: <warning>Debug mode disabled!</warning>
+  queue:
+    leave:
+      notInQueue: '{lang:prefix} <danger>You are not currently in a queue<text>'
+      success: '{lang:prefix} <text>You have left the queue for <primary>{lang:minigames.{minigameId}.name}'
+    join:
+      success: '{lang:prefix} <text>You have joined the queue for <primary>{lang:minigames.{minigameId}.name}'
+      alreadyInQueue: '{lang:prefix} <danger>You are already in a queue<newline>leave
+        that one before joining a new one<text>'
+    status:
+      inQueue: '{lang:prefix} <text>You are currently in the queue for <primary>{lang:minigames.{minigameId}.name}'
+      notInQueue: '{lang:messages.queue.leave.notInQueue}'
+  abilities:
+    hotbarItemTitle: <!i><yellow><bold>{usage}</bold></yellow> <white>-</white> <green><bold>{lang:abilities.{abilityId}.name}</bold></green>
+    hotbarItemDescription: <!i><gray>{lang:abilities.{abilityId}.description}
+    cooldown: <blue>Recharge></blue> <gray>You cannot use <green>{lang:abilities.{abilityId}.name}</green>
+      for <green>{seconds} Seconds</green>.
+    readyToActivate: <blue>Recharge></blue> <gray>You can use <green>{lang:abilities.{abilityId}.name}</green>.
+    use:
+      success: <blue>Game></blue> <gray>You used <green>{lang:abilities.{abilityId}.name}</green>.
+      cooldown: <blue>Recharge></blue> <gray>You cannot use <green>{lang:abilities.{abilityId}.name}</green>
+        for <green>{seconds} Seconds</green>.
+    explode:
+      alreadyCharging: '{lang:prefix} <warning>Already charging explosion!</warning>'
+    targetLaser:
+      alreadyTargeting: '{lang:prefix} <warning>Already targeting a player!</warning>'
+      mustBeOnGround: '{lang:prefix} <warning>You must be on the ground to use {lang:abilities.{abilityId}.name}!</warning>'
+      noTargetsInRange: '{lang:prefix} <warning>No targets within range!</warning>'
+      targeted: '{lang:prefix} <text>You targeted <primary>{target}</primary> <text>with
+        <primary>{lang:abilities.{abilityId}.name}'
+      targetedBy: '{lang:prefix} <warning>{attacker}</warning> <text>targeted you
+        with their <warning>{lang:abilities.{abilityId}.name}'
+      laserBroke: '{lang:prefix} <text>Your laser broke, dealing damage to <primary>{target}'
+  kits:
+    select:
+      success: <blue>Kit></blue> <gray>You equipped <{lang:kits.{kitId}.color}>{lang:kits.{kitId}.name}<gray><gray>.
+      success_never: '{lang:prefix} <text>You have selected kit <{lang:kits.{kitId}.color}>{lang:kits.{kitId}.name}<text>,
+        but kit switching is disabled in this minigame'
+      success_on_death: '{lang:prefix} <text>You have selected kit <{lang:kits.{kitId}.color}>{lang:kits.{kitId}.name}<text>.
+        Your kit will switch after you respawn'
+      success_immediate: '{lang:prefix} <text>You have selected and switched to kit
+        <{lang:kits.{kitId}.color}>{lang:kits.{kitId}.name}'
+      already_selected: <blue>Kit></blue> <gray>You already have <{lang:kits.{kitId}.color}>{lang:kits.{kitId}.name}<gray><gray>
+        equipped.
+  players:
+    joinServer: <blue>Join></blue> <yellow>{playerName}
+    quitServer: <blue>Quit></blue> <yellow>{playerName}
+  hub:
+    hotbar:
+      queueCompass:
+        title: <!i><green><bold>Play Super Smash Mobs
+        description: <!i><gray>Right-click to start with your selected kit, map, and
+          settings
+      kitSelector:
+        title: <!i><green><bold>Kit Selector
+        description: <!i><gray>Right-click to choose your mob
+      mapVote:
+        title: <!i><green><bold>Map Vote
+        description: <!i><gray>Right-click to pick the next map
+      personality:
+        title: <!i><aqua><bold>AI Personalities
+        description: <!i><gray>Right-click to choose Salty, Chill, or Silent for all bots
+      settings:
+        title: <!i><gold><bold>Game Settings
+        description: <!i><gray>Right-click for difficulty, spawn timing, and players
+  minigames:
+    leave:
+      success: '{lang:prefix} <text>You have left <primary>{lang:minigames.{minigameId}.name}'
+      notAllowed: '{lang:prefix} <danger>You are not allowed to leave this game'
+      notInGame: '{lang:prefix} <danger>You are not in a game'
+      unknown: '{lang:prefix} <danger>An unknown error occurred. Please try again'
+    respawn:
+      timeLeft: <primary>{secondsLeft}
+    teamBasedStocks:
+      winner: '{lang:prefix} <text>Team <success>{winners}</success> <text>won <primary>{lang:minigames.{minigameId}.name}</primary>!'
+  projectiles:
+    arrow: Arrow
+    barrage_arrow: Barrage Arrow
+  passives:
+    hunger:
+      attackToRestore: <blue>Game></blue> <gray>Attack other players to restore hunger!
+gui:
+  kitSelection:
+    title: <!i><black>Choose a Kit
+    kitName: <!i><{lang:kits.{kitId}.color}><bold>{lang:kits.{kitId}.name}
+    selectedKitName: <!i><{lang:kits.{kitId}.color}><bold>{lang:kits.{kitId}.name}</bold>
+      <gray>(Selected)
+    abilityList:
+      title: <!i><yellow>Skills
+      entry: <!i><gray>  {lang:abilities.{abilityId}.name}
+    passiveList:
+      title: <!i><yellow>Passives
+      entry: <!i><gray>  {lang:passives.{abilityId}.name}
+  queueSelection:
+    title: <!i><ui-bg><shadow:ui-shadow>Join a minigame queue
+    minigameName: <!i><text>{lang:minigames.{minigameId}.name}
+    queuedMinigameName: <!i><success>✔ In Queue <secondary>- <text>{lang:minigames.{minigameId}.name}
+    playerCount: '<!i><secondary>Players in queue: <accent-warm>{current}'
+    requiredPlayers: '<!i><secondary>Required players: <accent-warm>{required}'
+    description: <!i><text-muted>{lang:minigames.{minigameId}.description}
+    clickToJoin: <!i><info>Click to join queue
+    clickToLeave: <!i><danger>Click to leave queue
+motd: <yellow><bold>SUPER SMASH MOBS</bold><newline><gray>Classic kits <dark_gray>|
+  <green>AI Edition
+newline: <text-dark>--------------------------------
+passives:
+  double_jump:
+    name: Double Jump
+    description: Leap twice to reposition midair
+  regeneration:
+    name: Regeneration
+    description: Passively recover small amounts of health
+  hunger:
+    name: Hunger
+    description: Restore hunger by striking opponents
+    attackToRestore: <warning>Attack other players to restore hunger!</warning>
+  corrupted_arrow:
+    name: Corrupted Arrow
+    description: Hold your bow to charge a stronger arrow. Charging starts after one
+      second and adds up to six power levels.
+  wall_climb:
+    name: Wall Climb
+    description: Hold sneak on a wall to climb and regain a midair reset
+  spider_leap:
+    name: Spider Leap
+    description: Double jump in any direction you face for rapid mobility
+  nether_pig:
+    name: Nether Pig
+    description: At 6 health, become a faster, armored Nether Pig and spend less energy.
+      Return to Pig at 10 health.
+  giga_slime:
+    name: Giga Slime
+    description: Grow larger, leap farther, and accelerate regen as momentum builds
+  arctic_aura:
+    name: Arctic Aura
+    description: Automatically spread snow around you. Its radius follows your Blizzard
+      energy; foes on it are slowed and take +1 melee damage.
+  overgrowth:
+    name: Overgrowth
+    description: Gain 0.3 absorption HP per damage dealt, up to three hearts. The
+      XP bar shows your absorption.
+  flap:
+    name: Flap
+    description: Use your energy for extra jumps; recharge on the ground.
+  arrow_recharge:
+    name: Arrow Recharge
+    description: Recover arrows over time.
+  barrage:
+    name: Barrage
+    description: Hold your bow drawn to charge extra arrows.
+  stampede:
+    name: Stampede
+    description: Sprint to build speed and empower your next melee hit.
+  deadly_bones:
+    name: Deadly Bones
+    description: Melee hits leave behind a bone that explodes after a short delay.
+  exp_charge:
+    name: Energy
+    description: Charge your energy for kit abilities.
+  ravage:
+    name: Ravage
+    description: Melee hits grant +1 damage for three seconds, up to three stacks.
+  fuel_the_fire:
+    name: Fuel the Fire
+    description: Kills grow your size, damage and armor, and reduce knockback taken.
+      Resets on death.
+  wolf_jump:
+    name: Wolf Jump
+    description: Double jump exactly where you look and briefly gain speed.
+  villager_jump:
+    name: Double Jump
+    description: Speedster turns your double jump into a directional leap.
+  goated_leap:
+    name: Goated Leap
+    description: Crouch on the ground to charge your next double jump. The charge
+      resets after jumping.
+  ender_teleport:
+    name: Ender Teleport
+    description: Hold sneak for seven seconds to teleport to the surface under your
+      cursor.

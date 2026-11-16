@@ -1,0 +1,312 @@
+# SSM AI Edition bot roster, generated from "Names, ranks, difficulties.txt".
+# difficulty: normal | hard | harder | expert   rank: none or a key from rankStyles
+
+# How each rank is shown in the tab list (MiniMessage format).
+rankStyles:
+  elite: "<aqua><bold>ELITE</bold></aqua> "
+  mythic: "<green><bold>MYTHICAL</bold></green> "
+  divine: "<light_purple><bold>DIVINE</bold></light_purple> "
+  celestial: "<red><bold>CELESTIAL</bold></red> "
+  mod: "<red>[MOD]</red> "
+
+bots:
+  - name: Achot
+    rank: elite
+    difficulty: hard
+  - name: AGentleAura
+    rank: none
+    difficulty: expert
+  - name: aidxn00
+    rank: divine
+    difficulty: expert
+  - name: Alex12Y
+    rank: none
+    difficulty: harder
+  - name: Anatidaephobia
+    rank: celestial
+    difficulty: harder
+  - name: AnIdiotInATree
+    rank: elite
+    difficulty: expert
+  - name: Animadoria
+    rank: mythic
+    difficulty: harder
+  - name: Aoryuuu
+    rank: none
+    difficulty: normal
+  - name: Atoximed
+    rank: none
+    difficulty: harder
+  - name: BlueSkyMoose
+    rank: none
+    difficulty: harder
+  - name: blufuffydragons
+    rank: elite
+    difficulty: normal
+  - name: BobLeeSwagger
+    rank: none
+    difficulty: hard
+  - name: Butterbloom
+    rank: celestial
+    difficulty: expert
+  - name: Charlie_Skirk
+    rank: elite
+    difficulty: harder
+  - name: cqsey
+    rank: mod
+    difficulty: hard
+  - name: CraftedMC
+    rank: none
+    difficulty: hard
+  - name: CringeInducing
+    rank: none
+    difficulty: harder
+  - name: CURLAXX
+    rank: divine
+    difficulty: harder
+  - name: cxtra
+    rank: none
+    difficulty: harder
+  - name: DarkFalconRS
+    rank: none
+    difficulty: normal
+  - name: DinoBurger27
+    rank: none
+    difficulty: normal
+  - name: DuckInATruck
+    rank: none
+    difficulty: harder
+  - name: Ducksicle
+    rank: none
+    difficulty: expert
+  - name: eHailey
+    rank: none
+    difficulty: harder
+  - name: _EternalHorror_
+    rank: elite
+    difficulty: harder
+  - name: ExpiredRock
+    rank: none
+    difficulty: harder
+  - name: FwostedFwakes
+    rank: elite
+    difficulty: expert
+  - name: GhostlyIce
+    rank: elite
+    difficulty: harder
+  - name: GreatJimmyJam
+    rank: elite
+    difficulty: normal
+  - name: HotCold
+    rank: elite
+    difficulty: expert
+  - name: HuntOnyx
+    rank: mythic
+    difficulty: expert
+  - name: HushMyChild
+    rank: mythic
+    difficulty: expert
+  - name: Ishap125
+    rank: none
+    difficulty: normal
+  - name: ItsLbj
+    rank: none
+    difficulty: normal
+  - name: ItsMqrk
+    rank: none
+    difficulty: hard
+  - name: james610
+    rank: none
+    difficulty: hard
+  - name: JDisaster
+    rank: none
+    difficulty: normal
+  - name: JezusLuver44
+    rank: none
+    difficulty: hard
+  - name: JN_PlayzMC
+    rank: mythic
+    difficulty: hard
+  - name: JuJcong
+    rank: none
+    difficulty: normal
+  - name: Just_Jack
+    rank: none
+    difficulty: hard
+  - name: KanaiZo
+    rank: none
+    difficulty: expert
+  - name: Khanster45
+    rank: elite
+    difficulty: expert
+  - name: Kimchar
+    rank: divine
+    difficulty: expert
+  - name: KinTheInfinite
+    rank: none
+    difficulty: expert
+  - name: kvki
+    rank: divine
+    difficulty: normal
+  - name: Kytato
+    rank: mythic
+    difficulty: harder
+  - name: LaserEndr
+    rank: elite
+    difficulty: hard
+  - name: leo_thya
+    rank: none
+    difficulty: normal
+  - name: Lmkk
+    rank: divine
+    difficulty: hard
+  - name: Loloilooo
+    rank: none
+    difficulty: expert
+  - name: Lyzardguy
+    rank: celestial
+    difficulty: hard
+  - name: MadameUnderwears
+    rank: none
+    difficulty: normal
+  - name: mcdowed
+    rank: elite
+    difficulty: hard
+  - name: memecoinL
+    rank: none
+    difficulty: harder
+  - name: Midboost82
+    rank: none
+    difficulty: expert
+  - name: MightToggle
+    rank: none
+    difficulty: hard
+  - name: MioMoves
+    rank: none
+    difficulty: normal
+  - name: mlgpigmaster
+    rank: none
+    difficulty: normal
+  - name: MobStorm
+    rank: none
+    difficulty: expert
+  - name: Moiste
+    rank: none
+    difficulty: expert
+  - name: MythToki
+    rank: mythic
+    difficulty: expert
+  - name: Nashiie
+    rank: none
+    difficulty: hard
+  - name: NeoLins
+    rank: none
+    difficulty: hard
+  - name: newavatar
+    rank: none
+    difficulty: harder
+  - name: NonicMC
+    rank: celestial
+    difficulty: hard
+  - name: OhHeckingFrick
+    rank: none
+    difficulty: hard
+  - name: okml
+    rank: none
+    difficulty: normal
+  - name: olivegardens
+    rank: divine
+    difficulty: expert
+  - name: PetoriaCity
+    rank: elite
+    difficulty: normal
+  - name: PickleHazard
+    rank: none
+    difficulty: hard
+  - name: PoultryofAgony
+    rank: elite
+    difficulty: normal
+  - name: Q____Q
+    rank: divine
+    difficulty: normal
+  - name: Quacklyfe
+    rank: divine
+    difficulty: expert
+  - name: runningfridge
+    rank: none
+    difficulty: harder
+  - name: RussianJoeBiden
+    rank: mythic
+    difficulty: harder
+  - name: Sailings
+    rank: mod
+    difficulty: normal
+  - name: Saiqul
+    rank: elite
+    difficulty: normal
+  - name: sebas11en
+    rank: elite
+    difficulty: hard
+  - name: Sliccy
+    rank: none
+    difficulty: normal
+  - name: SmartyAlek
+    rank: none
+    difficulty: hard
+  - name: StormblazeZ
+    rank: none
+    difficulty: hard
+  - name: SunsetWithAsia
+    rank: elite
+    difficulty: hard
+  - name: TeddyDedBear
+    rank: elite
+    difficulty: harder
+  - name: TheMitchy27
+    rank: mythic
+    difficulty: expert
+  - name: TrunksBrief
+    rank: elite
+    difficulty: hard
+  - name: thirtytworats
+    rank: none
+    difficulty: normal
+  - name: ThuLuck
+    rank: elite
+    difficulty: expert
+  - name: Thwndr
+    rank: none
+    difficulty: harder
+  - name: toasted_pizza
+    rank: none
+    difficulty: harder
+  - name: Trenntt
+    rank: mythic
+    difficulty: expert
+  - name: Valky
+    rank: elite
+    difficulty: hard
+  - name: Vespherous
+    rank: none
+    difficulty: normal
+  - name: VirtualTheProto
+    rank: none
+    difficulty: normal
+  - name: worstraveeever
+    rank: celestial
+    difficulty: harder
+  - name: xCupcakez
+    rank: none
+    difficulty: expert
+  - name: xXSlenderSlayer
+    rank: none
+    difficulty: normal
+  - name: zarulu
+    rank: elite
+    difficulty: harder
+  - name: zBreeZe
+    rank: elite
+    difficulty: harder
+  - name: Zompehh
+    rank: none
+    difficulty: expert

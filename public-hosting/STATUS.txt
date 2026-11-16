@@ -1,0 +1,75 @@
+Guide/selection correction
+Version: 0.1.0-ai-guide-selection-20261114
+Installed: 2026-11-14T11:22:01.7810386-05:00
+- Carl's guide no longer contains Choose Items.
+- Selection effects require an explicit menu opt-in. Carl and Peppa guides retain original models and vanilla glint.
+- Removed the added cyan tint from the blue-tier sprite.
+- Crystal selected state is independent of its native rarity glint; base sprites and native enchantment remain intact.
+- Item selector distinguishes enabled selections from the Shotbow's natural glint.
+Validation: 137 Gradle tests passed; isolated Paper checks passed for guide Shotbow vanilla glint, Carl navigation removal, all four guide star models/glint states, and prior menu selection/start-blocking checks. Installed server started all five lobbies; resource pack JSON and removed tint verified. No manual client visual check.
+SHA256: 70972341E4AD1B108D27977053B06E64F6791F8ACF1D695A51590C2DC558C50B
+Backup: C:\Users\jacob\Documents\SSM AI Edition\backups\guide-selection-20261114-112026
+No public deployment.
+
+PUBLIC HOST
+Nothing was deployed publicly during this update. Last known Oracle state remains:
+no VM, no public IP; all three checked Ashburn availability domains lacked free A1 capacity.
+No paid resources were created.
+
+MIGRATION ARCHIVE IS OUTDATED
+server.tar.gz and manifest.json still describe 0.1.0-ai-hosting-20261113.
+They were NOT refreshed and do not contain the new lobby/menu/personality changes.
+Refresh from a consistent stopped-server snapshot before any future deployment.
+The public profile's 2 simultaneous matches / 16 total fighters remain separate
+from the fixed five waiting hubs. Five lobbies do not override resource limits.
+
+VALIDATION LIMIT
+This menu update was verified by build/tests, source inspection, and local Paper startup. No in-game visual or public internet client test was performed.
+
+BUNDLE REFRESHED - 2026-11-14 evening (supersedes "MIGRATION ARCHIVE IS OUTDATED" above)
+server.tar.gz and manifest.json were rebuilt with build-bundle.ps1 from the stopped local server:
+plugin 0.1.0-ai-bot-realism-20261114, 1959 files, 45 maps, 5 lobbies, 532 MB, 185 unit tests.
+The archive was extracted and started on this PC (ports 25585/25586); verify.ps1 passed
+(status ping + resource pack with 45 map pictures). Not yet run on Linux ARM64 or on Oracle.
+install.py has a new --open-firewall option (VM iptables, TCP 25565/25566); verify.ps1 is the
+Windows version of verify.py. Still no VM and no public IP.
+
+PUBLIC FROM THIS PC - 2026-11-15 15:00
+The local server (test-server) is reachable at molecule-vascular.tun.ply.gg through a playit.gg
+tunnel (public-hosting\playit, start-playit.ps1; tunnel "ssm-game" -> 127.0.0.1:25565).
+Checked: Minecraft status ping through the tunnel answers. Not checked: a real client login.
+The resource pack (port 25566) is NOT reachable from outside: free playit has no TCP/HTTP tunnel.
+Server, tunnel and Oracle retry all stop on a PC restart and must be started again.
+
+ORACLE API RETRY - started 2026-11-15 14:47 (replaces the browser retries)
+public-hosting\oracle-retry\OracleRetry.java runs in the background on this PC (start-retry.ps1,
+-Stop to stop; pid in oracle-retry.pid; attempts in oracle-retry.log). It asks for the Always
+Free VM.Standard.A1.Flex 2 OCPU / 12 GB "ssm-ai-edition" every 75 s across AD-1/2/3 and stops when
+one is created, writing the address to oracle-retry\SUCCESS.txt. It uses an API signing key
+(private half C:\Users\jacob\.oci\ssm_api_key.pem, fingerprint a7:db:...:e9:04, added to the
+Oracle profile by request). On first run it created ssm-vcn, ssm-igw and ssm-subnet (free).
+Bundle in this folder was rebuilt 2026-11-15 with plugin 0.1.0-ai-crystal-bugfix-20261115.
+Browser attempts 2026-11-15 01:00-12:00 (about 25, all three ADs) were all out of capacity.
+The retry does not survive a PC restart: run start-retry.ps1 again after one.
+
+ORACLE RETRY - 2026-11-14 ~23:30 EST
+Create instance submitted three times (AD-1, AD-2, AD-3), user-approved: ssm-ai-edition,
+VM.Standard.A1.Flex 2 OCPU / 12 GB, Canonical Ubuntu 24.04 (2026.11.05-0), default 46.6 GB boot
+volume, new VCN + public subnet, existing SSH public key (ssm-oracle-20261113).
+All three: "Out of capacity for shape VM.Standard.A1.Flex". No VM, no public IP, nothing paid.
+The form's "assign public IPv4" switch is still disabled, so a public IP must be attached after
+a successful creation. Form left open on the Review step (AD-3) in Chrome.
+
+ORACLE RETRY - 2026-11-14 02:10 EST
+Signed into the Oracle Free Tier tenancy in home region us-ashburn-1.
+Submitted VM.Standard.A1.Flex creation separately in AD-1, AD-2 and AD-3.
+Each submission returned API Error: Out of capacity for shape VM.Standard.A1.Flex.
+Requested Ubuntu 24.04 Minimal aarch64 (2026.11.05-0), 2 OCPUs, 12 GB RAM,
+50 GB balanced boot storage, automatic fault-domain selection, existing SSH public key.
+No VM was provisioned and nothing was deployed. No account upgrade or paid shape selected.
+Creation form retained on AD-3 for a later retry. New VCN/subnet were requested;
+the form's public IPv4 assignment remained No/disabled, so verify networking and
+assign a public IPv4 address if a future creation succeeds before attempting SSH.
+The migration archive remains outdated; refresh from a consistent local server
+snapshot after capacity succeeds, before uploading. Local server was not stopped.
+

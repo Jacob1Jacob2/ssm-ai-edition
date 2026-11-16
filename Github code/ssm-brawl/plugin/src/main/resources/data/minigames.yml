@@ -1,0 +1,53 @@
+minigames:
+  # SSM AI Edition: classic Super Smash Mobs. Every player is their own team with 4 lives.
+  # Started from the hub compass (2, 4, 8 or 16 players), so amountOfTeams is the maximum game size.
+  - id: super_smash_mobs
+    countdown: 5
+    type: team_based_stocks
+    isHidden: false
+    playersPerTeam: 1
+    amountOfTeams: 16
+    kitSwitchingMode: never
+    stocks: 4
+    allowParties: true
+    respawnDelaySeconds: 4
+    allowRejoinAfterLeave: true
+    displayItem: NETHER_STAR
+
+  - id: prototyping
+    countdown: 0
+    type: ffa
+    isHidden: true
+    minPlayers: 1
+    maxPlayers: 4
+    kitSwitchingMode: immediate
+    allowParties: true
+    passiveBlacklist: [hunger]
+    respawnDelaySeconds: 4
+    allowRejoinAfterLeave: true
+    displayItem: COMMAND_BLOCK
+
+  - id: two_player_duels
+    countdown: 5
+    type: team_based_stocks
+    isHidden: false
+    playersPerTeam: 1
+    amountOfTeams: 2
+    kitSwitchingMode: never
+    stocks: 4
+    allowParties: false
+    respawnDelaySeconds: 4
+    allowRejoinAfterLeave: true
+    displayItem: DIAMOND_SWORD
+
+  - id: mystery_kit
+    countdown: 5
+    type: ffa
+    isHidden: false
+    minPlayers: 1
+    maxPlayers: 4
+    kitSwitchingMode: mystery
+    allowParties: true
+    respawnDelaySeconds: 4
+    allowRejoinAfterLeave: true
+    displayItem: CHEST

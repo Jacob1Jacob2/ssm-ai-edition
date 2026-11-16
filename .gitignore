@@ -1,0 +1,64 @@
+# This repository is a public backup of SSM AI Edition. Everything listed here stays on the PC.
+
+# ---- not worth backing up: old snapshots, scratch copies, local tools
+/backups/
+/host-smoke/
+/tools/
+/.claude/
+*.log
+*.pid
+session.lock
+level.dat_old
+
+# ---- other people's projects, kept locally for reference only
+/Github code/Ares-main/
+/Github code/FeatherDisguise-master/
+/Github code/Reborn-API-Clients-master/
+/Github code/Reborn-Public-master/
+
+# ---- build output (rebuilt by gradlew build)
+/Github code/ssm-brawl/plugin/build/
+/Github code/ssm-brawl/plugin/.gradle/
+/Github code/ssm-brawl/plugin/.kotlin/
+/Github code/ssm-brawl/plugin/logs/
+
+# ---- private: players, logs, bans, secrets
+players/
+playerdata/
+stats/
+advancements/
+/test-server/logs/
+/test-server/usercache.json
+/test-server/ops.json
+/test-server/banned-ips.json
+/test-server/banned-players.json
+/test-server/whitelist.json
+# holds the management secret; server.properties.example is the same file without it
+/test-server/server.properties
+/test-server/plugins/bStats/
+/test-server/plugins/spark/
+/test-server/plugins/update/
+/test-server/plugins/super-smash-mobs-brawl/game-setups.properties
+/test-server/plugins/super-smash-mobs-brawl/selected-kits.properties
+/test-server/plugins/super-smash-mobs-brawl/map-choices.properties
+/test-server/plugins/super-smash-mobs-brawl/wins.json
+# worlds of finished matches
+/test-server/world/dimensions/minecraft/ssmbworld_*/
+/public-hosting/oracle-retry/oracle-retry.properties
+/public-hosting/oracle-retry/*.out
+/public-hosting/oracle-retry/*.err
+/public-hosting/oracle-retry/SUCCESS.txt
+/public-hosting/playit/*.err
+
+# ---- server software that is downloaded, not ours to republish (see RESTORE.md)
+/test-server/paper-*.jar
+/test-server/cache/
+/test-server/versions/
+/test-server/libraries/
+/test-server/plugins/LibsDisguises-*.jar
+/test-server/plugins/packetevents-*.jar
+/public-hosting/playit/*.exe
+
+# ---- large files that are rebuilt from the rest
+/public-hosting/server.tar.gz
+/public-hosting/ssm-pack.zip

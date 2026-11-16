@@ -1,0 +1,59 @@
+SSM AI Edition - classic gameplay and crystal presentation pass
+2026-11-10
+
+Scope
+The reference is Mineplex SSM before the May 2023 shutdown. The 2026 Revamped overhaul was explicitly excluded. The user's kit stat table, four custom Smash tiers and 84 powers, three-second Chicken recharge, maps, lobby and menu layout remain the project requirements.
+
+Evidence and limits
+A. Legacy 1.8-era recovery:
+https://github.com/timing1337/mineplex-reborn/tree/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash
+https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/update/files/SMASH_KITS.json
+
+B. Earlier source snapshot, committed in 2016:
+https://github.com/lsz7575/All-Mineplex-2015/tree/d86ca2e3bbde021527133eea43883a917b1bb2f4/Nautilus.Game.Arcade/src/nautilus/game/arcade
+
+C. Historical kit description:
+https://mineplex.fandom.com/wiki/Blaze_%28Super_Smash_Mobs%29
+
+A is a third-party recovery, not an authenticated final May 2023 production snapshot. Its README notes modifications; several Villager configuration values are zero and were not copied. B is older than final classic. Where the references disagree, the decision is stated below. Functional behavior was reimplemented in the project's existing architecture. This is not a claim of exact parity with every historical patch.
+
+All 21 playable kits were included in the audit. Existing correct audiovisual mappings from classic-effects-audit.txt were retained. That earlier file records the previous sound-only pass; its listed missing Blizzard, Fish Flurry, Inferno, Daze and clone effects are superseded here.
+
+Changes by kit
+Skeleton: retained Bone Explosion bone debris, skeleton-hurt cue, Roped Arrow and Barrage. No speculative new abilities. Custom 400/1200-arrow Smash modes remain separate.
+Iron Golem: Seismic Slam recharge corrected to 7s from A's config. Existing 10 damage, 8 radius, slam launch and wooden-door impact retained; Fissure and Iron Hook retained.
+Spider: Needler now emits six arrows on successive ticks while held, with random local spread, speed 1.2 and 1.1 direct damage. Keeps the two-second poison status and spider sound per shot. Spin Web recharge 10s and 20 webs. Fixed poison ticks previously swallowed by environment protection: now routed through the combat engine, ignoring armor and knockback, non-lethal at one HP, with respawn/countdown/invincibility checks retained. The preceding ability hit remains the combat log's kill-credit source.
+Slime: Slime Rocket and Slime Slam recharge corrected to 6s. Retained charging, energy, projectile and recoil mechanics; did not overwrite the user's custom permanent size/fuel Smash behavior.
+Squid: implemented missing Fish Flurry: aimed surface, one-second water warning, three seconds of rising fish, damage and vertical knockback, cleanup. Fixed Super Squid's melee immunity check to include the combat engine's actual null melee type. Retained Ink Shotgun's seven-pellet defaults, gray puff trail, splash and impact cues; its YAML display-only fields are not its runtime pellet configuration.
+Creeper: retained Sulphur Bomb (coal, 6.5 damage, 3s), 1.5-second Explode charge, classic explosion particles/audio. No overhaul TNT mechanics.
+Enderman: Block Toss recharge corrected to 2s. Retained aim/charge, Blink's smoke/firework path and teleport behavior.
+Snowman: implemented missing Blizzard: four snowballs per burst, nine bursts per tank, three-second recharge, hit throttling and temporary snow. Arctic Aura is now automatic and shares the Blizzard tank instead of overwriting it with a separate crouch meter; full radius 5, custom Blue adds 5. Ice Path retained.
+Wolf: Cub Tackle health 30, damage 5, launch 1.8, lifetime 70 ticks. Removed extreme Slowness XI/target-clipping teleport; cub follows, applies Slowness II and downward pressure. Wolf Strike damage 7. Ravage and custom Smash upgrades retained.
+Magma Cube: Flame Dash lasts 800ms, radius 3, recharge 8s. Retained deflectable Magma Blast and lava/hiss/explosion effects. A's 0.2 blast velocity denotes a different operation; it was not blindly substituted for projectile travel speed.
+Witch: Daze is a water splash potion which breaks on its first impact, with direct/area damage 7/6 and appropriate slowness. Removed the invented three-bounce behavior. Bat Wave and its gray smoke, leash and hit cadence retained.
+Wither Skeleton: Guided Skull recharge 6s, steering speed 0.6. Added bone debris and hurt sound when an image ends. Existing summon/swap sounds and lifetime retained.
+Zombie: Corrupted Arrow starts charging after 1s, adds one level per 250ms, max six. The shot snapshots its charge and adds 0.9 damage per level; removed the unrelated damage-earned-energy system which previously ignored charge. Reset XP on setup/release. Bile restored to three projectiles/tick, 3 damage, 10s recharge; Death's Grasp retained its weakening damage multiplier and its dust now supplies the required color data.
+Cow: Milk Spiral damage 6. Retained Angry Herd, Stampede and white spiral/audio.
+Skeletal Horse: Bone Kick damage 6.5, knockback 4 and one-second brace; Bone Rush two-second duration and 0.7 damage per bone. Bone sounds, smoke and passive bones retained.
+Pig: Bouncy Bacon costs 0.225 energy, throws raw pork, rebounds toward its owner, cooks on hitting an enemy. Catching returns 0.05 energy; cooked bacon heals 1. No automatic heal on collision. Baby Bacon Bomb costs 0.35, health 5, expires/explodes after 80 ticks and launches the owner. Both are energy-limited with 100ms input recharge. Implemented missing Nether Pig: transform at 6 HP, recover at 10 HP, Speed I, 7.5 armor and 30% lower energy cost. Custom Red retains its own form/cost rules.
+Blaze: Inferno is separate travelling blaze-powder embers (1.8 launch speed, 0.7-second lifetime), quiet ghast shots, 0.25 direct damage and short burn. It no longer paints an instant flame-stream attack. Firefly has a 1.5-second charge and 1-second flight, speed 0.7 plus lift; a sufficiently strong hit interrupts charging. Flight protection ends with flight. B's 2500ms total gives 1s flight; A later uses 2750ms/1.25s. The shorter B timing was chosen for the user's request, not represented as an exact final-2023 value.
+Chicken: Egg Blaster recharge 2.5s per A. Kept the user's explicit eight flaps/full three-second recharge and exactly empty exhausted bar; did not restore legacy 0.17 flap cost. Chicken Missile and custom missile-on-hit chaining preserved.
+Guardian: Whirlpool damage 4; Target Laser bonus 3. Retained Water Splash, targeting and Thorns. Blue custom laser remains independently specified.
+Sheep: Wool Mine damage 14. Retained Static Laser charge, mine arming and Wooly Rocket with existing classic effects.
+Villager: Arts last 10s and recharge individually for 15s, show remaining XP, expire to Normal, and use profession-colored burst cues. Trade Scatter projectile/recoil directions corrected for the four arts; Speed throws feathers. Did not import zeroed Villager values from A. Custom Perfection remains until death.
+
+Presentation
+- Sidebar divider exactly 13 double-line glyphs, with red score numbers retained.
+- Yellow and Red Nether Stars are new 32px faceted shapes, not vanilla texture overlays. Yellow is gold/ivory with an amber center; Red is broader silver/crimson with a ruby center. Both have 48-frame light sweeps and orbiting sparks; Red has more sparks.
+- Start is a green labelled START button. Back is a red button with a vertically symmetric arrow. Existing menu slots retained.
+- Nine-second protected start countdown, note hats at half volume, start pling, branded SSM AI Edition banner removed at combat start.
+- Actual winners receive placement chat, winner title, level-up cue and harmless fireworks; return to lobby after eight seconds. FFA runner-up order uses actual eliminations. /hub remains cancellation with no victory presentation.
+- Crystal landings have a flush 3x3 quartz pad, colored lens, recessed beacon and foundation, two-layer beacon beam, eased descent, tier-colored helices, orbiting shards, stronger-tier rings, countdown label and landing pulse.
+- Existing 5/8/12/16-second tier descent times and 40/30/20/10 probabilities retained.
+- Terrain at every platform layer is restored on pickup/expiry/cancellation; preview mode uses displays only. All display entities are removed.
+- Updated relevant kit descriptions so they describe the implemented actions.
+
+Validation
+See the session's final validation log and deployment record for the final build's results. Testing uses a separate Paper server and disposable bot matches; the test helper is never installed on the live server.
+Visual sprites were exported and inspected at multiple animation frames. In-world arrivals were checked through entity transforms, packets, timing, pickup and terrain/entity cleanup; no human Minecraft client render was captured for this pass.
+

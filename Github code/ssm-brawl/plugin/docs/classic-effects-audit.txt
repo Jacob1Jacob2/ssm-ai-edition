@@ -1,0 +1,138 @@
+CLASSIC SSM SOUND AND PARTICLE AUDIT — 2026-11-09
+
+Target: original Java Mineplex SSM before the May 2023 shutdown.
+The 2026 Remastered/Revamped overhaul is explicitly excluded.
+
+Evidence and limits
+I inspected the active local kit loadouts and audiovisual calls, 65 effect-related classes in a 2015 source snapshot, and 69 classes in a later legacy 1.8 source-recovery fork. The 2015 snapshot was committed in June 2016. The later fork is pinned to its May 24, 2024 commit, but contains the old 1.8 game implementation, not the 2026 overhaul. It is a third-party recovery fork, not an official final-May-2023 release. Agreement between the two artifacts is stronger evidence than either alone.
+
+Only functional facts (sound identifiers, volume/pitch, particle families and event placement) were used. No third-party gameplay source was imported. These changes are evidence-backed corrections, not a claim of exact final-2023 parity. Historical code does not establish every sound as it was heard by every client/version/resource pack; no recorded-video listening comparison was performed in this pass.
+
+Sources
+A. 2015 snapshot, immutable revision d86ca2e3bbde021527133eea43883a917b1bb2f4:
+https://github.com/lsz7575/All-Mineplex-2015/tree/d86ca2e3bbde021527133eea43883a917b1bb2f4/Nautilus.Game.Arcade/src/nautilus/game/arcade
+B. Legacy recovery fork, immutable revision d16fd2138608b053145f2774bb9b2fccf166b438:
+https://github.com/timing1337/mineplex-reborn/tree/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade
+Its README describes a recovery of the original code and notes modifications; it is not treated as an official unchanged release:
+https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/README.md
+C. ViaVersion's actual legacy sound mapping, used to avoid guessing from similarly named modern events:
+https://github.com/ViaVersion/ViaVersion/blob/master/common/src/main/java/com/viaversion/viaversion/protocols/v1_8to1_9/data/SoundEffectMappings1_9.java
+D. Explicitly excluded modern overhaul:
+https://forums.mineplex.com/threads/super-smash-mobs-revamped-update-changelog.28196/
+
+Important mapping corrections
+- The project's Player.playSound helper reversed volume and pitch when calling Bukkit. Fixed the argument order.
+- Old random.click maps to block.dispenser.dispense, not block.dispenser.fail.
+- Old random.splash maps to entity.fishing_bobber.splash. The neutral/player swimming splash event is different.
+- Old EXPLODE particle means the small gray puff (modern POOF); LARGE_EXPLODE means EXPLOSION; HUGE_EXPLOSION means EXPLOSION_EMITTER.
+- Cosmetic fireworks must not call modern Firework.detonate(), which can introduce extra damage. The new burst helper sends the visual entity status and removes the temporary rocket.
+
+Per-kit findings and changes
+Sound pairs below are volume/pitch, not percentages. Existing damage, cooldown, hitbox and movement values were preserved.
+
+Skeleton
+Bone Explosion already used bone debris and skeleton-hurt 2/1.2; centered its debris on the caster. Barrage/Corrupted Arrow charge now use the dispense click (old random.click), not the failed-dispenser cue. Barrage shots are audible nearby. Roped Arrow's existing impact cue was retained.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash/perks/skeleton/PerkBarrage.java
+
+Iron Golem
+Seismic Slam: wooden-door attack 2/0.2 on landing, replacing the anvil. Iron Hook: golem attack 2/0.8 on launch; its existing crit trail and flint-and-steel 1.4/0.8 were retained. Fissure already uses block-break effects along its path.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash/perks/golem/PerkSeismicSlam.java
+
+Spider
+Needler: spider ambient 0.8/2 instead of arrow-shoot. Spin Web: spider ambient 2/0.6, audible nearby with the intended volume and pitch. Spider Leap's 1/1.5 cue was already correct. Burst timing/arrow movement were not changed.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash/perks/spider/PerkNeedler.java
+
+Slime
+Slime Rocket already uses slime squish 0.5 with rising pitch and slime-item particles. Slime Slam has no explicit extra audiovisual call in these reference classes. No speculative new effect added.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash/perks/slime/PerkSlimeRocket.java
+
+Squid
+Ink Shotgun: low explosion 1.5/0.75 plus fishing-bobber splash 0.75/1; gray POOF trail and hit puff replace purple dust/bubbles. Restored impact sound 0.75/1.25, previously in an unused method. Super Squid uses SPLASH particles, not falling water drips. Fish Flurry remains a pre-existing unimplemented base ability.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash/perks/squid/PerkInkBlast.java
+
+Creeper
+Sulphur Bomb: creeper-death launch 2/1.5; explosion impact 1/1.5; removed invented continuous smoke trail. Explode keeps its charge hiss, then uses huge explosion emitter and explosion 2/1. The newer overhaul's TNT mechanic was not imported.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash/perks/creeper/PerkCreeperSulphurBomb.java
+
+Enderman
+Blink: smoke line and black ball-firework bursts replace brown/purple dust transitions and portal scatter. Teleport cue retained. Firework bursts are cosmetic status effects with cleanup, not damaging firework detonations. Block Toss behavior left intact.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash/perks/enderman/PerkBlink.java
+
+Snowman
+Classic Blizzard uses the quiet snow-step cue 0.1/0.5 while firing. Ice Path breaks ice visually; Arctic Aura uses actual snow. Current BlizzardAbility is still a stub, so it cannot be made authentic by adding a sound alone. Recorded as remaining implementation work.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash/perks/snowman/PerkBlizzard.java
+
+Wolf
+Cub Tackle: bark 1/1.8 when launched and growl 1.5/1.5 on a successful latch. Wolf Strike: bark 1/1.2 instead of growl. Ravage/strike hit cadence and all movement and damage values remain unchanged.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash/perks/wolf/PerkWolf.java
+
+Magma Cube
+Magma Blast launch: creeper-death 2/1.5; lava particles at impact. Flame Dash: fire-extinguish hiss 0.6/1.2 and small flame trail during travel; a flame burst at termination with its existing explosion cue. Projectile mechanics and reflective hit behavior unchanged.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash/perks/magmacube/PerkMagmaBlast.java
+
+Witch
+Bat Wave uses LARGE_SMOKE instead of small smoke on bat impacts/cleanup; bat-hurt 1/1 retained. Daze uses spell particles instead of smoke; removed the second overlapping glass-break sound. Daze's current bounce/cloud implementation is not a complete reproduction of the old water-potion presentation.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash/perks/witch/PerkBatWave.java
+
+Wither Skeleton
+Guided Skull: wither-shoot 1/1, huge explosion emitter and deep impact 2.5/0.4. Wither Image: wither-spawn 1/1 on summon, 1/2 on swap, replacing the Enderman sound. Clone-destruction debris remains a fidelity gap.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash/perks/witherskeleton/PerkWitherSkull.java
+
+Zombie
+Corrupted Arrow keeps red dust, corrects the charge click to block.dispenser.dispense at volume 1. Bile's randomized burp now reaches nearby players. Death's Grasp's existing zombie-hurt cues retained.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash/perks/zombie/PerkOvercharge.java
+
+Cow
+Milk Spiral retains white firework sparks; spiral splash uses the old random.splash equivalent (fishing bobber), replacing high-speed player splash. Stampede uses wooden-door attack rather than door breaking. Angry Herd cleanup uses small gray poofs; its heavier hit burst remains.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash/perks/cow/PerkCowMilkSpiral.java
+
+Skeletal Horse
+Bone Kick: large smoke and the reference's paired skeleton-hurt 4/0.6 cues. Bone Rush pitch varies between 1 and 2 rather than staying at 1.5. Deadly Bones explosion is 0.8/1.4. Smoke placement/shape is still adapted to the current kick implementation.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash/perks/skeletalhorse/PerkHorseKick.java
+
+Pig
+Bouncy Bacon launch: pig ambient 2/1.5; heal cue uses eating 2/1 plus hearts. Baby Bacon Bomb launch: pig ambient 2/0.75; detonation uses explosion 0.6/2 plus pig-death 1/2. Existing heal/bounce behavior was not rebalanced.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash/perks/pig/PerkPigBaconBounce.java
+
+Blaze
+Inferno uses quiet ghast-shoot 0.1/1. Firefly warms up with white firework sparks, low rumble and rising blaze breath; flight uses flame particles and layered explosions. Inferno still renders the existing flame stream rather than reproducing the reference's separate fire-item projectile visuals.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash/perks/blaze/PerkFirefly.java
+
+Chicken
+Flap: bat takeoff, volume 0.3 plus energy and random pitch 1 to 1.5. Egg Blaster's egg-pop cue retained. Chicken Missile keeps its chicken-hurt and explosion sounds; impact now uses the huge explosion emitter and a harmless white firework burst.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash/perks/chicken/PerkFlap.java
+
+Guardian
+Whirlpool uses snow-break 1/1 (an intentionally unusual classic cue), not a generic splash. Existing drip-water projectile trail retained. Water Splash's drip-water/firework presentation retained. Target Laser's beam/hit presentation still needs a visual reference comparison.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash/perks/guardian/PerkWhirlpoolBlade.java
+
+Sheep
+Static Laser and Wooly Rocket's small impact puffs use POOF instead of the large explosion sprite. Wool Mine launch bleat restored; its huge explosion emitter and 3/0.8 sound were already correct. Existing laser charge and firework trail retained.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/kit/perks/PerkLazer.java
+
+Villager
+Sonic Hurr: villager ambient 1.5/1.2 plus angry-villager particles, instead of a deep villager-no. Scatter uses large firework blast 1.5/1. Current profession system and projectile shapes differ from the reference; only these verified cue changes were applied.
+Reference: https://github.com/timing1337/mineplex-reborn/blob/d16fd2138608b053145f2774bb9b2fccf166b438/Plugins/Nautilus.Game.Arcade/src/nautilus/game/arcade/game/games/smash/perks/villager/PerkSonicBoom.java
+
+Unfinished work revealed by the audit
+- Base Blizzard and Fish Flurry still contain placeholder implementations. These need gameplay implementation, not just a sound substitution.
+- Several reconstructed abilities retain different projectile shapes, timing, or animations: notably Inferno, Daze, Villager professions/scatter, Needler burst timing, clone death debris and some Horse smoke geometry.
+- Modern client sound samples, texture packs and audio settings can differ from old Minecraft. Exact perceived loudness/visual parity still needs side-by-side footage or in-game comparison.
+- Modern-only classes for future kits are still in the source tree but are not used as classic reference material.
+- User-custom tiered Smash powers intentionally remain custom and were not reset to old Mineplex ultimates.
+
+Preserved
+All kit YAML/stat tables, resource-pack sprites, menus, scoreboard, lobby/map code, bots, and custom Smash code are byte-for-byte unchanged from the backup. The user's quieter recharge pling remains volume 0.3. Only audiovisual Kotlin code and the sound helper changed.
+
+Validation
+Gradle test + shadowJar succeeded: 46 tests, 0 failures, 0 errors.
+The isolated Paper server recorded actual outbound sound/particle packets from casts. Checks covered the shared helper, Flap, Needler, Spin Web, Iron Hook, Seismic Slam, Ink Shotgun, Sulphur Bomb, Blink/firework delivery and cleanup, Firefly charge/flight, Magma Blast, Flame Dash, Wither Image, Guided Skull, Daze, Whirlpool, Pig/Wolf launch cues and Villager effects. All completed without errors.
+The final test log is work/classic-effects-passed.log in the Codex workspace. This is server-side packet verification, not a human-client listening/visual comparison.
+Source comparison confirmed all resources/configs and custom Smash code unchanged.
+Installed and restarted successfully. Live PID 5812; Paper reached Done; 48 playable maps and persistent lobby loaded. Resource pack hash unchanged (7949b19a935a73831a20477619ef6c891bbf6ccd).
+Installed JAR SHA256: D3D2DA5219D8DED5ABBD4329DDD6299E38BF8A8B461BA1B7C17608FCCA8C8482.
+
+Rollback
+C:\Users\jacob\Documents\SSM AI Edition\backups\classic-effects-2026-11-09
+Contains source-before.zip and the previous installed plugin-before.jar.
+

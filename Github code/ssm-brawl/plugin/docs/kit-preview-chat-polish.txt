@@ -1,0 +1,54 @@
+Kit preview and chat polish - 2026-11-10
+
+Installed build SHA256:
+A5A238C409DA29714EA07ABDC537CC170975013B13D42B3F12E070E4A30ADDD8
+Served main resource pack SHA1:
+2d1af855b2c19dbe4fd60a09a5b778d487e3120a
+
+Yellow and red crystal sprites use a vanilla-sized 13-pixel Nether Star body inside
+native 16x16 animation frames, preserving the surrounding orbiting particles.
+Map modifier eyes are centered with thinner arrows. The Mooshroom icon is reduced
+and centered; the Goat menu icon no longer exposes the Ponder instrument tooltip.
+
+Opponent heads retain their account skins but no longer show the redundant skin
+tooltip. Their labels include cosmetic rank. Selection plays a ding and shows a
+shimmer/check overlay because special player-head rendering ignores ordinary glint.
+Overhead and tab bot names are yellow; rank colors remain in chat and roster labels.
+Jacob1Jacob2's verified UUID has cosmetic chat level 100 and white GOD rank.
+
+Kit selection equips protected weapon and armor previews in the hub without
+installing combat abilities or passives. Preview items cannot be moved, dropped,
+dragged, swapped or used. Build mode retains its editing inventory. Ability names
+use the kit's color both on tools and in the action bar. Left-click selects; right-
+click opens a stats menu, in the kit selector and on platform NPCs. NPC attacks use
+Paper's pre-attack event so selection works while the NPC remains invulnerable.
+
+The extra player hurt sound is private to the victim; nearby players hear the
+victim's mob hurt sound only.
+
+Remaining client limitation:
+The gray Server message marker is Minecraft's client chat trust indicator, not
+part of the message component. Inspection of the installed 26.3 client confirmed
+system/disguised chat receives this marker, and unsigned player chat receives an
+equivalent marker. Bots cannot provide genuine player chat signatures. No fake
+signatures or global resource-pack hiding were added; removing the indicator
+requires a client-side rendering change.
+
+Validation:
+- Gradle test + shadowJar successful: 52 tests, zero failures/errors.
+- Isolated Paper integration: all 21 kit previews, armor, colors, protections,
+  stats, opponent labels/glint/ding/deselection, owner rank and world-name colors.
+- Actual NMS attack against an invulnerable platform NPC selects its kit.
+- Packet checks: victim receives mob plus player hurt; bystander receives mob only.
+- Earlier presentation regression passed: five-second intro, countdown action bar,
+  bot speech, native 16-pixel assets and scoreboard font/divider behavior.
+- Installed JAR hash matches tested build; server reached Done with no errors.
+- HTTP resource-pack checks passed, including selected-head composite/animation,
+  all 45 map previews, crystal animations and all four XP overlays.
+
+Source and prior plugin backup:
+C:/Users/jacob/Documents/SSM AI Edition/backups/kit-preview-chat-polish-2026-11-10
+Integration evidence:
+C:/Users/jacob/Documents/Codex/2026-11-09/ok-x20/work/kit-polish-validation.log
+
+The server was restarted after installation. Reconnect to load the new resource pack.

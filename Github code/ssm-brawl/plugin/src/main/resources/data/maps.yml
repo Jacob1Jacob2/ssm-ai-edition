@@ -1,0 +1,18 @@
+# SSM AI Edition map list.
+#
+# Game maps are NOT listed here: every folder in <server>/worlds/ that isn't a hub map is scanned
+# automatically for wool + pressure-plate markers (see MapScanService) and cached in
+# plugins/super-smash-mobs-brawl/maps/<id>.yml. Run /scanmaps to force a rescan.
+gameMaps: []
+
+hubMaps:
+  - id: lobby
+    voidLevel: -64.0
+    worldBorderSize: 500.0
+    creators: []
+    spawnPoints:
+      - x: 0.5
+        y: 61.0
+        z: 0.5
+        yaw: 3.73
+        pitch: 0.0

@@ -1,0 +1,58 @@
+SSM AI Edition — map cleanup, persistent choices and 2x terrain
+Installed 2026-11-10
+
+Changes
+- Every disposable game copy now uses an empty flat generator, with features,
+  lakes and structure generation disabled. Chunks outside the authored arena
+  bounds (including saved generated structures, entities and POIs) are removed.
+  Remaining chunks have their structure starts/references cleared.
+- Saved empty invisible marker armor stands such as Nixuge are removed from
+  game worlds, including later chunk loads. Visible/equipped stands and lobby
+  selectors are preserved.
+- No implicit random map. Start requires an explicit map or Random choice.
+  The choice is saved per UUID in map-choices.properties and retained across
+  matches, hub returns, reconnects and restarts. The host's choice takes
+  priority over bot selections. Insufficient spawn capacity is not silently
+  replaced with another map.
+- Map menu bottom row: Back, Random Any, Random Old, Random New, Reverse,
+  Reflect, 2x Bigger, 2x Smaller, Start. Back/Start are custom arrow buttons.
+  All six custom control textures have centered 32x32 bounds.
+- BIG now means 2x on X/Y/Z (one full block -> 2x2x2).
+  SMALL means half on X/Y/Z (one output cell samples 2x2x2).
+  Existing saved BIG/SMALL settings adopt these corrected factors.
+- Enlargement converts every vanilla slab and stair variant into its material's
+  full-block geometry. Bottom/top slabs occupy the correct one-block layer;
+  stair facing, upside-down, inner/outer corners and reflection are respected.
+  Shrinking reconstructs available slab/stair forms from occupied octants.
+  Shapes smaller than vanilla can represent use the smallest supported shape
+  containing the terrain, rather than deleting thin platforms.
+- Live server.properties also has generate-structures=false.
+
+Cause/evidence
+The original map templates contained saved vanilla structures and 21 still
+enabled structure generation. All 638 trial-chamber palette hits in the audit
+are outside the retained arena chunks. Nixuge was a named invisible marker
+armor stand in the imported map, not an active opponent.
+
+Validation
+- Gradle test + shadowJar: passed, 52 tests, zero failures.
+- Isolated Paper server: 4,183 slab/stair states enlarged without any slab/stair
+  blocks left, then reduced with exact shape/material roundtrips.
+- Offline terrain fixtures: all 18 Reverse/Reflect/Scale combinations, air,
+  marker removal, negative coordinates and inverse scaling passed.
+- Full BIG and SMALL games with Reflect Left + Reverse loaded with correct
+  scaled spawn positions on terrain. /hub still cancels without a winner/title.
+- Explicit choice gating, repeated matches and disk reload persistence passed.
+- Saved trial blocks removed, new distant chunks empty, source settings unchanged,
+  Nixuge removed while visible/equipped stands survive: passed.
+- Live startup: 45 maps, no plugin errors; pack HTTP and all four XP overlays passed.
+  All six served custom control sprites are centered at pixel 15.5,15.5.
+- No manual Minecraft-client playthrough was performed for this update.
+
+Deployment
+Live process: 15980, game port 25565, resource-pack port 25566.
+JAR SHA256: 7C72092512650C875EA1258EF93D29821EBF069DFD34FDA96C59359F36B5847A
+Pack SHA1: e998b4c0a54a098acf3fe2df1b89bebaadbbfbb2
+Backup: C:/Users/jacob/Documents/SSM AI Edition/backups/map-shapes-2026-11-10
+Original map templates and the editable lobby were not changed.
+

@@ -1,0 +1,53 @@
+{
+  "platform": "Windows x86_64 with Java 25 (Linux ARM64 pending)",
+  "directory": "C:\\Users\\jacob\\Documents\\SSM AI Edition\\host-smoke",
+  "game_port": 25585,
+  "pack_port": 25586,
+  "verification": {
+    "game_status": {
+      "description": {
+        "text": "",
+        "extra": [
+          {
+            "text": "SUPER SMASH MOBS",
+            "bold": true
+          },
+          "\n",
+          {
+            "text": "Classic kits ",
+            "extra": [
+              {
+                "text": "| ",
+                "extra": [
+                  {
+                    "text": "AI Edition",
+                    "color": "green"
+                  }
+                ],
+                "color": "dark_gray"
+              }
+            ],
+            "color": "gray"
+          }
+        ],
+        "color": "yellow"
+      },
+      "players": {
+        "max": 20,
+        "online": 0
+      },
+      "version": {
+        "name": "Paper 26.3",
+        "protocol": 777
+      },
+      "enforcesSecureChat": true
+    },
+    "pack_bytes": 29811860,
+    "pack_sha1": "686afaf88cf5eda92605d1f2fd24169a3cd880f2",
+    "map_pictures": 45,
+    "checks": "Game status and resource-pack HTTP passed; does not simulate a player login."
+  },
+  "loaded_hosting_build": true,
+  "lobby_loaded": true,
+  "clean_stop": true
+}

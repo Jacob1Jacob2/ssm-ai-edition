@@ -1,0 +1,41 @@
+{
+    "created_utc":  "2026-11-15T06:33:19.5458497Z",
+    "deployment_status":  "Prepared locally; not installed on Oracle",
+    "target":  "Ubuntu 24.04 / ARM64 or x86_64 / Java 25",
+    "paper":  {
+                  "file":  "paper-26.3-245.jar",
+                  "version":  "26.3 build 245",
+                  "sha256":  "192d277ea1ce29b2df3933dd488521d4555cc82be864ea8df811fe536e8aed43"
+              },
+    "plugins":  [
+                    {
+                        "file":  "LibsDisguises-26.10.24.jar",
+                        "version":  "26.10.24",
+                        "sha256":  "5504f991a7d9ab4d57d22ec5a59bb9500b6fb9942ef47ddc844c3f3afe8d0e63"
+                    },
+                    {
+                        "file":  "packetevents-spigot-2.14.0.jar",
+                        "version":  "2.14.0",
+                        "sha256":  "060087c58ec268eae7dd0eb1f17ac3bea1eaadda1693414141ff64e506091bd7"
+                    },
+                    {
+                        "file":  "super-smash-mobs-brawl-0.1.0-ai-all.jar",
+                        "version":  "0.1.0-ai-crystal-bugfix-20261115",
+                        "sha256":  "1f46c0b9f5c01e6537729a72b8631759e5dab6b37aed7fa1dac1e4081edccc18"
+                    }
+                ],
+    "maps":  45,
+    "lobbies":  5,
+    "max_active_matches":  2,
+    "max_total_fighters_including_bots":  16,
+    "unit_tests":  189,
+    "archive_sha256":  "98890adfb21d3576060b2396576bf20bed501d8c4c9b63d5ed0bbe848fb067bf",
+    "archive_bytes":  558215505,
+    "archive_files":  1959,
+    "not_yet_tested":  [
+                           "Linux ARM64 startup",
+                           "Oracle network reachability",
+                           "Remote authenticated Minecraft login",
+                           "Public concurrent load"
+                       ]
+}

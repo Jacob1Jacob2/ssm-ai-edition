@@ -1,0 +1,611 @@
+kits:
+- id: hub
+  userFacing: false
+  meleeDamage: 0.0
+  armor: 1.0
+  knockbackMultiplier: 1.0
+  passives:
+  - id: double_jump
+  armorItems:
+    helmet: iron_helmet
+    chestplate: iron_chestplate
+    leggings: iron_leggings
+    boots: iron_boots
+- id: skeleton
+  hurtSound: entity.skeleton.hurt
+  meleeDamage: 5.0
+  armor: 6.0
+  knockbackMultiplier: 1.25
+  disguiseId: skeleton
+  selectionSound: entity.skeleton.ambient
+  displayItem: bow
+  metadata:
+    arrowKnockbackMultiplier: 1.5
+  passives:
+  - id: double_jump
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.2
+  - id: hunger
+  - id: arrow_recharge
+    overrides:
+      metadata:
+        arrowIntervalTicks: 60
+  - id: barrage
+  abilities:
+  - id: bone_blast
+  - id: roped_arrow
+  armorItems:
+    helmet: chainmail_helmet
+    chestplate: chainmail_chestplate
+    leggings: chainmail_leggings
+    boots: chainmail_boots
+- id: iron_golem
+  hurtSound: entity.iron_golem.hurt
+  meleeDamage: 7.0
+  armor: 8.0
+  knockbackMultiplier: 1.0
+  disguiseId: iron_golem
+  selectionSound: entity.iron_golem.hurt
+  displayItem: iron_ingot
+  passives:
+  - id: double_jump
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.2
+  - id: hunger
+  abilities:
+  - id: iron_hook
+  - id: fissure
+  - id: seismic_slam
+  armorItems:
+    helmet: iron_helmet
+    chestplate: iron_chestplate
+    leggings: iron_leggings
+    boots: diamond_boots
+- id: spider
+  hurtSound: entity.spider.hurt
+  meleeDamage: 6.0
+  armor: 5.5
+  knockbackMultiplier: 1.5
+  disguiseId: spider
+  selectionSound: entity.spider.ambient
+  displayItem: spider_eye
+  passives:
+  - id: wall_climb
+  - id: spider_leap
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.25
+  abilities:
+  - id: needler
+  - id: spin_web
+  armorItems:
+    helmet: null
+    chestplate: chainmail_chestplate
+    leggings: chainmail_leggings
+    boots: iron_boots
+- id: slime
+  hurtSound: entity.slime.hurt
+  meleeDamage: 6.0
+  armor: 4.0
+  knockbackMultiplier: 1.75
+  disguiseId: slime
+  selectionSound: entity.slime.squish
+  displayItem: slime_ball
+  passives:
+  - id: double_jump
+    overrides:
+      metadata:
+        horizontalMultiplier: 1.2
+        verticalBoost: 1.0
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.35
+  - id: giga_slime
+  - id: exp_charge
+    overrides:
+      metadata:
+        expAdd: 0.00321
+        chargeWhenInAir: true
+        chargeWhenSneaking: true
+  abilities:
+  - id: slime_rocket
+  - id: slime_slam
+  armorItems:
+    helmet: chainmail_helmet
+    chestplate: chainmail_chestplate
+    leggings: null
+    boots: chainmail_boots
+- id: enderman
+  hurtSound: entity.enderman.hurt
+  meleeDamage: 7.0
+  armor: 6.0
+  knockbackMultiplier: 1.3
+  disguiseId: enderman
+  selectionSound: entity.enderman.teleport
+  displayItem: ender_pearl
+  passives:
+  - id: double_jump
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.25
+  - id: hunger
+  - id: ender_teleport
+  abilities:
+  - id: blink
+  - id: block_toss
+  armorItems:
+    helmet: chainmail_helmet
+    chestplate: chainmail_chestplate
+    leggings: chainmail_leggings
+    boots: chainmail_boots
+- id: squid
+  hurtSound: entity.squid.hurt
+  meleeDamage: 6.0
+  armor: 5.0
+  knockbackMultiplier: 1.5
+  disguiseId: squid
+  selectionSound: entity.squid.ambient
+  displayItem: ink_sac
+  passives:
+  - id: double_jump
+  - id: regeneration
+  - id: hunger
+  abilities:
+  - id: ink_shotgun
+  - id: super_squid
+  - id: fish_flurry
+  armorItems:
+    chestplate: chainmail_chestplate
+    leggings: chainmail_leggings
+    boots: chainmail_boots
+- id: creeper
+  hurtSound: entity.creeper.hurt
+  meleeDamage: 6.0
+  armor: 4.0
+  knockbackMultiplier: 1.65
+  disguiseId: creeper
+  selectionSound: entity.creeper.hurt
+  displayItem: coal
+  passives:
+  - id: double_jump
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.4
+  - id: hunger
+  abilities:
+  - id: sulphur_bomb
+  - id: explode
+  armorItems:
+    helmet: leather_helmet
+    chestplate: leather_chestplate
+    leggings: leather_leggings
+    boots: iron_boots
+- id: wolf
+  hurtSound: entity.wolf.hurt
+  meleeDamage: 5.0
+  armor: 4.5
+  knockbackMultiplier: 1.5
+  disguiseId: wolf
+  selectionSound: entity.wolf.ambient
+  displayItem: bone
+  passives:
+  - id: wolf_jump
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.25
+  - id: hunger
+  - id: ravage
+  abilities:
+  - id: cub_tackle
+  - id: wolf_strike
+  armorItems:
+    chestplate: chainmail_chestplate
+    leggings: chainmail_leggings
+- id: magma_cube
+  hurtSound: entity.magma_cube.hurt
+  meleeDamage: 5.0
+  armor: 5.0
+  knockbackMultiplier: 1.75
+  disguiseId: magma_cube
+  selectionSound: entity.magma_cube.squish
+  displayItem: magma_cream
+  passives:
+  - id: double_jump
+    overrides:
+      metadata:
+        horizontalMultiplier: 1.2
+        verticalBoost: 1.0
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.35
+  - id: hunger
+  - id: fuel_the_fire
+  abilities:
+  - id: magma_blast
+  - id: flame_dash
+  armorItems:
+    chestplate: chainmail_chestplate
+    leggings: chainmail_leggings
+    boots: chainmail_boots
+- id: snowman
+  hurtSound: entity.snow_golem.hurt
+  meleeDamage: 6.0
+  armor: 6.0
+  knockbackMultiplier: 1.4
+  disguiseId: snowman
+  selectionSound: entity.snow_golem.ambient
+  displayItem: snowball
+  passives:
+  - id: double_jump
+  - id: arctic_aura
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.3
+  abilities:
+  - id: blizzard
+  - id: ice_path
+  armorItems:
+    helmet: chainmail_helmet
+    chestplate: chainmail_chestplate
+    leggings: chainmail_leggings
+    boots: chainmail_boots
+- id: wither_skeleton
+  hurtSound: entity.wither_skeleton.hurt
+  meleeDamage: 6.0
+  armor: 6.0
+  knockbackMultiplier: 1.2
+  disguiseId: wither_skeleton
+  selectionSound: entity.wither_skeleton.ambient
+  displayItem: wither_skeleton_skull
+  passives:
+  - id: double_jump
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.3
+  - id: hunger
+  abilities:
+  - id: guided_wither_skull
+  - id: wither_image
+  armorItems:
+    chestplate: chainmail_chestplate
+    leggings: chainmail_leggings
+    boots: chainmail_boots
+    helmet: chainmail_helmet
+- id: zombie
+  hurtSound: entity.zombie.hurt
+  meleeDamage: 6.0
+  armor: 5.0
+  knockbackMultiplier: 1.25
+  disguiseId: zombie
+  selectionSound: entity.zombie.ambient
+  displayItem: rotten_flesh
+  passives:
+  - id: double_jump
+  - id: hunger
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.25
+  - id: corrupted_arrow
+  - id: arrow_recharge
+  abilities:
+  - id: bile_blaster
+  - id: deaths_grasp
+  armorItems:
+    chestplate: chainmail_chestplate
+    leggings: chainmail_leggings
+    boots: chainmail_boots
+- id: cow
+  hurtSound: entity.cow.hurt
+  meleeDamage: 6.5
+  armor: 6.0
+  knockbackMultiplier: 1.1
+  disguiseId: cow
+  selectionSound: entity.cow.ambient
+  displayItem: milk_bucket
+  passives:
+  - id: double_jump
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.25
+  - id: stampede
+  - id: hunger
+  abilities:
+  - id: angry_herd
+  - id: milk_spiral
+  armorItems:
+    helmet: chainmail_helmet
+    chestplate: chainmail_chestplate
+    leggings: chainmail_leggings
+    boots: chainmail_boots
+- id: horse
+  hurtSound: entity.skeleton_horse.hurt
+  meleeDamage: 6.5
+  armor: 6.0
+  knockbackMultiplier: 1.4
+  disguiseId: horse
+  selectionSound: entity.skeleton_horse.ambient
+  displayItem: iron_horse_armor
+  passives:
+  - id: deadly_bones
+  - id: double_jump
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.3
+  - id: hunger
+  abilities:
+  - id: bone_kick
+  - id: bone_rush
+  armorItems:
+    helmet: chainmail_helmet
+    chestplate: chainmail_chestplate
+    leggings: chainmail_leggings
+    boots: chainmail_boots
+- id: pig
+  hurtSound: entity.pig.hurt
+  meleeDamage: 5.0
+  armor: 5.0
+  knockbackMultiplier: 1.5
+  disguiseId: pig
+  selectionSound: entity.pig.ambient
+  displayItem: porkchop
+  passives:
+  - id: double_jump
+  - id: regeneration
+  - id: hunger
+  - id: nether_pig
+  abilities:
+  - id: bouncy_bacon
+  - id: baby_bacon_bomb
+  armorItems:
+    helmet: null
+    chestplate: chainmail_chestplate
+    leggings: chainmail_leggings
+    boots: chainmail_boots
+- id: blaze
+  hurtSound: entity.blaze.hurt
+  meleeDamage: 6.0
+  armor: 6.0
+  knockbackMultiplier: 1.5
+  disguiseId: blaze
+  selectionSound: entity.blaze.ambient
+  displayItem: blaze_powder
+  passives:
+  - id: double_jump
+    overrides:
+      metadata:
+        horizontalMultiplier: 0.9
+        verticalBoost: 1.0
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.25
+  - id: hunger
+  abilities:
+  - id: inferno
+  - id: firefly
+  armorItems:
+    chestplate: chainmail_chestplate
+    leggings: chainmail_leggings
+    boots: chainmail_boots
+    helmet: chainmail_helmet
+- id: chicken
+  hurtSound: entity.chicken.hurt
+  meleeDamage: 4.5
+  armor: 2.5
+  knockbackMultiplier: 2.0
+  disguiseId: chicken
+  selectionSound: entity.chicken.ambient
+  displayItem: egg
+  passives:
+  - id: flap
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.2
+        healIntervalTicks: 20
+  abilities:
+  - id: egg_blaster
+  - id: chicken_missile
+  armorItems:
+    helmet: null
+    chestplate: chainmail_chestplate
+    leggings: null
+    boots: null
+- id: guardian
+  hurtSound: entity.guardian.hurt
+  meleeDamage: 5.0
+  armor: 4.5
+  knockbackMultiplier: 1.25
+  disguiseId: guardian
+  selectionSound: entity.guardian.ambient
+  displayItem: prismarine_shard
+  passives:
+  - id: double_jump
+  - id: regeneration
+  - id: hunger
+  abilities:
+  - id: whirlpool_axe
+  - id: water_splash
+  - id: target_laser
+  armorItems:
+    helmet: null
+    chestplate: null
+    leggings: diamond_leggings
+    boots: diamond_boots
+- id: witch
+  hurtSound: entity.witch.hurt
+  meleeDamage: 6.0
+  armor: 5.0
+  knockbackMultiplier: 1.5
+  disguiseId: witch
+  selectionSound: entity.witch.ambient
+  displayItem: potion
+  passives:
+  - id: double_jump
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.3
+  - id: hunger
+  abilities:
+  - id: daze_potion
+  - id: bat_wave
+  armorItems:
+    chestplate: chainmail_chestplate
+    leggings: chainmail_leggings
+    boots: chainmail_boots
+- id: sheep
+  hurtSound: entity.sheep.hurt
+  meleeDamage: 5.0
+  armor: 5.0
+  knockbackMultiplier: 1.7
+  disguiseId: sheep
+  selectionSound: entity.sheep.ambient
+  displayItem: player_head
+  passives:
+  - id: double_jump
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.25
+  - id: hunger
+  abilities:
+  - id: static_laser
+  - id: wool_mine
+  - id: wooly_rocket
+  armorItems:
+    helmet: null
+    chestplate: chainmail_chestplate
+    leggings: chainmail_leggings
+    boots: chainmail_boots
+- id: villager
+  hurtSound: entity.villager.hurt
+  meleeDamage: 6.0
+  armor: 5.0
+  knockbackMultiplier: 1.45
+  disguiseId: villager
+  selectionSound: entity.villager.ambient
+  displayItem: emerald
+  passives:
+  - id: villager_jump
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.25
+  - id: hunger
+  abilities:
+  - id: sonic_hurr
+  - id: trade_scatter
+  - id: villager_arts
+  armorItems:
+    chestplate: chainmail_chestplate
+    leggings: chainmail_leggings
+    boots: chainmail_boots
+- id: goat
+  userFacing: true
+  hurtSound: entity.goat.hurt
+  meleeDamage: 6.0
+  armor: 5.0
+  knockbackMultiplier: 1.2
+  disguiseId: goat
+  displayItem: goat_horn
+  passives:
+  - id: goated_leap
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.25
+  - id: hunger
+  abilities:
+  - id: goated_hurr
+  - id: goated_ram
+  armorItems:
+    chestplate: chainmail_chestplate
+    leggings: chainmail_leggings
+    boots: chainmail_boots
+- id: mooshroom
+  userFacing: true
+  hurtSound: entity.cow.hurt
+  meleeDamage: 5.5
+  armor: 5.0
+  knockbackMultiplier: 1.3
+  disguiseId: mooshroom
+  displayItem: red_mushroom
+  passives:
+  - id: double_jump
+  - id: overgrowth
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.25
+  - id: hunger
+  abilities:
+  - id: strawbury_swirl
+  - id: fungal_trampoline
+  - id: mushroom_wall
+  armorItems:
+    chestplate: chainmail_chestplate
+    leggings: chainmail_leggings
+    boots: chainmail_boots
+- id: phantom
+  userFacing: true
+  hurtSound: entity.phantom.hurt
+  meleeDamage: 5.0
+  armor: 4.5
+  knockbackMultiplier: 1.4
+  disguiseId: phantom
+  displayItem: phantom_membrane
+  passives:
+  - id: double_jump
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.25
+  - id: hunger
+  abilities:
+  - id: ravenous_membrane
+  - id: phantom_flight
+  armorItems:
+    chestplate: chainmail_chestplate
+    leggings: chainmail_leggings
+    boots: leather_boots
+
+- id: polar_bear
+  userFacing: true
+  hurtSound: entity.polar_bear.hurt
+  selectionSound: entity.polar_bear.ambient
+  meleeDamage: 5.5
+  armor: 6.5
+  knockbackMultiplier: 1.05
+  disguiseId: polar_bear
+  displayItem: cod
+  passives:
+  - id: double_jump
+  - id: regeneration
+    overrides:
+      metadata:
+        healAmount: 0.3
+  - id: hunger
+  abilities:
+  - id: bitter_smash
+  - id: fish_gun
+  - id: cub_carrier
+  armorItems:
+    chestplate: iron_chestplate
+    leggings: iron_leggings
+    boots: iron_boots

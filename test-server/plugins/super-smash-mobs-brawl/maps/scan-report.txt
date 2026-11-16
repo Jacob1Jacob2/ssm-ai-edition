@@ -1,0 +1,300 @@
+SSM AI map scan report (2026-11-08T23:05:04.979516300)
+[adrift] players=6 items=21 crystals=3 stacked=3 bounds x=-28..27 z=-29..27 minY=0 (STONE) void=-10.0 ignoredFarColumns=17679 border=116.0 icon=HAY_BLOCK size=small new=false
+    stack @ -21 23 -1: item + crystal
+    stack @ -6 25 20: item + crystal
+    stack @ 14 35 10: item + crystal
+[aerial] players=7 items=26 crystals=5 stacked=3 bounds x=11..58 z=13..92 minY=104 (STONE) void=94.0 border=139.0 icon=STONE size=medium new=true
+    stack @ 49 121 31: item + crystal
+    stack @ 54 116 38: player + item + crystal
+    stack @ 35 107 57: item + crystal
+[alpineruins] players=5 items=19 crystals=5 stacked=3 bounds x=3..82 z=-59..27 minY=38 (ANDESITE) void=28.0 ignoredFarColumns=13051 border=146.0 icon=SPRUCE_LOG size=large new=true
+    stack @ 34 73 -53: player + crystal
+    stack @ 60 69 -41: item + crystal
+    stack @ 37 69 -8: item + crystal
+[amplified] players=6 items=16 crystals=4 stacked=6 bounds x=-40..21 z=-35..29 minY=11 (BLUE_STAINED_GLASS) void=1.0 ignoredFarColumns=14733 border=124.0 icon=GRAVEL size=small new=false
+    stack @ -14 46 -22: player + item + crystal
+    stack @ -3 50 15: item + crystal
+    stack @ -1 39 22: item + crystal
+    stack @ 4 46 -26: item + player
+    stack @ 17 47 -9: player + item
+    stack @ 13 41 20: player + item
+[ancientislands] players=5 items=18 crystals=3 stacked=2 bounds x=-66..0 z=-2..62 minY=4 (STONE) void=-6.0 ignoredFarColumns=16578 border=126.0 icon=JUNGLE_WOOD size=small new=false
+    stack @ -7 49 29: item + crystal
+    stack @ -10 42 54: item + crystal
+[apache] players=5 items=17 crystals=2 stacked=3 bounds x=-17..44 z=-21..36 minY=55 (COBBLESTONE_WALL) void=45.0 ignoredFarColumns=13989 border=121.0 icon=OAK_LEAVES size=small new=false
+    stack @ 37 80 -3: player + item
+    stack @ 17 77 2: item + crystal
+    stack @ 0 80 30: player + item
+[ardanforest] players=5 items=19 crystals=3 stacked=3 bounds x=-37..39 z=-28..46 minY=28 (ANDESITE) void=18.0 ignoredFarColumns=17679 border=136.0 icon=RED_MUSHROOM_BLOCK size=medium new=false
+    stack @ -15 77 -2: item + crystal
+    stack @ 30 53 -16: player + item + crystal
+    stack @ 11 66 30: player + item
+[arena] players=4 items=16 crystals=4 stacked=8 bounds x=-23..25 z=-17..31 minY=84 (STONE_BRICKS) void=74.0 border=108.0 icon=SMOOTH_STONE size=small new=true
+    stack @ -23 103 7: player + item
+    stack @ -6 100 0: item + crystal
+    stack @ -6 100 14: item + crystal
+    stack @ 1 103 -17: player + item
+    stack @ 8 100 0: item + crystal
+    stack @ 8 100 14: item + crystal
+    stack @ 25 103 7: player + item
+    stack @ 1 103 31: player + item
+[astron] players=5 items=32 crystals=5 stacked=3 bounds x=-96..6 z=0..86 minY=81 (STONE) void=71.0 ignoredFarColumns=17679 border=162.0 icon=GRAY_TERRACOTTA size=medium new=false
+    - wool under marker at -92 94 47 (RED_WOOL) kept as part of the map
+    - wool under marker at -82 94 37 (RED_WOOL) kept as part of the map
+    - wool under marker at -73 94 42 (RED_WOOL) kept as part of the map
+    - wool under marker at -82 94 57 (RED_WOOL) kept as part of the map
+    - wool under marker at -73 94 52 (RED_WOOL) kept as part of the map
+    stack @ -57 95 6: item + crystal
+    stack @ -21 93 7: player + item + crystal
+    stack @ -82 102 47: item + crystal
+[atrium] players=4 items=37 crystals=1 stacked=1 bounds x=-76..-14 z=-130..-68 minY=40 (STONE_BRICKS) void=30.0 border=122.0 icon=COBBLESTONE size=medium new=true
+    stack @ -45 77 -99: item + crystal
+[aviation] players=8 items=21 crystals=2 stacked=9 bounds x=-100..-17 z=170..210 minY=53 (RED_STAINED_GLASS) void=43.0 border=143.0 icon=BLACK_TERRACOTTA size=large new=true
+    stack @ -45 67 175: player + item
+    stack @ -17 63 188: player + item
+    stack @ -82 63 202: player + item
+    stack @ -69 92 199: crystal + item
+    stack @ -48 72 195: crystal + item
+    stack @ -30 68 194: item + player
+    stack @ -70 66 209: player + item
+    stack @ -43 66 210: player + item
+    stack @ -23 60 208: player + item
+[build] players=5 items=14 crystals=2 stacked=0 bounds x=-27..52 z=-47..29 minY=84 (CYAN_STAINED_GLASS) void=74.0 ignoredFarColumns=15825 border=139.0 icon=YELLOW_TERRACOTTA size=medium new=false
+[caste] players=5 items=11 crystals=2 stacked=2 bounds x=-51..40 z=16..81 minY=94 (JUNGLE_LEAVES) void=84.0 ignoredFarColumns=14733 border=151.0 icon=GRASS_BLOCK size=medium new=false
+    stack @ -35 107 36: player + item + crystal
+    stack @ 18 104 61: player + item + crystal
+[castle_vein] players=6 items=29 crystals=6 stacked=8 bounds x=-93..6 z=10..82 minY=40 (STONE_BRICK_WALL) void=30.0 border=159.0 icon=STONE_BRICKS size=large new=true
+    - wool under marker at -93 49 47 (RED_WOOL) kept as part of the map
+    - wool under marker at -55 80 47 (RED_WOOL) kept as part of the map
+    stack @ -32 54 23: crystal + item
+    stack @ -12 58 26: player + item
+    stack @ -80 50 47: crystal + item
+    stack @ -55 51 47: item + crystal
+    stack @ -10 49 47: item + crystal
+    stack @ -5 55 38: item + player
+    stack @ -5 55 56: item + player
+    stack @ -55 52 74: item + crystal + player
+[cathedral] players=8 items=42 crystals=3 stacked=2 bounds x=33..143 z=-54..56 minY=10 (STONE) void=0.0 border=170.0 icon=NETHER_BRICK size=large new=true
+    - HEAVY_WEIGHTED_PRESSURE_PLATE on YELLOW_WOOL at 88 78 1 -> counted as crystal
+    - LIGHT_WEIGHTED_PRESSURE_PLATE on RED_WOOL at 88 80 1 -> counted as item
+    stack @ 88 60 1: crystal + item
+    stack @ 88 77 1: crystal + item
+[collide] players=6 items=19 crystals=3 stacked=4 bounds x=-21..29 z=-45..25 minY=77 (IRON_BLOCK) void=67.0 border=130.0 icon=POLISHED_ANDESITE size=medium new=true
+    - wool under marker at -12 95 -45 (GREEN_WOOL) kept as part of the map
+    - wool under marker at -6 94 -41 (GREEN_WOOL) kept as part of the map
+    stack @ -2 117 -7: crystal + item
+    stack @ -3 96 25: item + crystal + player
+    stack @ 5 94 -42: player + item
+    stack @ 29 95 23: crystal + item + player
+[corrupted] players=9 items=60 crystals=3 stacked=12 bounds x=-26..32 z=32..91 minY=73 (GLOWSTONE) void=63.0 border=119.0 icon=QUARTZ_BLOCK size=small new=true
+    stack @ -5 83 40: player + item
+    stack @ -24 84 56: player + item
+    stack @ -17 82 49: player + item
+    stack @ -19 80 75: player + item
+    stack @ -15 81 86: player + item
+    stack @ 8 83 40: player + item
+    stack @ 24 83 47: player + item
+    stack @ 3 75 62: item + crystal
+    stack @ 3 82 62: item + crystal
+    stack @ 3 96 62: item + crystal
+    stack @ 0 80 86: player + item
+    stack @ 15 80 84: item + player
+[desert] players=4 items=10 crystals=1 stacked=3 bounds x=-40..36 z=-41..39 minY=2 (STONE) void=-8.0 ignoredFarColumns=14733 border=140.0 icon=SAND size=small new=false
+    stack @ -3 46 -36: player + item
+    stack @ -34 46 -3: player + item + crystal
+    stack @ 27 47 -4: player + item
+[dreamscape] players=5 items=11 crystals=2 stacked=2 bounds x=-34..37 z=-53..33 minY=58 (COBBLESTONE) void=48.0 ignoredFarColumns=14733 border=146.0 icon=BIRCH_LEAVES size=medium new=false
+    stack @ -22 74 -9: player + item
+    stack @ -30 76 7: player + item + crystal
+[dustbowl] players=6 items=17 crystals=2 stacked=6 bounds x=-5..62 z=-32..17 minY=50 (TERRACOTTA) void=40.0 border=127.0 icon=RED_SAND size=medium new=true
+    stack @ -5 66 -21: item + crystal
+    stack @ 44 64 -30: item + player
+    stack @ 16 66 -1: item + crystal
+    stack @ 20 57 13: player + item
+    stack @ 47 64 11: player + item
+    stack @ 31 62 16: item + player
+[enigma] players=4 items=13 crystals=5 stacked=5 bounds x=-50..31 z=-40..29 minY=52 (STONE_BRICKS) void=42.0 ignoredFarColumns=17440 border=141.0 icon=GREEN_TERRACOTTA size=medium new=false
+    - wool under marker at -2 73 0 (GREEN_WOOL) kept as part of the map
+    stack @ -6 77 -25: item + crystal
+    stack @ -23 75 -7: item + crystal
+    stack @ 7 73 -20: item + crystal
+    stack @ 6 73 6: item + crystal
+    stack @ 26 73 13: item + crystal
+[extinction] players=4 items=14 crystals=2 stacked=4 bounds x=-14..160 z=-34..136 minY=0 (BEDROCK) void=-10.0 ignoredFarColumns=82153 border=234.0 icon=BONE_BLOCK size=medium new=false
+    stack @ 72 15 39: crystal + item
+    stack @ 54 17 54: item + crystal
+    stack @ 41 19 80: player + item
+    stack @ 55 17 88: player + item
+[flame_cavern] players=10 items=10 crystals=3 stacked=3 bounds x=-6..48 z=-31..22 minY=68 (STONE) void=58.0 border=114.0 icon=RED_NETHER_BRICKS size=medium new=true
+    stack @ 9 92 -10: item + crystal
+    stack @ 30 92 -13: crystal + item
+    stack @ 27 92 8: item + crystal
+[flowerblaze] players=6 items=21 crystals=7 stacked=9 bounds x=-65..13 z=-33..22 minY=39 (STONE) void=29.0 border=138.0 icon=BLACKSTONE size=small new=true
+    stack @ -36 59 -33: item + player
+    stack @ -14 55 -32: player + item
+    stack @ -10 52 -23: player + item
+    stack @ -33 56 -14: crystal + item
+    stack @ -9 55 -6: crystal + item
+    stack @ -55 55 5: player + item
+    stack @ -46 53 11: player + item
+    stack @ -17 54 1: item + crystal
+    stack @ 13 45 -7: player + item
+[forgottenstones] players=4 items=21 crystals=2 stacked=2 bounds x=-62..14 z=-17..64 minY=71 (STONE) void=61.0 ignoredFarColumns=17679 border=141.0 icon=CRACKED_STONE_BRICKS size=medium new=false
+    stack @ -9 82 7: item + crystal
+    stack @ -12 79 31: crystal + item
+[fortress] players=6 items=24 crystals=6 stacked=5 bounds x=-23..26 z=-6..19 minY=79 (MOVING_PISTON) void=69.0 border=109.0 icon=MOSSY_STONE_BRICKS size=medium new=true
+    - HEAVY_WEIGHTED_PRESSURE_PLATE on YELLOW_WOOL at -9 94 4 -> counted as crystal
+    stack @ -16 100 0: player + item + crystal
+    stack @ -16 100 12: player + item
+    stack @ 25 101 0: player + item
+    stack @ 25 110 15: item + crystal + player
+    stack @ 10 117 16: player + item
+[garden] players=5 items=11 crystals=3 stacked=0 bounds x=-16..21 z=40..61 minY=85 (DIRT) void=75.0 border=97.0 icon=WHITE_STAINED_GLASS size=small new=true
+[glacier] players=6 items=10 crystals=3 stacked=2 bounds x=-27..33 z=-30..29 minY=7 (LIGHT_BLUE_TERRACOTTA) void=-3.0 ignoredFarColumns=13854 border=120.0 icon=SNOW_BLOCK size=small new=false
+    stack @ -15 27 -2: player + item
+    stack @ -2 27 20: player + item
+[highlands] players=6 items=10 crystals=4 stacked=1 bounds x=-6..25 z=-17..15 minY=88 (STONE) void=78.0 border=92.0 icon=PODZOL size=small new=true
+    stack @ -6 108 15: player + item + crystal
+[highway] players=7 items=6 crystals=4 stacked=0 bounds x=12..46 z=11..69 minY=108 (OAK_FENCE) void=98.0 border=118.0 icon=RED_TERRACOTTA size=medium new=true
+[lava_spire] players=8 items=14 crystals=2 stacked=6 bounds x=49..97 z=37..85 minY=75 (COAL_BLOCK) void=65.0 border=108.0 icon=RED_STAINED_GLASS size=medium new=true
+    stack @ 73 101 37: player + item
+    stack @ 49 101 61: player + item
+    stack @ 73 91 61: crystal + item
+    stack @ 73 104 61: crystal + item
+    stack @ 97 101 61: player + item
+    stack @ 73 101 85: player + item
+[liminal_pools] players=6 items=18 crystals=6 stacked=11 bounds x=-33..19 z=-43..16 minY=52 (SEA_LANTERN) void=42.0 border=119.0 icon=SEA_LANTERN size=medium new=true
+    stack @ -5 63 -43: player + item
+    stack @ -33 68 -18: item + crystal
+    stack @ -6 62 -22: item + crystal
+    stack @ -32 62 -8: player + item
+    stack @ -16 58 -4: item + crystal
+    stack @ -7 53 -2: item + crystal
+    stack @ -23 58 3: player + item + crystal
+    stack @ 2 59 -32: item + crystal
+    stack @ 14 61 -3: player + item
+    stack @ 19 62 -14: player + item
+    stack @ 0 59 16: player + item
+[lormeadow] players=5 items=11 crystals=4 stacked=3 bounds x=-38..14 z=-12..51 minY=77 (STONE) void=67.0 border=123.0 icon=MOSSY_COBBLESTONE size=small new=true
+    stack @ -38 102 18: player + item
+    stack @ -24 107 36: player + item + crystal
+    stack @ 10 105 49: crystal + item
+[miningcamp] players=5 items=13 crystals=3 stacked=3 bounds x=-35..38 z=-23..32 minY=35 (BLUE_STAINED_GLASS) void=25.0 ignoredFarColumns=14940 border=133.0 icon=MYCELIUM size=small new=false
+    stack @ -14 68 -16: item + crystal
+    stack @ 17 75 -16: player + item
+    stack @ 27 78 3: player + item
+[mushroomislands] players=4 items=17 crystals=4 stacked=3 bounds x=-22..28 z=-15..35 minY=0 (MUSHROOM_STEM) void=-10.0 ignoredFarColumns=17440 border=110.0 icon=BROWN_MUSHROOM_BLOCK size=small new=false
+    stack @ -16 34 -12: item + crystal
+    stack @ -19 35 28: item + crystal
+    stack @ -16 35 17: item + crystal
+[oculus] players=4 items=26 crystals=2 stacked=6 bounds x=-85..-19 z=-32..34 minY=54 (STONE_BRICKS) void=44.0 border=126.0 icon=OBSIDIAN size=small new=true
+    stack @ -52 80 -32: player + item
+    stack @ -85 80 1: player + item
+    stack @ -52 95 1: crystal + item
+    stack @ -52 108 1: item + crystal
+    stack @ -19 80 1: player + item
+    stack @ -52 80 34: player + item
+[olympian_heights] players=6 items=15 crystals=4 stacked=2 bounds x=-29..44 z=-49..25 minY=81 (SNOW_BLOCK) void=71.0 border=134.0 icon=LIGHT_BLUE_WOOL size=large new=true
+    stack @ 16 102 -42: player + item
+    stack @ 1 100 1: crystal + item
+[orientalgardens] players=11 items=43 crystals=9 stacked=12 bounds x=-79..-1 z=-31..53 minY=80 (STONE) void=70.0 ignoredFarColumns=86 border=144.0 icon=POLISHED_DIORITE size=medium new=false
+    - HEAVY_WEIGHTED_PRESSURE_PLATE on YELLOW_WOOL at -16 96 -1 -> counted as crystal
+    stack @ -18 97 -17: crystal + item + player
+    stack @ -55 106 -13: item + player + crystal
+    stack @ -42 97 -5: item + crystal + player
+    stack @ -16 95 -1: crystal + item + player
+    stack @ -63 110 15: item + crystal
+    stack @ -73 108 18: player + item
+    stack @ -61 93 16: player + item
+    stack @ -62 107 44: player + item
+    stack @ -60 93 42: player + item
+    stack @ -51 108 33: crystal + item
+    stack @ -37 92 32: crystal + item
+    stack @ -37 92 43: item + player
+[overgrowth] players=5 items=19 crystals=8 stacked=8 bounds x=-37..38 z=-41..28 minY=80 (STONE) void=70.0 border=135.0 icon=LIME_TERRACOTTA size=large new=true
+    stack @ -23 110 -36: player + item
+    stack @ -4 98 -30: player + item
+    stack @ -37 116 -15: crystal + item
+    stack @ -32 106 -8: player + item
+    stack @ -8 106 -14: item + crystal
+    stack @ 5 97 -38: player + item
+    stack @ 29 102 -13: item + player
+    stack @ 37 106 -3: crystal + item
+[passage] players=6 items=17 crystals=6 stacked=5 bounds x=16..70 z=-42..29 minY=33 (BIRCH_LEAVES) void=23.0 ignoredFarColumns=12747 border=131.0 icon=GRANITE size=medium new=false
+    stack @ 28 64 -4: item + crystal
+    stack @ 61 60 -8: player + item + crystal
+    stack @ 23 60 5: player + item + crystal
+    stack @ 56 44 0: crystal + item
+    stack @ 54 60 24: player + item
+[research_lab] players=12 items=21 crystals=11 stacked=0 bounds x=-27..28 z=-87..-13 minY=58 (IRON_BLOCK) void=48.0 border=134.0 icon=IRON_BLOCK size=large new=true
+[ruins] players=9 items=26 crystals=4 stacked=1 bounds x=-78..69 z=52..133 minY=52 (STONE) void=42.0 border=207.0 icon=DIAMOND_BLOCK size=large new=true
+    stack @ 61 84 95: item + crystal
+[sanctuary] players=8 items=17 crystals=2 stacked=5 bounds x=-22..20 z=17..59 minY=69 (GLOWSTONE) void=59.0 border=102.0 icon=CHISELED_QUARTZ_BLOCK size=small new=true
+    stack @ -17 77 22: player + item
+    stack @ -1 71 38: crystal + item
+    stack @ -17 77 54: player + item
+    stack @ 15 77 22: player + item
+    stack @ 15 77 54: player + item
+[sky_ruins] players=9 items=17 crystals=4 stacked=2 bounds x=-1..60 z=9..66 minY=4 (CYAN_TERRACOTTA) void=-6.0 border=121.0 icon=CHISELED_STONE_BRICKS size=large new=true
+    - wool under marker at 60 102 45 (GREEN_WOOL) kept as part of the map
+    stack @ 18 121 9: item + player
+    stack @ 52 103 18: player + item
+[skylands] players=6 items=20 crystals=3 stacked=1 bounds x=-60..55 z=-59..38 minY=15 (STONE) void=5.0 ignoredFarColumns=17679 border=175.0 icon=GRASS_BLOCK size=large new=false
+    stack @ 48 51 -15: player + item
+[temple] players=5 items=13 crystals=6 stacked=4 bounds x=-26..32 z=-57..-37 minY=75 (MOSSY_STONE_BRICKS) void=65.0 border=118.0 icon=GREEN_WOOL size=small new=true
+    - wool under marker at -4 128 -52 (GREEN_WOOL) kept as part of the map
+    - wool under marker at -26 94 -39 (GREEN_WOOL) kept as part of the map
+    stack @ -22 96 -57: crystal + player + item
+    stack @ -16 86 -40: crystal + item
+    stack @ 3 96 -57: player + item + crystal
+    stack @ 16 93 -40: player + item
+[the_ship] players=8 items=20 crystals=7 stacked=3 bounds x=-6..8 z=-26..29 minY=93 (STONE) void=83.0 border=115.0 icon=BROWN_WOOL size=medium new=true
+    stack @ 1 95 -26: crystal + player
+    stack @ 1 95 22: crystal + item
+    stack @ 1 106 29: crystal + item
+[volcano] players=7 items=17 crystals=3 stacked=4 bounds x=-35..42 z=-11..48 minY=0 (LAVA) void=-10.0 border=137.0 icon=LAVA size=large new=true
+    stack @ -23 119 20: crystal + item + player
+    stack @ 42 100 -10: item + crystal
+    stack @ 39 102 15: item + crystal
+    stack @ 15 100 45: player + item
+[wastedlands] players=6 items=14 crystals=2 stacked=2 bounds x=-23..34 z=-32..47 minY=36 (TERRACOTTA) void=26.0 ignoredFarColumns=14139 border=139.0 icon=TERRACOTTA size=small new=false
+    - LIGHT_WEIGHTED_PRESSURE_PLATE on RED_WOOL at 29 48 19 -> counted as item
+    stack @ 28 49 -4: player + item
+    stack @ 18 48 13: item + crystal
+[white_chapel] players=9 items=28 crystals=7 stacked=5 bounds x=-33..35 z=-11..18 minY=97 (CHISELED_QUARTZ_BLOCK) void=87.0 border=128.0 icon=QUARTZ_PILLAR size=large new=true
+    stack @ -33 121 1: crystal + item
+    stack @ 1 113 -8: item + crystal
+    stack @ 32 103 -4: crystal + item + player
+    stack @ 32 100 1: player + item
+    stack @ 35 121 1: item + crystal
+[yun] players=7 items=11 crystals=2 stacked=2 bounds x=-15..33 z=49..106 minY=43 (WHITE_WOOL) void=33.0 border=117.0 icon=WHITE_WOOL size=medium new=true
+    stack @ -14 61 88: item + player
+    stack @ 8 59 106: player + item + crystal
+
+SSM AI map scan report (2026-11-11T05:21:27.723542100)
+[orientalgardens] players=11 items=43 crystals=9 stacked=12 bounds x=-79..-1 z=-31..53 minY=80 (STONE) void=70.0 border=144.0 icon=null size=null new=false
+    - HEAVY_WEIGHTED_PRESSURE_PLATE on YELLOW_WOOL at -16 96 -1 -> counted as crystal
+    stack @ -18 97 -17: crystal + item + player
+    stack @ -55 106 -13: item + player + crystal
+    stack @ -42 97 -5: item + crystal + player
+    stack @ -16 95 -1: crystal + item + player
+    stack @ -63 110 15: item + crystal
+    stack @ -73 108 18: player + item
+    stack @ -61 93 16: player + item
+    stack @ -62 107 44: player + item
+    stack @ -60 93 42: player + item
+    stack @ -51 108 33: crystal + item
+    stack @ -37 92 32: crystal + item
+    stack @ -37 92 43: item + player
+
+SSM AI map scan report (2026-11-15T01:10:28.993938500)
+[alpineruins] players=5 items=19 crystals=5 stacked=3 bounds x=3..82 z=-59..27 minY=38 (ANDESITE) void=28.0 ignoredFarColumns=3957 border=146.0 icon=null size=null new=false
+    stack @ 34 73 -53: player + crystal
+    stack @ 60 69 -41: item + crystal
+    stack @ 37 69 -8: item + crystal
+[research_lab] players=12 items=25 crystals=11 stacked=0 bounds x=-27..28 z=-87..-13 minY=58 (IRON_BLOCK) void=48.0 border=134.0 icon=null size=null new=false
+    - RED_WOOL at -7 70 -87 has no plate; counted as a marker (map info.txt)
+    - RED_WOOL at -7 73 -77 has no plate; counted as a marker (map info.txt)
+    - RED_WOOL at 8 70 -87 has no plate; counted as a marker (map info.txt)
+    - RED_WOOL at 8 73 -77 has no plate; counted as a marker (map info.txt)
+

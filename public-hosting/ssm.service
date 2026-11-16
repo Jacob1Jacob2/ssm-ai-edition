@@ -1,0 +1,31 @@
+[Unit]
+Description=SSM AI Edition Minecraft server
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=ssm
+Group=ssm
+WorkingDirectory=/opt/ssm/server
+EnvironmentFile=/etc/ssm/ssm.env
+ExecStart=/usr/bin/python3 /opt/ssm/launcher.py
+KillSignal=SIGINT
+TimeoutStopSec=180
+Restart=on-failure
+RestartSec=15
+UMask=0027
+LimitNOFILE=65535
+MemoryMax=8G
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/ssm/server
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

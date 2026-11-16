@@ -1,0 +1,14 @@
+name: super-smash-mobs-brawl
+version: "${version}"
+main: dev.betrix.superSmashMobsBrawl.SuperSmashMobsBrawl
+api-version: "26.3"
+authors: [BetrixDev]
+depend: [LibsDisguises]
+permissions:
+  ssmb.debug:
+    description: Allows server debugging
+    default: op
+
+  ssmb.removebot:
+    description: Allows removing custom opponents
+    default: op

@@ -1,0 +1,58 @@
+SSM AI Edition - validation and deployment
+2026-11-10 03:40 America/New_York
+
+Build
+- Gradle test + shadowJar completed successfully on Java 25.
+- 52 unit tests; zero failures, zero errors.
+- Built and installed JAR SHA256:
+  C2F8E6193FEA5E94B48C45F862D17AC3F00302575AEEA4D00889D588D78B81CD
+
+Isolated Paper integration checks
+- All 84 custom Smash powers: activation, attacks, ticking and life cleanup.
+- Fuel preservation, two-hits-per-second cap, inventory restoration, per-player stocks,
+  allied targeting and FFA/host/bot victories.
+- All four crystal tiers: eased descent, orbiting shards, exact landing height,
+  expiry, terrain restoration at every layer, no leaked display entities.
+- Protected countdown, branding/rules and bossbar removal at combat start.
+- Winner placement order, title/audio, harmless celebration, return to lobby.
+- /hub: no winner message/title, all participants home, arena unloaded.
+- Final gameplay run: Inferno travel/audio/release cleanup; Firefly 30-tick charge
+  and 20-tick flight; Needler six successive arrows; Blizzard tank and Arctic Aura;
+  Daze first-impact splash/damage/debuff; Fish Flurry warning/fish/cleanup;
+  Pig catch behavior, form/armor/recovery and bomb expiry; Zombie charged damage;
+  Villager ten-second expiration; Chicken eight flaps and exactly 60-tick recharge.
+- Final poison fix: real potion ticks reduce health through the combat engine;
+  armor is ignored and damage stops at one HP.
+- Earlier flaky projectile fixture now always uses an Iron Golem target;
+  final gameplay run completed with no failed checks.
+
+Design validation
+- New Yellow/Red sprites: different custom shapes, 32px, 48 animated frames each.
+- Exported and visually inspected multiple frames plus START/Back sprites.
+- Sidebar divider unit assertion: exactly 13 glyphs.
+- Arrival visuals tested through transforms, particles, packets and timing.
+  No human Minecraft-client render of the arrivals was captured during this pass.
+
+Deployment
+- Previous live server stopped gracefully, then tested plugin installed.
+- Live server PID 34640, listening on 25565; pack server listening on 25566.
+- Server reached Done, loaded the existing lobby and all 45 playable maps.
+- Startup log contains no ERROR or Exception; no test helper installed live.
+- Main resource pack and all four XP overlay packs return HTTP 200 and validate.
+- Main pack SHA1: 9f05da0db0a8e842244f28ac5788dee004191adf
+- Main pack contains 18 Smash model definitions, 45 map previews, both 48-frame
+  star textures, custom menu assets and sidebar fonts.
+
+Evidence in C:/Users/jacob/Documents/Codex/2026-11-09/ok-x20/work/
+- smash-build.log
+- classic-final-smash-validation.log
+- classic-gameplay-final-validation.log
+- classic-deployed-pack-validation.log
+- classic-design-assets/preview.png
+- live-smash-start.stdout.log
+
+The 84-power/arrival/ending suite preceded the final poison-routing correction;
+the final build reran the unit suite and gameplay suite including real poison ticks.
+All other gameplay and visual code is the same tested implementation.
+Research scope, decisions and historical-source limitations are recorded in
+classic-gameplay-design-update.txt.

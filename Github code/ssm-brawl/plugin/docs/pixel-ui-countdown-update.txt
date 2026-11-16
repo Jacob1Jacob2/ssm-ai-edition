@@ -1,0 +1,31 @@
+SSM AI Edition presentation update — 2026-11-10
+
+Changes
+- Yellow and Red Smash items use crisp 16x16 animation frames; custom map controls and Start/Back buttons are native 16x16.
+- Skeletal Horse uses iron horse armor in the kit menu.
+- Match preparation lasts 100 ticks (5 seconds) and uses a live segmented Game Start action bar. Ability cooldown displays begin after the countdown.
+- The intro map line includes the resolved reverse, reflection, and size modifiers.
+- Players heading, player rows, and AI Edition footer move exactly one GUI pixel upward. Vanilla letter pixels are preserved.
+- The sidebar retains 13 divider segments and fills the native score gutter up to a one-pixel gap before the red number.
+- Combat emits mob hurt and player hurt sounds together. Disguise sound replacement is disabled to preserve both layers.
+- Bot ranks and levels remain in chat with rank colors; overhead and tab names omit the rank/level prefix.
+- /botsaysomething emits one random sentence per connected bot using the normal chat formatter.
+
+Validation
+- Gradle test and shadowJar passed: 52 tests, zero failures or errors.
+- Isolated Paper integration checks passed for all changes, including outbound countdown/chat/sound packets, countdown duration, live kit-menu material, actual disguise names, and resource-pack contents.
+- Font pixels were compared with the original atlas; ascent changes equal one pixel. Divider geometry accounts for the client's score gutter.
+- Inspected an enlarged nearest-neighbor preview of every generated 16px asset.
+- Live plugin installed and server restarted successfully at 12:13 on November 10. Game and resource-pack ports are listening.
+- Served resource pack and all four XP overlays returned HTTP 200 and passed format/dimension checks. The pack includes 45 map previews.
+- No manual in-game visual or listening pass was performed during this update.
+
+Installed plugin SHA256:
+9C2D9647193CDBDEE9D639D35F830004F60F4F530401C7F5475FEF694EBAE510
+Served main resource-pack SHA1:
+5e2d30316bfecfc79717c481325f716cdf4ffdae
+
+Test transcript:
+C:/Users/jacob/Documents/Codex/2026-11-09/ok-x20/work/pixel-ui-validation.log
+Source/plugin rollback snapshot:
+C:/Users/jacob/Documents/SSM AI Edition/backups/pixel-ui-countdown-2026-11-10

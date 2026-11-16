@@ -1,0 +1,43 @@
+SSM AI Edition - enlarged map details and Chicken Flap
+2026-11-10
+
+Enlarged maps
+- Carpets, rails, trapdoors and ladders now have one enlarged display per original block.
+  The old eight-cell repetition produced floating carpets/rails and duplicate trapdoors/ladders.
+- Carpets and trapdoors enlarge along their surfaces while retaining vanilla thickness.
+  Hidden native blocks give those surfaces matching client/server collision. Open and closed
+  trapdoors, both halves and all facings are covered. Ladders have climbable native carriers
+  only along the supporting wall, with a single enlarged ladder model in front.
+- Rail displays preserve straight, curved and ascending shapes. They are decorative arena
+  tracks; they do not provide a new minecart system.
+- Models stream with their chunks, clean up with destroyed supports/Smash terrain, and release
+  tracking on unload. Unused pale moss carpet, aged weeping vines and waxed weathered copper
+  trapdoor states provide invisible carriers through the existing resource pack. The source
+  arena/lobby palette audit found none of those materials in the imported templates.
+- Lower grass layers become dirt. Grass under an opaque full block becomes dirt as well;
+  exposed grass and lawns under glass/leaves remain grass.
+- Original templates and the editable lobby are unchanged. New matches rebuild disposable copies.
+
+Chicken Flap
+- Ground recharge is 60 game ticks (3 seconds at 20 TPS) from empty to genuinely full.
+- Removed the 0.9999 cap that prevented the eighth flap from a supposedly full bar.
+- The last affordable flap consumes any unusable remainder, so exhaustion shows exactly zero.
+- Unlimited-flap Smash powers retain their existing behavior.
+
+Validation
+- Gradle test and shadowJar successful; 52 tests, zero failures.
+- Isolated Paper 26.3 integration: 1,525 thin-block states; carpet/trapdoor collision compared
+  with rendered geometry; all ladder directions climbable; single rail models.
+- Twelve-detail terrain fixture across all six reverse/reflect combinations, loaded entities,
+  buried/exposed/glass-covered grass, support cleanup, Smash cleanup, native physics protection.
+- An actual test player climbed the scaled ladder and stood on the scaled trapdoor surface.
+- Chicken: full at tick 60, eight flaps, zero at exhaustion and after a partial final flap.
+- Existing 4,183 slab/stair checks, 18 map transformations, giant plants, miniature tree posts
+  and a full BIG + Reflect Left + Reverse match passed. /hub still awards no win.
+- Resource-pack model references and all 26 weeping-vine model states validated.
+- No manual visual inspection in the Minecraft client was performed for this update.
+
+Deployment
+Installed JAR SHA256: 6A9EEF02D34E9CD692ACE821156E0187DD6992F1D47B7FBCFB2795623D3E792A
+Backup: SSM AI Edition/backups/thin-blocks-flaps-2026-11-10
+Integration helper: Codex/2026-11-09/ok-x20/work/ssm-smoke-helper/ThinBlocksCheck.java

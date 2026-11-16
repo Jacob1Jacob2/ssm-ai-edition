@@ -1,0 +1,141 @@
+passives:
+- id: double_jump
+  userFacing: false
+  metadata:
+    horizontalMultiplier: 0.9
+    verticalBoost: 0.9
+    allowMidairReset: false
+- id: hunger
+  userFacing: false
+  metadata:
+    hungerRestoreDelayMs: 250
+- id: regeneration
+  userFacing: false
+  metadata:
+    healAmount: 0.25
+    healIntervalTicks: 20
+- id: flap
+  displayItem: feather
+  userFacing: true
+  metadata:
+    maxFlaps: 8
+    energyPerFlap: 12.5
+    minEnergyToFlap: 12.5
+    maxEnergy: 100.0
+    rechargeSeconds: 3.0
+    flapStrengthMultiplier: 0.95
+    flapVerticalBoost: 0.15
+    flapHeightMax: 0.9
+- id: arrow_recharge
+  displayItem: bundle
+  userFacing: true
+  metadata:
+    arrowHotbarSlot: 3
+    maximumArrowCount: 3
+    arrowIntervalTicks: 40
+- id: barrage
+  displayItem: spectral_arrow
+  userFacing: true
+  metadata:
+    maxCharge: 5
+    arrowDamage: 6.0
+- id: stampede
+  displayItem: leather
+  userFacing: true
+  metadata:
+    stackIncreaseTimeMs: 3000
+    maxStacks: 4
+    stopSprintDamage: 3
+- id: wall_climb
+  displayItem: spider_eye
+  userFacing: true
+  metadata:
+    climbSpeed: 0.15
+    energyCostPerTick: 1.0
+    maxEnergy: 100.0
+    energyRegenRate: 10.0
+- id: spider_leap
+  displayItem: spider_spawn_egg
+  userFacing: true
+  metadata:
+    leapStrength: 1.25
+    horizontalMultiplier: 1.0
+    verticalMultiplier: 1.0
+- id: nether_pig
+  displayItem: nether_wart
+  userFacing: true
+  metadata:
+    lowHealthThreshold: 6.0
+- id: giga_slime
+  displayItem: slime_ball
+  userFacing: true
+  metadata: {}
+- id: arctic_aura
+  displayItem: snow_block
+  userFacing: true
+  metadata:
+    damage_bonus: 1
+    slow_effect: true
+    knockback_reduction: true
+    uses_experience: true
+- id: corrupted_arrow
+  displayItem: arrow
+  userFacing: true
+  metadata:
+    maxCharge: 6
+    damagePerCharge: 0.9
+    chargeDelayTicks: 20
+    chargeRateTicks: 6
+    minDamage: 5.0
+    maxDamage: 12.0
+    energyPerDamage: 1.5
+    energyDecayDelayMs: 3000
+    energyDecayRate: 10.0
+    baseBowDamageCap: 5.0
+- id: overgrowth
+  displayItem: golden_apple
+  userFacing: true
+  metadata:
+    absorptionRatio: 0.25
+    maxAbsorptionHearts: 4.0
+    absorptionDurationTicks: 200
+- id: exp_charge
+  displayItem: experience_bottle
+  userFacing: true
+  metadata:
+    expAdd: 0.01
+    delayTicks: 1
+    chargeWhenInAir: false
+    chargeWhenSneaking: true
+    startFullEnergy: false
+    enabled: true
+- id: deadly_bones
+  displayItem: bone
+  userFacing: true
+  metadata:
+    fuseTicks: 30
+    damage: 2.0
+- id: ravage
+  displayItem: bone
+  userFacing: true
+  metadata: {}
+- id: fuel_the_fire
+  displayItem: magma_cream
+  userFacing: true
+  metadata:
+    armorPerKill: 0.5
+    knockbackReductionPerKill: 0.15
+- id: wolf_jump
+  displayItem: feather
+  userFacing: true
+  metadata: {}
+- id: villager_jump
+  displayItem: feather
+  userFacing: false
+  metadata: {}
+- id: goated_leap
+  displayItem: feather
+  userFacing: true
+- id: ender_teleport
+  displayItem: ender_pearl
+  userFacing: true

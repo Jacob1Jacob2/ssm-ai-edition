@@ -1,0 +1,447 @@
+package dev.betrix.superSmashMobsBrawl.bots
+
+import java.util.UUID
+import kotlin.random.Random
+
+/** How bot chat is typed: all lowercase, no commas, apostrophes or periods, the way players type mid-fight. */
+object BotSlang {
+    private val dropped = Regex("[,.'’`]")
+    private val spaces = Regex("\\s+")
+
+    /** Applied to every line a bot sends, so no line can slip through with proper grammar. */
+    fun style(text: String): String = spaces.replace(dropped.replace(text.lowercase(), ""), " ").trim()
+
+    /**
+     * How many server ticks a line takes to type, during which the bot stands still: a quick "ez"
+     * is under half a second, a full sentence about two seconds.
+     */
+    fun typingTicks(text: String): Int = (6 + text.length * 6 / 5).coerceIn(8, 44)
+
+    private val chunk = Regex("[A-Z]?[a-z]+|[A-Z]+(?![a-z])")
+    private val notNames = setOf("its", "the", "not", "just", "iam", "you", "mrs", "sir", "xxx")
+
+    /** What people actually call someone: "JezusLuver44" is "jezus", "Jacob1Jacob2" is "jacob". */
+    fun nick(name: String): String {
+        val parts = chunk.findAll(name).map { it.value.lowercase() }.toList()
+        val short = parts.firstOrNull { it.length >= 3 && it !in notNames }
+        return if (short == null || parts.size < 2 && short.length == name.length) name.lowercase() else short
+    }
+
+    private val kitWords = mapOf("magma cube" to "magma", "wither skeleton" to "wither", "iron golem" to "golem",
+        "polar bear" to "bear", "skeletal horse" to "horse")
+
+    /** "Magma Cube" is "magma" in chat, "Chicken" is "chicken". */
+    fun kit(displayName: String): String = displayName.lowercase().let { kitWords[it] ?: it.substringAfterLast(' ') }
+
+    /** "Chicken Missile" is often just "missile". */
+    fun move(ability: String, short: Boolean): String {
+        val full = ability.lowercase()
+        val last = full.substringAfterLast(' ')
+        return if (short && last != full && last.length >= 4) last else full
+    }
+}
+
+/**
+ * Which wordings were used recently. Shared by every match on the server, so bots work through
+ * all the ways of saying something before any one of them comes round again.
+ */
+class LineMemory {
+    private val used = HashMap<String, Long>()
+    private var clock = 0L
+    @Synchronized fun lastUsed(key: String): Long = used[key] ?: 0L
+    @Synchronized fun mark(key: String) { used[key] = ++clock }
+    companion object { val shared = LineMemory() }
+}
+
+/** A bot's habits, fixed by who it is: its filler words and how it refers to people. */
+class BotVoice private constructor(seed: Long) {
+    private val r = Random(seed)
+    val bro = listOf("bro", "bro", "bro", "dude", "dawg", "man", "bruh").random(r)
+    val lol = listOf("lol", "lol", "lol", "lmao", "lmao", "lmfao", "xd").random(r)
+    /** Chance of calling someone by a shortened name. */
+    val nicknames = listOf(0.15, 0.5, 0.8).random(r)
+    /** Chance of calling someone by their kit ("chicken") instead of their name. */
+    val kitNames = listOf(0.1, 0.3, 0.5).random(r)
+    val shortMoves = r.nextBoolean()
+
+    companion object {
+        fun of(id: UUID) = BotVoice(id.mostSignificantBits xor id.leastSignificantBits)
+    }
+}
+
+/**
+ * Every line a bot can say. Each function is handed facts from the match (who, which ability, how
+ * many lives) and returns one line in that bot's voice; nothing here invents an event.
+ * A " / " in a line means the bot sends it as two messages.
+ */
+class BotLines(private val random: Random, private val memory: LineMemory) {
+    /** [personality] is this bot's own: in a Random match the bots in one lobby differ. */
+    fun speaker(bot: BotDialogue.Fighter, fighters: List<BotDialogue.Fighter>, personality: BotPersonality) =
+        Speaker(bot, fighters, personality)
+
+    /** The least recently used wording in this pool, so nothing repeats until everything has been said. */
+    private fun pick(pool: String, options: List<String>, personality: BotPersonality): String? {
+        if (options.isEmpty()) return null
+        val oldest = options.indices.minOf { memory.lastUsed("$personality/$pool/$it") }
+        val index = options.indices.filter { memory.lastUsed("$personality/$pool/$it") == oldest }.random(random)
+        memory.mark("$personality/$pool/$index")
+        return options[index]
+    }
+
+    inner class Speaker(private val bot: BotDialogue.Fighter, private val fighters: List<BotDialogue.Fighter>,
+                        private val personality: BotPersonality) {
+        private val voice = BotVoice.of(bot.id)
+        private val bro = voice.bro
+        private val lol = voice.lol
+        private val names = HashMap<UUID, String>()
+        private val myKit get() = BotSlang.kit(bot.kit)
+        private val salty get() = personality == BotPersonality.SALTY
+
+        private fun say(pool: String, salty: List<String>, chill: List<String>) =
+            pick(pool, if (this.salty) salty else chill, personality)
+
+        /** Name, nickname or kit, chosen once so a line never calls the same person two things. */
+        fun ref(f: BotDialogue.Fighter): String = names.getOrPut(f.id) {
+            val kit = BotSlang.kit(f.kit)
+            val nick = BotSlang.nick(f.name)
+            val roll = random.nextDouble()
+            when {
+                // "nice chicken missile chicken" reads wrong; use a name next to that kit's own moves.
+                roll < voice.kitNames && kit !in moveInLine && fighters.count { BotSlang.kit(it.kit) == kit } == 1 -> kit
+                roll < voice.kitNames + voice.nicknames && fighters.count { BotSlang.nick(it.name) == nick } == 1 -> nick
+                else -> f.name.lowercase()
+            }
+        }
+        private var moveInLine = ""
+        private fun move(ability: String) = BotSlang.move(ability, voice.shortMoves && random.nextBoolean()).also { moveInLine = ability.lowercase() }
+        /** Kill-feed labels that are not ability names read badly in a sentence. */
+        private fun named(ability: String) = ability !in setOf("Attack", "Projectile", "Explosion", "Slam", "Void", "the environment")
+
+        // ------------------------------------------------------------ match events
+
+        fun start(human: BotDialogue.Fighter?): String? {
+            val kit = human?.let { BotSlang.kit(it.kit) }
+            return say("start",
+                listOf("gl", "yo", "lets go", "gl dont camp", "no campers this round pls", "pls actually fight this time",
+                    "first one to camp gets reported $lol", "gl no hiding") +
+                    if (kit != null) listOf("ugh $kit", "ofc theres a $kit", "$kit huh") else emptyList(),
+                listOf("gl", "glhf", "gl all", "hf", "yo gl", "lets go", "gl everyone"))
+        }
+
+        fun killed(victim: BotDialogue.Fighter, ability: String): String? {
+            val a = move(ability); val v = ref(victim); val left = victim.lives
+            val out = victim.lives <= 0
+            val withMove = if (named(ability)) listOf("$a too strong for u $v?", "$bro walked right into $a", "$a diff") else emptyList()
+            return if (out) say("kill.out",
+                listOf("ez", "ez $v", "$v is out $lol", "bye $v", "sit down $v", "gg $v ur done", "gg ez $v", "that was free", "ez / next"),
+                listOf("gg $v", "gf $v", "wp $v", "gg that was close", "gf"))
+            else say("kill",
+                listOf("ez", "ez $v", "ezz", "get rekt", "$v down to $left $lol", "get good $v", "skill issue", "thats $left left $v",
+                    "u good $v? $lol", "free", "sit $v", "too ez", "$v $left lives left keep talking", "ez / skill issue") + withMove,
+                listOf("gf", "nice fight $v", "got u $lol", "gf $v", "close one", "wp") +
+                    if (named(ability)) listOf("that $a finally hit $lol") else emptyList())
+        }
+
+        fun diedTo(killer: BotDialogue.Fighter?, ability: String, killerSpams: Boolean): String? {
+            val a = move(ability)
+            if (killer == null) return if (ability == "Void") say("death.void",
+                listOf("wtf", "i fell $lol", "bruh i slipped", "nah the void", "my double jump didnt work", "lag", "$bro i missed the jump"),
+                listOf("oops", "whoops fell off", "lol i fell", "missed that jump"))
+            else (if (ability == "the environment") "the map" else a).let { what ->
+                say("death.map", listOf("wtf was that", "died to $what $lol", "bruh", "nah $what got me"), listOf("oops", "rip", "lol $what got me"))
+            }
+            val k = ref(killer)
+            val withMove = if (named(ability)) listOf("$a is so bs", "nah that $a is broken", "ofc $a", "one $a and hes cocky", "how did that $a hit") else emptyList()
+            val spam = if (killerSpams && named(ability)) listOf("$k only knows one button $lol", "all $k does is $a") else emptyList()
+            return say("death",
+                listOf("wtf", "bs", "how did that hit", "ok $k", "$bro what", "lucky", "$k got lucky", "ok that was bs", "im lagging",
+                    "that hitbox $lol", "whatever", "bruh", "??", "wtf / how") + withMove + spam,
+                listOf("gf", "ok that was clean", "u got me $lol", "nice one", "wp $k", "oof") +
+                    if (named(ability)) listOf("nice $a $k") else emptyList())
+        }
+
+        fun crystal(holder: BotDialogue.Fighter, tier: String): String? {
+            val n = ref(holder); val t = tier.lowercase()
+            return say("crystal",
+                listOf("ofc $n gets the crystal", "$n with a crystal great", "run", "oh no", "everyone run $lol", "$bro who let $n get that", "not the $t"),
+                listOf("$n has a crystal watch out", "uh oh $n got the $t", "nice grab $n", "careful $n has smash"))
+        }
+
+        fun spam(spammer: BotDialogue.Fighter, ability: String, count: Int): String? {
+            val a = move(ability); val n = ref(spammer)
+            return say("spam",
+                listOf("$n stop spamming $a", "$count ${a}s in a row $lol", "$n only has one button", "its just $a over and over", "all $n does is $a",
+                    "$bro learn another move", "spam $a more $n", "$a $a $a", "wow $n big skill", "sit and spam $a", "press something else $n"),
+                listOf("thats a lot of $a $n $lol", "$n loves that $a", "ok $n i see the $a plan", "$a again $lol"))
+        }
+
+        /** [height] is 1 when the camper is above this bot, -1 below, 0 level. [level] rises each time they are called out. */
+        fun hold(camper: BotDialogue.Fighter, seconds: Int, height: Int, level: Int, spammed: String?): String? {
+            val useSpam = spammed != null && random.nextBoolean()
+            val a = if (useSpam) move(spammed!!) else ""
+            val n = ref(camper)
+            val where = when (height) { 1 -> "up there"; -1 -> "down there"; else -> "over there" }
+            val come = when (height) { 1 -> "come down"; -1 -> "come up"; else -> "come out" }
+            val kit = BotSlang.kit(camper.kit)
+            if (useSpam) {
+                return say("hold.spam",
+                    listOf("$n just sits $where spamming $a", "sit and spam $a", "camp and $a thats the whole strat", "all $n does is hide and $a",
+                        "$a spam from $where wow", "big skill $n", "hide spam $a repeat $lol", "$n $come and stop spamming $a"),
+                    listOf("$n u been $where using $a for a while $lol", "that $a from $where is annoying ngl", "$come and fight up close $n"))
+            }
+            return when (level) {
+                0 -> say("hold.0",
+                    listOf("$n come fight", "$n $come", "$bro $come", "$n stop hiding", "u gonna fight or what $n", "$n is hiding $lol",
+                        "$n stop running", "fight me $n", "why is $n just standing $where"),
+                    listOf("$n $come lets fight", "come fight $n", "where u hiding $n $lol"))
+                1 -> say("hold.1",
+                    listOf("$n has been $where for ${seconds}s", "$n is camping", "hes just camping", "$bro is camping $where $lol",
+                        "aint no way ur having fun $n", "actually play the game $n", "$n playing hide n seek", "imagine camping $lol",
+                        "this $kit just camps", "$n scared?", "whats the point $n", "${seconds}s in the same spot $lol", "$n just sits $where"),
+                    listOf("nice spot $n", "ok i cant reach u $where $lol", "$n found a good spot", "how do i get $where"))
+                else -> say("hold.2",
+                    listOf("ok im not chasing u $n", "whatever have fun camping", "so boring", "$n still $where $lol", "hes not gonna come out",
+                        "im just gonna wait", "camp harder $n", "wake me up when $n moves", "reported for stalling $lol", "still camping", "yawn",
+                        "$bro u have ${camper.lives} lives and ur hiding"),
+                    listOf("ill wait here then", "ur safe $where i guess $lol", "ok u win that spot", "coming for u eventually $n"))
+            }
+        }
+
+        fun burst(attacker: BotDialogue.Fighter, hits: Int): String? {
+            val n = ref(attacker)
+            return say("burst",
+                listOf("wtf", "wtf $n", "$hits hits in a sec??", "hacks", "$n is hacking", "nah thats hacks", "reach", "$bro has reach", "reported",
+                    "$n reported", "how is $n not banned", "turn it off $n", "aint no way thats legit", "recording this", "ok hacker",
+                    "kill aura $lol", "nobody hits that fast", "sus", "$n lagging or hacking??", "nice client $n", "wtf / $n is hacking", "?? / reported"),
+                listOf("nice combo $n", "wow $n", "that combo tho", "ok that was clean", "$n is cracked", "sheesh", "how did u do that $lol", "teach me that $n"))
+        }
+
+        fun retreat(threat: BotDialogue.Fighter?): String? {
+            val t = threat?.let(::ref) ?: return say("retreat.alone", listOf("im low", "one sec", "im one hit"), listOf("im low one sec", "need a sec"))
+            return say("retreat",
+                listOf("$t chill", "im one hit", "stop chasing me $t", "$bro im low", "ofc $t targets me when im low", "leave me alone $lol",
+                    "one sec", "go fight someone else $t", "why me"),
+                listOf("im low one sec", "brb healing $lol", "need a sec", "ok ok backing off", "u almost got me $t"))
+        }
+
+        fun status(leader: BotDialogue.Fighter): String? {
+            val n = ref(leader)
+            return say("status", listOf("$n still has ${leader.lives} lives", "$n is winning somehow", "${leader.lives} lives $n?? ok"),
+                listOf("$n is up with ${leader.lives} lives", "$n leading rn with ${leader.lives}"))
+        }
+
+        fun won(): String? = say("won", listOf("gg ez", "ez", "ggez", "gg", "too ez", "ez game", "gg get good"), listOf("gg", "gg all", "ggs", "gg wp", "that was fun gg"))
+
+        fun lost(winner: BotDialogue.Fighter, camped: Boolean): String? {
+            val w = ref(winner)
+            return say("lost",
+                listOf("gg", "gg i guess", "ok $w", "whatever gg", "$w got lucky", "rematch", "run it back", "bs game") +
+                    if (camped) listOf("gg $w nice camping", "camped the whole game and won gg") else emptyList(),
+                listOf("gg $w", "gg wp", "wp $w", "ggs", "gg that was close"))
+        }
+
+        /** A second bot backing up what another bot just said. */
+        fun agree(about: String): String? = when (about) {
+            "hold" -> say("agree.hold", listOf("fr", "fr fr", "real", "ikr", "just ignore him", "let him camp $lol", "so annoying", "$bro fr", "facts"),
+                listOf("lol", "its a good spot tbh", "fr", "lets go get him"))
+            "burst" -> say("agree.burst", listOf("fr", "i saw that", "yea thats sus", "sus", "reported too"), listOf("that was clean", "cracked", "fr"))
+            else -> say("agree.kill", listOf("rip", "f", "lol", "oof"), listOf("rip", "f", "oof", "gf"))
+        }
+
+        // ------------------------------------------------------------ bots talking to each other
+        //
+        // What makes a mixed lobby: one bot's line gets an answer from another bot, in that bot's
+        // own personality. [about] is what the first line was on: "kill", "death", "hold", "spam",
+        // "burst", "retreat", or "beef" for an argument that is already going.
+
+        /** Answering a line that was aimed at this bot: a salty bot claps back, a chill one shrugs it off. */
+        fun comeback(to: BotDialogue.Fighter, about: String): String? {
+            val n = ref(to)
+            val score = when {
+                to.lives < bot.lives -> listOf("u have ${to.lives} lives $n", "ur on ${to.lives} lives and typing", "im up ${bot.lives} to ${to.lives} keep talking")
+                to.lives > bot.lives -> listOf("its not over $n", "${to.lives} to ${bot.lives} isnt over $bro")
+                else -> listOf("were both on ${bot.lives} $n relax")
+            }
+            val heated = when (about) {
+                "kill" -> listOf("one kill $n relax", "u got lucky", "do it again then", "lucky hit and now ur typing", "wow one kill")
+                "hold", "spam" -> listOf("its called strategy", "then come get me", "im not camping ur just slow", "cry about it $n", "works on u every time $lol")
+                "burst" -> listOf("im not hacking ur just bad", "its called a combo $n", "get good", "report me then $lol", "everyone who hits u is hacking?")
+                "death" -> listOf("ya i killed u and", "stay mad $n", "it hit bc ur slow", "skill issue", "dodge next time")
+                "retreat" -> listOf("no", "run then $lol", "nah ur dead", "come back $n", "ur one hit ofc im chasing")
+                else -> emptyList()
+            }
+            val easygoing = when (about) {
+                "kill" -> listOf("gf $n", "ya u got me $lol", "nice one $n", "ill get u back $lol")
+                "hold", "spam" -> listOf("my bad $lol", "ok ok im coming", "sorry $n its a good spot", "fair $lol")
+                "burst" -> listOf("no hacks i promise $lol", "just got lucky $n", "ty i guess $lol")
+                "death" -> listOf("gf $n", "sorry $lol", "it was close tho", "unlucky $n")
+                "retreat" -> listOf("sorry $n $lol", "gotta finish it sorry", "gf im still coming tho")
+                else -> emptyList()
+            }
+            return say("comeback.$about",
+                listOf("shut up $n", "ok $n", "nobody asked $n", "$n talks so much", "1v1 me then $n", "cry", "$bro shut up $lol", "keep typing $n") + score + heated,
+                listOf("lol ok $n", "relax $n its a game", "all good $n", "its not that serious $n $lol") + easygoing)
+        }
+
+        /** A chill bot sticking up for [victim] (or just telling [bully] to calm down) after a salty line. */
+        fun defend(victim: BotDialogue.Fighter?, bully: BotDialogue.Fighter, about: String): String? {
+            val b = ref(bully)
+            val v = victim?.takeIf { it.id != bot.id }?.let(::ref)
+            val forThem = if (v == null) emptyList() else when (about) {
+                "kill" -> listOf("be nice $b", "$v played fine", "leave $v alone $lol", "that was a good fight tho")
+                "hold", "spam" -> listOf("let $v play", "$v isnt camping ur just missing", "its a legit strat $b", "leave $v alone")
+                "burst" -> listOf("$v isnt hacking $lol", "thats just a good combo $b", "$v is just good", "not everything is hacks $b")
+                "death" -> listOf("$v got u fair $b", "that was clean tho", "$v outplayed u its ok", "it happens $b")
+                else -> listOf("leave $v alone $lol")
+            }
+            return pick("defend.$about", listOf("chill $b", "$b relax its a game", "$b is so mad $lol", "calm down $b", "$bro its not that deep",
+                "$b breathe $lol", "why so salty $b") + forThem, BotPersonality.CHILL)
+        }
+
+        /** The salty bot turning on whoever just told it to calm down. */
+        fun rebuke(defender: BotDialogue.Fighter): String? {
+            val d = ref(defender)
+            return pick("rebuke", listOf("nobody asked $d", "ok $d", "$d stay out of it", "who asked", "$d defending everyone $lol", "ur next $d",
+                "$d u have ${defender.lives} lives worry about that", "im not mad", "not mad just right", "ok so ur teaming with them", "$bro who asked"),
+                BotPersonality.SALTY)
+        }
+
+        /** A chill bot suggesting everyone goes after [bully] first. */
+        fun rally(bully: BotDialogue.Fighter): String? {
+            val b = ref(bully)
+            return pick("rally", listOf("lets team on $b $lol", "everyone get $b", "ok who wants to get $b first", "$b first then we fight",
+                "truce til $b is out?", "all on $b $lol", "can we all just get $b"), BotPersonality.CHILL)
+        }
+
+        /** Another chill bot taking the first one up on it. */
+        fun joinIn(bully: BotDialogue.Fighter): String? {
+            val b = ref(bully)
+            return pick("joinin", listOf("bet", "im down", "omw", "say less", "on it $lol", "ya get $b", "deal", "finally $lol"), BotPersonality.CHILL)
+        }
+
+        /** A chill bot with nobody to team with going after [bully] alone. */
+        fun duel(bully: BotDialogue.Fighter): String? {
+            val b = ref(bully)
+            return pick("duel", listOf("ok im coming for u $b", "$b ur first $lol", "fine come here $b", "ok $b lets go then", "u talk a lot $b come fight"),
+                BotPersonality.CHILL)
+        }
+
+        /** The salty bot finding [count] fighters have turned on it. */
+        fun ganged(count: Int): String? = pick("ganged", listOf("teaming?? ok", "yall teaming is crazy", "${count}v1 nice", "wow ${count}v1 so brave",
+            "reported for teaming $lol", "need $count of u to beat me $lol", "ok all of u come then", "teamers $lol"), BotPersonality.SALTY)
+
+        /** A salty bot annoyed that [nice] is being friendly about a fight. */
+        fun sneer(nice: BotDialogue.Fighter, about: String): String? {
+            val n = ref(nice)
+            val topic = when (about) {
+                "burst" -> listOf("that wasnt a combo that was luck", "dont hype it up $n")
+                "hold" -> listOf("its not a nice spot its camping", "$n stop encouraging it")
+                "death" -> listOf("u died and said gf $lol", "just say u got outplayed $n")
+                else -> listOf("gf?? ok", "less gf more fighting")
+            }
+            return pick("sneer.$about", listOf("stop being nice $n its a fight", "$n complimenting the enemy $lol", "why r u so nice $n",
+                "$n is too friendly", "nobody says that $n $lol") + topic, BotPersonality.SALTY)
+        }
+
+        /** A chill bot not taking the bait. */
+        fun brushOff(to: BotDialogue.Fighter): String? {
+            val n = ref(to)
+            return pick("brushoff", listOf("lol relax $n", "its a game $n", "someones mad $lol", "ok $n $lol", "u good $n?", "just having fun $n",
+                "$n needs a snack $lol"), BotPersonality.CHILL)
+        }
+
+        /** A salty bystander laughing at another bot's excuse for dying. [fell] is true when it fell off the map. */
+        fun mock(dead: BotDialogue.Fighter, fell: Boolean): String? {
+            val n = ref(dead)
+            return pick("mock", listOf("skill issue", "$lol", "nice one $n", "sure $n", "excuses", "$n always has an excuse") +
+                if (fell) listOf("nice jump $n", "u fell $lol", "lag sure $lol", "void diff") else listOf("get good $n", "u got outplayed $n"),
+                BotPersonality.SALTY)
+        }
+
+        // ------------------------------------------------------------ answering chat
+
+        fun gg(p: BotDialogue.Fighter) = ref(p).let { n -> say("gg", listOf("gg", "gg $n", "gf", "ggs"), listOf("gg", "gg $n", "gg wp", "gf $n", "ggs")) }
+        fun greet(p: BotDialogue.Fighter) = ref(p).let { n ->
+            say("greet", listOf("yo", "hi", "sup $n", "gl u need it $lol", "yo $n"), listOf("hey $n", "yo gl", "hi gl hf", "sup"))
+        }
+        fun thanks(p: BotDialogue.Fighter) = say("thanks", listOf("ik", "ty", "thx $lol", "i know"), listOf("ty", "thx ${ref(p)}", "ty u too"))
+        fun forgive(p: BotDialogue.Fighter) = say("forgive", listOf("ur fine", "its fine", "ok", "sure $lol"), listOf("np", "all good", "ur good ${ref(p)}", "no worries"))
+        fun kit() = listOf("$myKit", "im $myKit", "$myKit rn", "playing $myKit").let { say("kit", it, it) }
+        fun lives(p: BotDialogue.Fighter) =
+            listOf("u have ${p.lives} i have ${bot.lives}", "${p.lives} to ${bot.lives}", "im on ${bot.lives} ur on ${p.lives}").let { say("lives", it, it) }
+
+        fun sameTeam(p: BotDialogue.Fighter) = say("team", listOf("were on the same team $lol", "$bro im ur teammate", "wasnt me were teamed"),
+            listOf("were teammates ${ref(p)}", "not me im on ur team"))
+        fun neverHit(p: BotDialogue.Fighter) = say("neverhit",
+            listOf("i havent even hit u", "i didnt touch u", "wasnt me", "$bro i havent hit u once", "im not even near u"),
+            listOf("wasnt me ${ref(p)}", "i havent hit u", "not me $lol"))
+        fun manyHit(p: BotDialogue.Fighter, attackers: Int) = say("manyhit",
+            listOf("$attackers of us hit u its ffa", "its ffa $bro", "ur just in the middle of it $lol", "$attackers ppl hit u thats not a team thats ffa",
+                "everyone hits everyone its not teaming"),
+            listOf("its just a messy fight ${ref(p)}", "$attackers of us were there not teaming", "ffa things $lol"))
+        fun opponents(p: BotDialogue.Fighter) = say("opponents",
+            listOf("its ffa", "ur the closest", "im allowed to hit u $lol", "thats the game $bro", "cry", "stop being close to me then", "nobody else is near me"),
+            listOf("ur just closest $lol", "nothing personal ${ref(p)}", "its ffa sorry"))
+
+        fun ownSpam(ability: String, count: Int) = move(ability).let { a ->
+            say("ownspam", listOf("it works", "$a is my kit $bro", "its called a kit", "and it keeps hitting u", "dodge it then",
+                "used it $count times and u still get hit $lol", "skill issue", "cope"),
+                listOf("ya i used $a a lot $lol", "fair $lol", "my bad its all i got", "$a is fun tho"))
+        }
+        fun theirSpam(ability: String, count: Int) = move(ability).let { a ->
+            say("theirspam", listOf("u used $a $count times $lol", "says the $a spammer", "$count ${a}s and im the spammer", "look whos talking", "u literally spam $a"),
+                listOf("u use $a a lot too $lol", "we both spam tbh"))
+        }
+        fun notCamping(p: BotDialogue.Fighter) = say("notcamping",
+            listOf("im not camping", "come here then", "im right here", "what spam", "then fight me", "u come to me"),
+            listOf("im coming $lol", "ok lets fight", "not camping just lost $lol"))
+
+        fun fightWhileTheyAreOut() = say("fight.theyout", listOf("ur dead $lol", "ur not even alive rn", "respawn first"), listOf("when ur back", "after u respawn $lol"))
+        fun fightWhileOut() = say("fight.imout", listOf("im dead rn chill", "let me respawn", "one sec im dead"), listOf("one sec respawning", "brb"))
+        fun fight(p: BotDialogue.Fighter) = say("fight",
+            listOf("ok", "bet", "come here then", "im coming", "ok bet", "say less", "pull up", "$myKit vs ${BotSlang.kit(p.kit)} lets go", "dont run then", "u first"),
+            listOf("ok coming", "lets go", "omw", "sure ${ref(p)}", "bet"))
+
+        fun oneKill(ability: String) = move(ability).let { a ->
+            say("onekill", listOf("one kill and ur typing", "u got one kill relax", "ok and", "congrats on the one kill", "wow one kill") +
+                if (named(ability)) listOf("$a is carrying u", "u hit one $a", "lucky $a") else emptyList(),
+                listOf("ya u got me", "fair $lol", "that was a good one") + if (named(ability)) listOf("nice $a") else emptyList())
+        }
+        fun youDied(ability: String) = move(ability).let { a ->
+            say("youdied", listOf("u just died to me", "didnt u just die", "ur the one who died $lol", "says the dead guy") +
+                if (named(ability)) listOf("$bro u died to $a", "i just killed u with $a") else emptyList(),
+                listOf("i did just get u tho $lol", "gf tho", "we both got hits in"))
+        }
+        fun youAreOut() = say("youout", listOf("ur out", "ur literally dead", "ur spectating $lol", "talking from spectator $lol", "0 lives and still typing"),
+            listOf("gg u played well", "ggs"))
+        fun iAmOut(p: BotDialogue.Fighter) = say("imout", listOf("ya im out whatever", "ok u won that", "rematch", "run it back", "gg i guess"),
+            listOf("u got me gg", "gg wp ${ref(p)}"))
+        fun behind(p: BotDialogue.Fighter) = say("behind",
+            listOf("ur up ${p.lives} to ${bot.lives} relax", "${p.lives} to ${bot.lives} its not over", "ok ur ahead by ${p.lives - bot.lives}",
+                "${p.lives} to ${bot.lives} game isnt over $bro"),
+            listOf("ya ur ahead ${p.lives} to ${bot.lives}", "ur winning rn ${p.lives} to ${bot.lives} nice"))
+        fun ahead(p: BotDialogue.Fighter) = say("ahead",
+            listOf("ur down ${p.lives} to ${bot.lives} $lol", "${p.lives} lives to my ${bot.lives} and its ez?", "u have ${p.lives} lives $bro",
+                "ez? ur losing ${p.lives} to ${bot.lives}"),
+            listOf("im up ${bot.lives} to ${p.lives} but its close", "its ${bot.lives} to ${p.lives} still anyones game"))
+        fun tied() = say("tied",
+            listOf("were both on ${bot.lives}", "its tied ${bot.lives} to ${bot.lives} $bro", "${bot.lives} to ${bot.lives} relax", "both on ${bot.lives} win first then talk"),
+            listOf("were tied ${bot.lives} each", "tied on ${bot.lives} rn gl"))
+
+        fun notHacking() = say("nothacking",
+            listOf("im legit ur just bad", "$lol no", "not hacking", "blame the hitbox", "get good", "everyone who kills u is hacking?", "report me then", "cope", "its called aim"),
+            listOf("nah just lucky", "no hacks just $myKit", "lol no", "wish i was that good"))
+        fun calledBot() = say("calledbot", listOf("ur the bot $lol", "beep boop", "says the bot", "ok bot"), listOf("beep boop $lol", "maybe", "$lol"))
+        fun kitAgain(p: BotDialogue.Fighter) = say("kitagain", listOf("im on $myKit deal with it", "$myKit is fun", "ya $myKit", "and ur on ${BotSlang.kit(p.kit)}"),
+            listOf("ya i like $myKit", "$myKit this round"))
+        fun notFun() = say("notfun", listOf("im having fun", "winning is fun", "sounds like a u problem", "then leave $lol", "its fun for me"),
+            listOf("we can switch kits next round", "sorry $lol", "its just a game"))
+
+        fun aboutSpam(ability: String) = move(ability).let { a -> say("about.spam", listOf("the $a", "im talking about $a", "$a $bro", "u know what"), listOf("the $a $lol", "i meant $a")) }
+        fun aboutTargeting() = say("about.target", listOf("bc its ffa", "bc ur there", "nothing personal"), listOf("just the fight", "no hard feelings"))
+        fun aboutFighting() = say("about.fight", listOf("then come", "stop typing and fight", "less typing more fighting", "im waiting"), listOf("ready when u are", "lets go then"))
+        fun aboutFun() = say("about.fun", listOf("to win", "same reason as u", "bc winning"), listOf("were both trying to win $lol"))
+        fun aboutScore(p: BotDialogue.Fighter) = say("about.score", listOf("this round ${p.lives} to ${bot.lives}", "the score ${p.lives} to ${bot.lives}"),
+            listOf("this round i mean ${p.lives} to ${bot.lives}", "the score ${p.lives} to ${bot.lives}"))
+    }
+}

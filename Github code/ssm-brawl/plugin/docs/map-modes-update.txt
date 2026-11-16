@@ -1,0 +1,71 @@
+SSM AI Edition — Map modes and crystal sprites — 2026-11-10
+
+Installed and running, with 45 playable maps.
+
+Menu: maps fill slots 0–44. Bottom row: Back, Start, Random Any, Random Old,
+Random New, Reverse, Reflect, 4× Bigger, 4× Smaller.
+Reverse cycles Off / On / Random. Random resolves once per match.
+Reflect cycles Off / Left / Right: retain the chosen X half, then mirror it
+across the original map bounding-box center. Order: Reflect, Reverse, Scale.
+Bigger and Smaller are mutually exclusive toggles; click the active one to
+return to normal size. Settings persist per player.
+
+4× Bigger expands every non-air block to a 4×4×4 cube. 4× Smaller selects the
+most common non-air block in each 4×4×4 cube (deterministic tie order).
+Air-only cubes remain empty. Heights, spawn points, item/crystal locations,
+void level and map bounds scale too. Original markers are stripped before
+resampling. Only disposable match copies are transformed, off the server
+thread, with a bounded source-chunk cache. Map templates and the lobby are
+preserved. Saved decoration entities are moved; their models are not enlarged.
+The added ssm:large_arena dimension spans Y=-256..1279, covering the entire
+original -64..319 range at 4×. The bundled map-modes-datapack must be installed
+in world/datapacks/ssm_map_modes BEFORE server startup on a fresh installation.
+The workspace install-smash.ps1 now does this automatically.
+
+/hub and its /leave aliases cancel the session with no winners or victory
+title. Cancellation also works during asynchronous map preparation. Natural
+wins still show their winner title. The disposable arena is unloaded/deleted.
+
+Yellow star: animated gold ribbon and white twinkles.
+Red star: faster crossing glints, white sparks and crimson edge highlights.
+Both have 48 frames; the original silhouette is preserved, and at least 84.3%
+(yellow) / 73.1% (red) of visible pixels retain their original colors in every
+frame. Falling crystal particles and all Smash abilities are unchanged.
+
+Atrium, The Ship and Corrupted were moved out of active worlds, import folders
+and scan caches. Their originals are under backups/map-modes-2026-11-10/
+removed-maps. The active server and resource pack contain 45 maps.
+
+Validation:
+- 52 unit tests passed, including six new geometry/randomness tests.
+- Isolated Paper 26.3 server: 18 reverse/reflect/scale combinations passed.
+- Full-cube big-to-small inverse, negative coordinates, marker removal and
+  non-air shrinking checked against actual region-file output.
+- Actual matches: BIG and SMALL combined with Left Reflect and Reverse loaded;
+  players stood on terrain at the scaled heights. BIG world maxY=1280.
+- Actual /hub command: empty winner event, no title packets, both players back
+  in lobby, arena unloaded. Menu cycles, persistence and exclusivity passed.
+- Remaining 45 map definitions have player spawns on both reflection sides.
+- Live resource pack HTTP 200; sprites match tested output; 45 map previews.
+- No manual visual playthrough of all transformed maps has been performed.
+
+Installed JAR SHA256:
+838E58AFB97F5F91FF2345A254FF9CDB9F2B3FC5761C122A62F1AEF6E4129ABA
+Resource pack SHA1: e81b53072818effcf595af127de8b271b86d4fa3
+Live server PID at installation: 24064
+
+Changed source files:
+src/main/kotlin/dev/betrix/superSmashMobsBrawl/minigames/BrawlMinigame.kt
+src/main/kotlin/dev/betrix/superSmashMobsBrawl/services/GameSetupService.kt
+src/main/kotlin/dev/betrix/superSmashMobsBrawl/services/LobbyInfoService.kt
+src/main/kotlin/dev/betrix/superSmashMobsBrawl/services/MapResampler.kt
+src/main/kotlin/dev/betrix/superSmashMobsBrawl/services/MapTransform.kt
+src/main/kotlin/dev/betrix/superSmashMobsBrawl/services/MapVoteService.kt
+src/main/kotlin/dev/betrix/superSmashMobsBrawl/services/MenuIcons.kt
+src/main/kotlin/dev/betrix/superSmashMobsBrawl/services/MinigameService.kt
+src/main/kotlin/dev/betrix/superSmashMobsBrawl/services/WorldService.kt
+src/main/kotlin/dev/betrix/superSmashMobsBrawl/smash/SmashAssets.kt
+src/main/kotlin/dev/betrix/superSmashMobsBrawl/minigames/managers/WorldManager.kt
+src/main/resources/map-modes-datapack/pack.mcmeta
+src/main/resources/map-modes-datapack/data/ssm/dimension_type/large_arena.json
+src/test/kotlin/dev/betrix/superSmashMobsBrawl/utils/MapTransformTest.kt

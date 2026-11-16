@@ -1,0 +1,50 @@
+SSM AI Edition — scaled plants and miniature tree trunks
+Installed 2026-11-10
+
+- BIG plants are emitted once per original plant part as centered 2x BlockDisplay
+  models. The resampled terrain contains air there, not eight copied plant blocks.
+  Flowers, grass, tall flowers/ferns, mushrooms, saplings and crops with empty
+  collision shapes are supported, along with sugar cane. Solid/functional
+  decorations are not indiscriminately converted into non-colliding displays.
+- Tall plants share a root so both visual halves are removed together. Managed
+  displays follow chunk loading/unloading and are deleted with the arena.
+- Unsupported plants are removed after their underlying 2x2 ground patch is gone.
+  Smash terrain destruction also clears plant displays in its affected area.
+- SMALL single-column upright tree logs become wood-textured wall-width posts.
+  Oak, spruce, birch, jungle, acacia, dark oak, mangrove, cherry, pale oak,
+  crimson and warped materials are supported. Thick trunks, horizontal beams,
+  stripped wood and mixed masonry retain ordinary terrain conversion.
+- The posts use vanilla wall collision: half-block width/depth, with native wall
+  collision height. Their custom models use bark sides and log end grain.
+  Leaves in small maps are persistent so replacing the logs cannot decay canopies.
+- Resource pack adds 11 post models and overrides only standalone, dry, upright
+  post states of 11 wall types absent from the current arena/lobby template
+  palettes. Connected/waterlogged states retain vanilla models. Ordinary
+  cobblestone/mossy/stone-brick walls are not replaced. Reserved post physics is
+  held stable in small arenas, so neighbouring blocks do not grow stone arms.
+
+Validation
+- Gradle test + shadowJar passed (52 unit tests).
+- Isolated Paper server: six combinations of BIG + Reverse/Reflect each produce
+  exactly one model per source plant part; no duplicate physical plant blocks.
+- Loaded fixture: 10 models loaded with correct block states, 2x scale and
+  centered bounds. Removing tall-fern support removed both halves, direct Smash
+  destruction removed its target and kept unrelated plants.
+- 11 wood species retain the correct material, 0.5-block collision footprint,
+  and trunk choice among leaves. Thick trunks/horizontal beams remain intact.
+  Small-map leaves persist; reserved post physics is cancelled, ordinary walls
+  are unaffected.
+- Existing 4,183 slab/stair variants and 18 map transform fixtures still pass.
+- BIG and SMALL real arena games with Reflect Left + Reverse load correctly.
+  /hub cancellation remains free of winner announcements.
+- 3,564 wall-state combinations select the correct model, and all model/texture
+  references exist in the current client assets.
+- Live startup: 45 playable maps, no plugin errors. Main pack and four XP overlays
+  served successfully. No manual Minecraft-client visual playthrough performed.
+
+Deployment
+PID 35228; ports 25565 / 25566.
+JAR SHA256: B0EAFAD386EE141603B4C184CC1511B2A860EBB5E46791B384994BF3F06A0F20
+Pack SHA1: f8be4bfa14769f0fb394d88de875e84f20818037
+Backup: C:/Users/jacob/Documents/SSM AI Edition/backups/map-decorations-2026-11-10
+

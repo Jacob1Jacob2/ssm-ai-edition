@@ -1,0 +1,114 @@
+1794243194632:list
+1794243736364:stop
+1794246703277:list
+1794246730976:stop
+1794251143028:list
+1794251231508:stop
+1794253446236:list
+1794253510719:stop
+1794255466055:list
+1794255493605:stop
+1794256326020:list
+1794256407304:stop
+1794258529963:list
+1794258544492:stop
+1794279721779:op Jacob1Jacob2
+1794280038987:execute in minecraft:ssm_lobby as @e[type=!minecraft:player] if data entity @s BukkitValues."ssm:lobby_kit" run data get entity @s Pos
+1794280039017:execute in minecraft:ssm_lobby run forceload query
+1794280063735:stop
+1794280073581:execute in minecraft:ssm_lobby run forceload add 12 -16 20 -12
+1794280079205:execute in minecraft:ssm_lobby as @e[type=!minecraft:player] if data entity @s BukkitValues."ssm:lobby_kit" run data get entity @s Pos
+1794280085829:save-all flush
+1794280085865:execute in minecraft:ssm_lobby run forceload remove 12 -16 20 -12
+1794280814387:stop
+1794280836579:execute in minecraft:ssm_lobby run time query daytime
+1794280864265:save-all flush
+1794281763303:stop
+1794337013429:save-all flush
+1794349814422:stop
+1794392384105:say Installing the SSM fixes; the server is restarting.
+1794392384116:stop
+1794392500081:list
+1794392519226:execute in minecraft:ssm_lobby if entity @e[type=minecraft:chicken,name=Barbie]
+1794392519255:execute in minecraft:ssm_lobby as @e[type=minecraft:goat] run data get entity @s Rotation
+1794428569375:stop
+1794430095166:save-all
+1794431680675:stop
+1794459088701:list
+1794459452751:stop
+1794459489402:version super-smash-mobs-brawl
+1794459499666:plugins
+1794459500005:execute in minecraft:ssm_lobby run data get entity @e[type=minecraft:goat,limit=1] Rotation
+1794459500301:list
+1794459514300:execute in minecraft:ssm_lobby run data get entity @e[type=minecraft:goat,limit=1]
+1794459523671:execute in minecraft:ssm_lobby run forceload add 20 -4
+1794459524752:execute in minecraft:ssm_lobby run data get entity @e[type=minecraft:goat,limit=1]
+1794459715911:stop
+1794459730949:version super-smash-mobs-brawl
+1794459731219:plugins
+1794459731487:execute in minecraft:ssm_lobby run data get entity @e[type=minecraft:goat,limit=1] Rotation
+1794459743684:execute in minecraft:ssm_lobby run forceload remove 20 -4
+1794459743956:save-all flush
+1794462159162:list
+1794462182107:stop
+1794462208447:version super-smash-mobs-brawl
+1794462233359:plugins
+1794465373558:list
+1794465391762:stop
+1794465412324:version super-smash-mobs-brawl
+1794465497185:plugins
+1794493394930:version super-smash-mobs-brawl
+1794494583261:stop
+1794494605610:version super-smash-mobs-brawl
+1794494627473:save-all flush
+1794494995303:stop
+1794495013190:version super-smash-mobs-brawl
+1794495013234:save-all flush
+1794495995015:stop
+1794496023546:version super-smash-mobs-brawl
+1794527515863:list
+1794527547729:stop
+1794527610090:version super-smash-mobs-brawl
+1794529335798:stop
+1794529346346:version super-smash-mobs-brawl
+1794530558747:list
+1794530947126:stop
+1794530956629:version super-smash-mobs-brawl
+1794531777613:stop
+1794531787085:version super-smash-mobs-brawl
+1794534492278:stop
+1794534501757:version super-smash-mobs-brawl
+1794535661313:stop
+1794535670818:version super-smash-mobs-brawl
+1794537546823:stop
+1794537556290:version super-smash-mobs-brawl
+1794541038849:stop
+1794541048492:version super-smash-mobs-brawl
+1794542089539:stop
+1794542099113:version super-smash-mobs-brawl
+1794542177971:execute as Jacob1Jacob2 at @s run tp @s ~ ~ ~ ~ 25
+1794542216570:execute in minecraft:ssm_lobby as @e[type=minecraft:interaction] run data get entity @s Pos
+1794542228252:tp Jacob1Jacob2 1.5 60 5.0 0 0
+1794543257541:stop
+1794543267021:version super-smash-mobs-brawl
+1794544427480:stop
+1794544435915:version super-smash-mobs-brawl
+1794548329408:stop
+1794548338922:version super-smash-mobs-brawl
+1794548618522:stop
+1794548629000:version super-smash-mobs-brawl
+1794550103390:stop
+1794550112920:version super-smash-mobs-brawl
+1794550622251:stop
+1794550631737:version super-smash-mobs-brawl
+1794551607155:stop
+1794551616642:version super-smash-mobs-brawl
+1794553608077:stop
+1794553617743:version super-smash-mobs-brawl
+1794597203790:stop
+1794597213244:version super-smash-mobs-brawl
+1794599323063:list
+1794599349567:stop
+1794599359019:version super-smash-mobs-brawl
+1794600075732:list
+1794600475378:stop
