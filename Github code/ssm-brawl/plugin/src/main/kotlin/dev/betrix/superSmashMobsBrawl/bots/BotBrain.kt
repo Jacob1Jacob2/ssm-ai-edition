@@ -34,6 +34,8 @@ import org.bukkit.inventory.EquipmentSlot
 import org.bukkit.persistence.PersistentDataType
 import org.bukkit.scheduler.BukkitTask
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.roundToInt
 import org.bukkit.util.Vector
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
@@ -80,6 +82,10 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     private var nextRouteTick = 0L
     private var routeGoal: Location? = null
     private val blockedSteps = HashMap<RouteNode, Long>()
+    /** Where a wall climb came to nothing, and until when: no climbing from within a few blocks of there. */
+    private val failedClimbs = ArrayList<Pair<RouteNode, Long>>()
+    /** One jump that did not work (from a block, to a block). Other ways onto the block it was aimed at stay open. */
+    private val blockedEdges = HashMap<Pair<RouteNode, RouteNode>, Long>()
     /** Remaining presses of the combo in progress, each with the tick it is due. */
     private class QueuedStep(val step: ComboStep, val due: Long, val mechanical: Boolean)
     private val comboQueue = ArrayDeque<QueuedStep>()
@@ -146,7 +152,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     /** Forgets every route, grudge and jump in progress, as if the bot had just spawned here. */
     fun resetNavigation() {
         route.clear();routeSearch=null;routeGoal=null;nextRouteTick=0
-        blockedSteps.clear();unreachableUntil.clear();unreachableAt.clear();withdrawUntil=0;stuckRef=null;gapJump=null
+        blockedSteps.clear();blockedEdges.clear();failedClimbs.clear();unreachableUntil.clear();unreachableAt.clear();withdrawUntil=0;stuckRef=null;gapJump=null;climb=null
         lastSafe=null;recovering=false;recoveryGoal=null;comboQueue.clear();shot=null
         fleeGoal=null;fleeFailedUntil=0;itemGoal=null
         navStats.reset()
@@ -162,6 +168,29 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
 
     private fun canDoubleJump() = player.allowFlight && (KitService.getKitForPlayer(player)?.getAbility("phantom_flight") as? dev.betrix.superSmashMobsBrawl.abilities.PhantomFlightAbility)?.flying != true
 
+    /**
+     * How this bot's kit gets around: what a route may ask of it. By the kit, not by whether the
+     * jump happens to be in hand this instant: a route is walked from the ground, where the jump
+     * is back. (Planning from mid-air with the jump just spent used to find "no way" to places
+     * the bot had every way to, and it then sat that out for fifteen seconds.)
+     */
+    private fun mobility() = KitService.getKitForPlayer(player).let { Mobility.of(it?.id, it?.jumpPassive() != null) }
+
+    /** Air jumps in hand right now: a chicken's remaining flaps, one double jump for everybody else. */
+    private fun airJumpsLeft(): Int {
+        val flap = KitService.getKitForPlayer(player)?.jumpPassive() as? dev.betrix.superSmashMobsBrawl.passives.FlapPassive
+        return flap?.flapsLeft() ?: if (canDoubleJump()) 1 else 0
+    }
+
+    /** How many air jumps a ledge [rise] blocks overhead takes, going straight up. */
+    private fun airJumpsFor(rise: Double): Int {
+        val each = peakHeight(jumpLaunch(-88.0).second, 0.0) * 0.82
+        return ceil((rise - 1.2).coerceAtLeast(0.1) / each.coerceAtLeast(0.5)).toInt()
+    }
+
+    /** The bot is standing still on purpose (getting its breath back for a climb): that is not being stuck. */
+    private var patientTick = -100L
+
     /** Whether the last finished search found a way all the way to its goal. */
     private var routeReached = true
 
@@ -174,8 +203,10 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             (routeGoal?.distance(to) ?: 0.0) > maxOf(3.0, here.distance(to) * 0.3)) route.clear()
         if (route.isEmpty() && tick >= nextRouteTick && routeSearch == null) {
             blockedSteps.entries.removeIf { it.value <= tick }
-            // The arena's walking graph is shared by every bot and kept between searches.
-            val nav = ArenaNav.of(player.world, map.voidLevel.toInt(), canDoubleJump())
+            blockedEdges.entries.removeIf { it.value <= tick }
+            failedClimbs.removeIf { it.second <= tick }
+            // The arena's walking graph is shared by every bot of the same kind and kept between searches.
+            val nav = ArenaNav.of(player.world, map.voidLevel.toInt(), mobility())
             // A fighter on the lip of a block has its centre over thin air; route from and to
             // the block it is really standing on.
             val start = nav.nearest(here, 5.0, if (nms.onGround()) 0.6 else 0.05)
@@ -184,7 +215,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                 navStats.searches++
                 routeSearch = ArenaRoute(start, goal, { n ->
                     nav.neighbours(n).filter {
-                        it.node !in blockedSteps && abs(it.node.x-start.x)<=72 && abs(it.node.z-start.z)<=72
+                        it.node !in blockedSteps && (blockedEdges.isEmpty() || (n to it.node) !in blockedEdges) &&
+                            (!it.climb || failedClimbs.none { (foot, _) -> abs(foot.x-n.x)<=3 && abs(foot.z-n.z)<=3 && abs(foot.y-n.y)<3.0 }) &&
+                            abs(it.node.x-start.x)<=72 && abs(it.node.z-start.z)<=72
                     }
                 }, ROUTE_LIMIT)
                 routeGoal = to.clone()
@@ -220,6 +253,15 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             if (hypot(n.x+.5-here.x,n.z+.5-here.z)<.55 && abs(n.y-here.y)<height) passed = i
         }
         repeat(passed + 1) { routeAt = route.removeFirst().node }
+        // A dash flies over a block a tick: whatever it has gone past is done with, whether or
+        // not it came within arm's length of the middle of each block.
+        if (tick <= dashUntil) dashDir?.let { (ux, uz) ->
+            while (route.isNotEmpty()) {
+                val n = route.first().node
+                if ((n.x + .5 - here.x) * ux + (n.z + .5 - here.z) * uz > 0.3 || abs(n.y - here.y) > 2.0) break
+                routeAt = route.removeFirst().node
+            }
+        }
         if(tick%5==0L && route.isNotEmpty()) {
             val n=route.first().node
             val fresh=ArenaTerrain(player.world,map.voidLevel.toInt(),canDoubleJump()).surface(n.x,n.z,n.y,.1,.1)
@@ -234,7 +276,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
 
     /** Spends a little of the tick's route budget working out the arena's walking graph ahead of need. */
     private fun warmNav(world: org.bukkit.World, map: GameMapDef) {
-        val nav = ArenaNav.of(world, map.voidLevel.toInt(), true)
+        val nav = ArenaNav.of(world, map.voidLevel.toInt(), mobility())
         if (nav.warmed) return
         val slice = RouteWorkBudget.slice().coerceAtMost(1_500_000L)
         if (slice <= 0) return
@@ -245,8 +287,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
 
     /** The arena changed here (or was never what the graph thought): have both graphs look again. */
     private fun forgetTerrain(x: Int, z: Int, map: GameMapDef) {
-        ArenaNav.of(player.world, map.voidLevel.toInt(), true).invalidate(x, z)
-        ArenaNav.of(player.world, map.voidLevel.toInt(), false).invalidate(x, z)
+        ArenaNav.invalidateAll(player.world, x, z)
     }
 
     private fun inputToward(goal: Location): Pair<Float,Float> {
@@ -259,7 +300,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
 
 
     /** A deliberate jump across a gap: where we're aiming to land and whether we double jumped. */
-    private class GapJump(val landing: Location, val startTick: Long, val takeoff: Location) {
+    private class GapJump(val landing: Location, val startTick: Long, val takeoff: Location, from: RouteNode? = null) {
         var doubleJumped = false
         var leftGround = false
         /**
@@ -268,8 +309,33 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
          * block, then the air above the ledge). Running at the ledge instead puts the bot under
          * its overhang, where neither the jump nor the double jump gets off the ground.
          */
-        val high = landing.y > takeoff.y + 1.3
+        val high = landing.y > takeoff.y + 1.3 &&
+            // Unless it is too far away for that: then it is taken at a run instead (going straight
+            // up first leaves the whole distance to the double jump, which does not have it, and
+            // over a gap that was a fall into the void every time). The route was checked for
+            // one way or the other by the same rule, measured between the middles of the blocks.
+            Mobility.straightUp(landing.y - (from?.y ?: takeoff.y),
+                kotlin.math.hypot(landing.x - (from?.let { it.x + .5 } ?: takeoff.x), landing.z - (from?.let { it.z + .5 } ?: takeoff.z)))
+        /** Ticks the jump may take: a chicken flapping its way up a tower needs longer than a hop. */
+        val limit = 60 + (maxOf(0.0, landing.y - takeoff.y) * 6).toInt()
+        /**
+         * For a landing close by and well below: the walking speed that carries the bot off the
+         * edge and down onto it. A running jump at a ledge two blocks out and five down sails
+         * clean over it. Zero when it takes a real jump to get there.
+         */
+        var stepOff = 0.0
+        /** The block the jump was taken from, when it is a step of the route. */
+        val from: RouteNode? = from
     }
+
+    /** A wall climb in progress (spiders): up the wall beside [foot] until level with [ledge], then onto it. */
+    private class Climb(val foot: Location, val ledge: Location, val startTick: Long)
+    private var climb: Climb? = null
+    private var nextDashTick = 0L
+    private var dashTick = -1L
+    private var dashUntil = -1L
+    private var dashAim: Location? = null
+    private var dashDir: Pair<Double, Double>? = null
     private var gapJump: GapJump? = null
     /** The route node the bot last stood on: where a jump along the route takes off from. */
     private var routeAt: RouteNode? = null
@@ -437,8 +503,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             target = null
             lastSafe = null
             gapJump = null
+            climb = null
             route.clear();routeSearch=null;nextRouteTick=0
-            blockedSteps.clear();stuckRef=null
+            blockedSteps.clear();blockedEdges.clear();stuckRef=null
             comboQueue.clear();bowReleaseTick=0;player.isSneaking=false
             shot=null;carried=null;channelUntil=0
             enterState(CombatState.IDLE)
@@ -481,7 +548,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         trackTarget()
         // Typing a chat message: hands are on the keyboard, so no moving, jumping or fighting until
         // it is sent. Only on solid ground; a bot knocked into the air deals with that first.
-        if (tick in typingFrom until typingUntil && onGround && gapJump == null && !recovering && !isOverVoid(map)) {
+        if (tick in typingFrom until typingUntil && onGround && gapJump == null && climb == null && !recovering && !isOverVoid(map)) {
             comboQueue.clear(); shot = null
             if (tick == typingUntil - 1) dbg("typing done")
             return releaseInputs()
@@ -517,8 +584,10 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             // Climb only a wall that is in the way of where the bot is actually going. Climbing
             // every wall it touched whenever the opponent stood higher left spiders hanging on
             // walls that led nowhere.
-            "spider" -> nms.horizontalCollision && player.exp>.05 &&
-                (gapJump?.landing?.y ?: route.firstOrNull()?.node?.y ?: (if (recovering) recoveryGoal?.y else null) ?: target?.y ?: 0.0) > player.y+.6
+            // (A climb that is part of the route is taken from the middle of the block at the
+            // foot of the wall, not from wherever the spider first bumps into it.)
+            "spider" -> climb != null || (nms.horizontalCollision && player.exp>.05 && route.firstOrNull()?.climb != true &&
+                (gapJump?.landing?.y ?: route.firstOrNull()?.node?.y ?: (if (recovering) recoveryGoal?.y else null) ?: target?.y ?: 0.0) > player.y+.6)
             "goat" -> nms.onGround() && player.exp<.8 && (target?.location?.distanceSquared(player.location) ?: 0.0)>100
             "enderman" -> nms.onGround() && target?.let { it.location.distanceSquared(player.location)>400 && player.hasLineOfSight(it) } == true
             "phantom" -> player.isFlying && target?.let { hypot(it.x-player.x,it.z-player.z)<3 && it.y<player.y-1 } == true
@@ -539,7 +608,22 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             }
             setInputs(0f,0f,false);return
         }
-        // A gap jump in progress steers itself; recovery must not turn it around mid-air.
+        // The leap half of a dash: fired a few ticks into the jump, level down the lane.
+        if (tick == dashTick) dashAim?.let { aim ->
+            if (!nms.onGround() && canDoubleJump() && gapJump == null && climb == null && !recovering) {
+                val (yaw, _) = lookAngles(player.eyeLocation, aim)
+                nms.setYRot(yaw)
+                nms.setYHeadRot(yaw)
+                nms.setXRot(-6f)
+                val here = player.location
+                val length = hypot(aim.x - here.x, aim.z - here.z).coerceAtLeast(0.01)
+                dashDir = (aim.x - here.x) / length to (aim.z - here.z) / length
+                dashUntil = tick + 14
+                doubleJump("dash")
+            }
+        }
+        // A wall climb or a gap jump in progress steers itself; recovery must not turn it around mid-air.
+        if (climb != null && continueClimb(map)) return
         if (gapJump != null && continueGapJump(map)) return
 
         // A hop across a small gap passes over the drop for a few ticks. That is the route
@@ -711,10 +795,21 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             val input=inputToward(dest)
             return Triple(input.first,input.second,false)
         }
+        if(step.climb) return climbInputs(dest)
         if(nms.onGround() && !step.jump && dest.y-player.y>1.3) {
             // A walking step that far overhead means the route was planned from somewhere the
             // bot is not (it was knocked down, or planned mid-fall). Hopping at it gets nowhere.
             route.clear();routeSearch=null;nextRouteTick=tick
+            return Triple(0f,0f,false)
+        }
+        if(nms.onGround() && step.jump && dest.y-player.y>1.25 && player.exp<.999f &&
+            KitService.getKitForPlayer(player)?.jumpPassive() is dev.betrix.superSmashMobsBrawl.passives.FlapPassive &&
+            airJumpsLeft()<airJumpsFor(dest.y-player.y)) {
+            // A chicken that has just flown here has to get its flaps back before a tower.
+            // Standing on the ground does that in a couple of seconds. (Only a chicken: nobody
+            // else gets more jumps by waiting, and a bar that is already full has no more to give.)
+            if(tick-patientTick>40) dbg("out of flaps for a ${"%.0f".format(dest.y-player.y)} block rise; waiting")
+            patientTick=tick
             return Triple(0f,0f,false)
         }
         if(nms.onGround() && step.jump && dest.y-player.y>1.25) {
@@ -730,14 +825,34 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                 }
             }
         }
-        if(nms.onGround() && step.jump &&
-            (hypot(dest.x-player.x,dest.z-player.z)>1.6 || dest.y-player.y>1.25)) {
-            startGapJump(Gap(player.location.distance(dest),dest));return null
+        if(nms.onGround() && step.jump && dest.y-player.y>mobility().up+1.6) {
+            // Far more than this kit can jump: the bot is not where the route was planned from
+            // (it fell off the way there). Jumping at it anyway got nowhere; plan again from here.
+            route.clear();routeSearch=null;nextRouteTick=tick
+            return Triple(0f,0f,false)
+        }
+        if(nms.onGround() && step.jump) {
+            val across=hypot(dest.x-player.x,dest.z-player.z)
+            // (A long drop is steered the same way, so the bot comes down on the ledge and not past it.
+            // So is a hop onto a block with nothing around it: run at that like any other step
+            // and the bot is off the far side of it.)
+            if(across>1.6 || dest.y-player.y>1.25 || player.y-dest.y>3.0 || (across>.9 && narrow(dest))) {
+                startGapJump(Gap(player.location.distance(dest),dest));return null
+            }
         }
         val input=inputToward(dest)
         val jump=nms.onGround() && (step.jump || step.node.y>player.y+.6 || nms.horizontalCollision)
         if(jump)noteJump("route step")
-        else if(nms.onGround() && d.strafes && input.first>.8f) {
+        else if(nms.onGround() && input.first>.8f) dashLane()?.let { lane ->
+            // A spider or a wolf covers open ground with its leap, not on foot.
+            val along=inputToward(lane)
+            if(along.first>.8f) {
+                noteJump("dash")
+                dashTick=tick+DASH_DELAY;dashAim=lane;nextDashTick=tick+12
+                return Triple(along.first,along.second,true)
+            }
+        }
+        if(!jump && nms.onGround() && d.strafes && input.first>.8f) {
             // Good players cross open ground in sprint jumps; it is a quarter faster than running.
             // The jump is aimed down the whole straight, not at the next block: aimed at a block
             // half a step ahead and slightly to one side, it would leave a narrow bridge sideways.
@@ -751,6 +866,148 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             }
         }
         return Triple(input.first,input.second,jump)
+    }
+
+    /**
+     * A wall to climb (spiders). The climb is planned straight up from the middle of the block at
+     * the foot of the wall, so that is where it starts: walk there, wait if the climb needs more
+     * energy than is in the bar, then go up. Null once the climb has begun (it steers itself).
+     */
+    private fun climbInputs(ledge: Location): Triple<Float, Float, Boolean>? {
+        val from = routeAt
+        val here = player.location
+        if (from == null || abs(from.y - here.y) > 0.6 || hypot(from.x + .5 - here.x, from.z + .5 - here.z) > 1.7) {
+            if (!nms.onGround()) {
+                // Still coming down onto the foot of the wall.
+                val input = inputToward(from?.let { Location(here.world, it.x + .5, it.y, it.z + .5) } ?: ledge)
+                return Triple(input.first, input.second, false)
+            }
+            // Not where the climb was planned from (knocked away from it): plan again from here.
+            route.clear(); routeSearch = null; nextRouteTick = tick
+            return Triple(0f, 0f, false)
+        }
+        val foot = Location(here.world, from.x + .5, from.y, from.z + .5)
+        val off = hypot(foot.x - here.x, foot.z - here.z)
+        if (off > 0.22) {
+            val input = inputToward(foot)
+            val gentle = if (off < .6) .45f else 1f
+            return Triple(input.first * gentle, input.second * gentle, false)
+        }
+        if (!nms.onGround()) return Triple(0f, 0f, false)
+        // A full bar is ten seconds on the wall, at eight blocks a second.
+        val needed = ((ledge.y - here.y) * CLIMB_ENERGY_PER_BLOCK + 0.08).toFloat().coerceAtMost(0.98f)
+        if (player.exp < needed) {
+            if (tick - patientTick > 40) dbg("needs ${"%.2f".format(needed)} energy to climb ${"%.0f".format(ledge.y - here.y)} blocks, has ${"%.2f".format(player.exp)}; waiting")
+            patientTick = tick
+            return Triple(0f, 0f, false)
+        }
+        climb = Climb(foot, ledge, tick)
+        dbg("climbing the wall to ${"%.1f %.1f %.1f".format(ledge.x, ledge.y, ledge.z)}")
+        return null
+    }
+
+    /** Takes a wall climb up. Returns false once it is over (handed on to the hop onto the ledge, or given up). */
+    private fun continueClimb(map: GameMapDef): Boolean {
+        val c = climb ?: return false
+        val here = player.location
+        val age = tick - c.startTick
+        val rise = c.ledge.y - c.foot.y
+        val off = hypot(c.foot.x - here.x, c.foot.z - here.z)
+        // No wall after all, out of energy, knocked off it, or caught on something on the way up.
+        val failed = when {
+            inWeb() -> "caught in a web"
+            player.exp <= 0.02f -> "out of energy"
+            off > 1.4 -> "knocked off the wall"
+            age > 18 && here.y < c.foot.y + 0.6 -> "nothing to hold on to"
+            age > 30 + rise * 4 -> "taking too long"
+            else -> null
+        }
+        if (failed != null) {
+            dbg("climb abandoned: $failed")
+            climb = null
+            player.isSneaking = false
+            // Lack of breath is cured by waiting at the bottom; anything else by another way up.
+            if (failed != "out of energy") {
+                blockedSteps[RouteNode(c.ledge.blockX, (c.ledge.y * 16).roundToInt(), c.ledge.blockZ)] = tick + 200
+                // The next ledge along is up the same wall: stay off this stretch of it for a while.
+                failedClimbs += RouteNode(c.foot.blockX, (c.foot.y * 16).roundToInt(), c.foot.blockZ) to tick + 300
+                navStats.blocked++
+            }
+            route.clear(); routeSearch = null; nextRouteTick = tick
+            return false
+        }
+        if (here.y >= c.ledge.y + 0.45) {
+            // Level with the ledge: let go of the wall and get onto it, with the leap if need be.
+            climb = null
+            player.isSneaking = false
+            dbg("top of the climb, onto the ledge")
+            gapJump = GapJump(c.ledge, tick, here.clone()).also { it.leftGround = true }
+            return continueGapJump(map)
+        }
+        player.isSneaking = true
+        val (yaw, _) = lookAngles(player.eyeLocation, c.ledge)
+        turnTowards(yaw, 0f, 60f)
+        // Stay in the column the climb was planned in; the wall is right beside it.
+        val input = if (off > 0.2) inputToward(c.foot) else 0f to 0f
+        // A wall that only begins a block up (over a doorway, under a balcony) is caught with a hop.
+        setInputs(input.first, input.second, nms.onGround() && age in 4..9)
+        return true
+    }
+
+    /**
+     * Spider: Spin Web aimed at the floor throws its user straight up. With the leap already
+     * spent, that is the jump that still gets it onto the ledge (or back out of the void).
+     */
+    private fun webLaunch(toward: Location): Boolean {
+        if (KitService.getKitForPlayer(player)?.id != "spider" || holdUntilTick >= 0 || !isReady("spin_web")) return false
+        val (yaw, _) = lookAngles(player.eyeLocation, toward)
+        nms.setYRot(yaw)
+        nms.setYHeadRot(yaw)
+        nms.setXRot(60f)
+        return useAbility("spin_web", AbilityHints.of("spin_web"), false)
+    }
+
+    /**
+     * Kits whose air jump goes forward like a dash (a spider's leap, a wolf's pounce) cover open
+     * ground the way their players do: jump, leap level down the lane, land running, again. That
+     * is twice as fast as running it. Returns the far end of a lane that is safe to dash down
+     * (flat floor under the whole flight, nothing in the way, no ceiling to hit), or null.
+     */
+    private fun dashLane(): Location? {
+        if (tick < nextDashTick || route.size < DASH_NODES || gapJump != null) return null
+        // Whatever the answer, it is not asked again every tick.
+        nextDashTick = tick + 6
+        if (!canDoubleJump() || nms.horizontalCollision || inWeb() || jumpLaunch(-6.0).first < 0.9) return null
+        if (player.hasPotionEffect(org.bukkit.potion.PotionEffectType.SPEED) || tick - lastDoubleJumpTick < 10) return null
+        val map = lastMap ?: return null
+        val here = player.location
+        // Level ground all the way: no jump, climb or drop among the steps the dash passes over.
+        for (i in 0 until DASH_NODES) {
+            val s = route[i]
+            if (s.jump || s.climb || abs(s.node.y - here.y) > 0.05) return null
+        }
+        val end = route[DASH_NODES - 1].node
+        val dx = end.x + .5 - here.x
+        val dz = end.z + .5 - here.z
+        val length = hypot(dx, dz)
+        // The route doubles back on itself within a few steps: that is not a lane.
+        if (length < DASH_LENGTH) return null
+        val ux = dx / length
+        val uz = dz / length
+        val terrain = ArenaNav.of(player.world, map.voidLevel.toInt(), mobility())
+        var s = 0.5
+        while (s <= minOf(length, DASH_LENGTH + 3.0)) {
+            val x = here.x + ux * s
+            val z = here.z + uz * s
+            // Room for the body all the way, at ground level and at the top of the leap.
+            if (!terrain.clear(x, here.y + 0.05, z) || !terrain.clear(x, here.y + 1.5, z)) return null
+            // Floor under both shoulders: a dash along a one-block beam is a dash off it.
+            for (side in DASH_SHOULDERS) {
+                if (!hasSolidBelow(Location(here.world, x - uz * side, here.y - 0.1, z + ux * side), 1)) return null
+            }
+            s += 0.5
+        }
+        return Location(here.world, end.x + .5, end.y, end.z + .5)
     }
 
     /**
@@ -810,8 +1067,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     private fun checkStuck(far: Boolean, forward: Float, strafe: Float) {
         if(tick%40!=0L) return
         val here=player.location
-        // Being held by a cobweb says nothing about the route.
-        if(inWeb()) { stuckRef=here.clone();return }
+        // Being held by a cobweb says nothing about the route, and neither does waiting on purpose.
+        if(inWeb() || tick-patientTick<=40) { stuckRef=null;return }
         if(routeSearch==null && route.isNotEmpty() &&
             stuckRef?.let {it.world==here.world && hypot(it.x-here.x,it.z-here.z)<.55}==true && far) {
             // Waiting for a bounded path search is not a movement failure. Canceling
@@ -853,21 +1110,34 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             return false
         }
         if(!nms.onGround())g.leftGround=true
-        if ((g.leftGround && age > 3 && nms.onGround()) || age > 60 || (!g.leftGround && age>12)) {
-            val landed = nms.onGround() && abs(player.y-g.landing.y)<.8 &&
-                hypot(player.x-g.landing.x,player.z-g.landing.z)<1.0
+        if ((g.leftGround && age > 3 && nms.onGround()) || age > g.limit || (!g.leftGround && age>(if (g.stepOff>0.0) 30 else 12))) {
+            val across = hypot(player.x-g.landing.x,player.z-g.landing.z)
+            val landed = nms.onGround() && abs(player.y-g.landing.y)<.8 && across<1.0
+            // Down on the block next to it is as good as on it: the route carries on from there.
+            // (Counting that as a miss, and the landing as a place not to go, used to cut the
+            // bot off from the very spot it had just reached.)
+            val beside = !landed && nms.onGround() && abs(player.y-g.landing.y)<=1.3 && across<1.9
             if(!landed) {
-                navStats.gapFails++
-                blockedSteps[RouteNode(g.landing.blockX,(g.landing.y*16).toInt(),g.landing.blockZ)]=tick+200
-                forgetTerrain(g.landing.blockX,g.landing.blockZ,map)
+                if(!beside) {
+                    navStats.gapFails++
+                    val to = RouteNode(g.landing.blockX,(g.landing.y*16).roundToInt(),g.landing.blockZ)
+                    val from = g.from
+                    if(from!=null) blockedEdges[from to to]=tick+200 else blockedSteps[to]=tick+200
+                    forgetTerrain(g.landing.blockX,g.landing.blockZ,map)
+                }
                 route.clear();routeSearch=null;nextRouteTick=tick
             }
-            dbg("gap jump finished (reached landing=$landed)")
+            dbg("gap jump finished (reached landing=$landed${if(beside) ", came down beside it" else ""})")
             gapJump = null
             return false
         }
         val (yaw, _) = lookAngles(player.eyeLocation, g.landing)
         turnTowards(yaw, 0f, 90f)
+        if (!g.leftGround && g.stepOff > 0.0) {
+            // Walk off the edge; no faster than lands on the ledge below.
+            setInputs((g.stepOff / 0.216).toFloat().coerceIn(0.25f, 1f), 0f, false)
+            return true
+        }
         if (!g.leftGround) {
             // Hold jump through the vanilla jump delay instead of treating a missed
             // one-tick input as a successful landing at our original position.
@@ -890,11 +1160,18 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             val here = player.location
             val remaining = hypot(g.landing.x - here.x, g.landing.z - here.z)
             val v = nms.deltaMovement
-            val reach = coastDistance(hypot(v.x, v.z), ticksUntilBelow(g.landing.y, v.y, here.y))
-            if (reach < remaining - 0.3 || here.y < g.landing.y - 0.3) {
+            val fall = ticksUntilBelow(g.landing.y, v.y, here.y)
+            val reach = coastDistance(hypot(v.x, v.z), fall)
+            // On a long way down, steering alone still makes up a block or so: no need to
+            // spend the double jump on the last half block of a seven-block drop.
+            val steer = if (fall >= 12) minOf(1.5, 0.006 * fall * fall) else 0.0
+            if (reach + steer < remaining - 0.3 || here.y < g.landing.y - 0.3) {
                 g.doubleJumped = true
                 aimedDoubleJump(g.landing, "gap jump")
             }
+        } else if (age >= 3 && !nms.onGround() && nms.deltaMovement.y < -0.05 && !canDoubleJump() && tick - lastDoubleJumpTick > 6 &&
+            player.location.y < g.landing.y - 0.3 && webLaunch(g.landing)) {
+            dbg("leap spent short of the ledge: spin web up")
         }
         // Clearly below the landing and dropping, with the double jump spent: hand over to
         // recovery. (Checking this in the same tick as the jump used to cancel every jump to a
@@ -1045,7 +1322,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         }
         if (goal == null) {
             if (tick < prowlRestUntil) return false
-            val nav = ArenaNav.of(player.world, map.voidLevel.toInt(), canDoubleJump())
+            val nav = ArenaNav.of(player.world, map.voidLevel.toInt(), mobility())
             val at = t.location
             for (attempt in 1..8) {
                 val angle = rng.nextDouble() * Math.PI * 2
@@ -1053,7 +1330,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                 // Ground around their height first, else whatever is underneath.
                 val probe = Location(at.world, at.x + cos(angle) * radius, at.y + rng.nextInt(-1, 4), at.z + sin(angle) * radius)
                 val node = nav.nearest(probe, 14.0, 3.0) ?: continue
-                val spot = Location(at.world, node.x + .5, node.y.toDouble(), node.z + .5)
+                val spot = Location(at.world, node.x + .5, node.y, node.z + .5)
                 // Somewhere new, not the block the bot is already on.
                 if (hypot(spot.x - here.x, spot.z - here.z) < 3.0 && abs(spot.y - here.y) < 2.0) continue
                 goal = spot
@@ -1094,7 +1371,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         val landing = Location(player.world, node.x + .5, node.y, node.z + .5)
         val here = player.location
         val across = hypot(landing.x - here.x, landing.z - here.z)
-        if (across > 8.5 || across < 1.0 || !jumpReaches(landing) || !clearHop(landing, map)) return false
+        if (across > 8.5 + (airJumpsLeft() - 1).coerceAtLeast(0) * 3.0 || across < 1.0 || !jumpReaches(landing) || !clearHop(landing, map)) return false
         // Never over open void: if it falls short there must be something to land on.
         val middle = here.clone().add((landing.x - here.x) / 2, 0.0, (landing.z - here.z) / 2)
         if (across > 4.5 && !hasSolidBelow(middle, 12)) return false
@@ -1127,6 +1404,12 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         val here = player.location
         val from = here.y + 1.2
         val r = hypot(p.x - here.x, p.z - here.z)
+        val jumps = airJumpsLeft()
+        if (jumps > 1) {
+            // Several air jumps (a chicken's flaps): some go on height, the rest on distance.
+            val forHeight = if (p.y + 0.3 <= from) 0 else airJumpsFor(p.y + 0.3 - here.y)
+            return jumps - forHeight >= 1 && r <= 1.5 + (jumps - forHeight) * 4.5
+        }
         var pitch = 20.0
         while (pitch >= -88.0) {
             val (horizontal, vertical) = jumpLaunch(pitch)
@@ -1479,7 +1762,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         if (canDoubleJump() && tick - lastDoubleJumpTick > 6) {
             aimedDoubleJump(goal, "recovery")
         } else if (holdUntilTick < 0) {
-            if (tryRecoveryAbility()) dbg("used a movement ability to recover")
+            if (tryRecoveryAbility() || webLaunch(goal)) dbg("used a movement ability to recover")
         }
     }
 
@@ -1599,11 +1882,16 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         while (p2 >= -88.0) {
             val (horizontal, vertical) = jumpLaunch(p2)
             val peak = peakHeight(vertical, here.y)
-            if (peak > highest) { highest = peak; highestPitch = p2 }
+            // Of jumps that go equally high (every flap of a chicken does), the steepest: on
+            // the way up a tower the bot wants to stay beside it, not be thrown against it.
+            if (peak >= highest - 0.02) { highest = maxOf(highest, peak); highestPitch = p2 }
             if (peak >= p.y + 0.3) {
                 val dist = coastDistance(horizontal, ticksUntilBelow(p.y, vertical, here.y))
                 // Slightly prefer overshooting by a bit to falling short.
-                val err = if (dist >= r) dist - r else (r - dist) * 1.5
+                var err = if (dist >= r) dist - r else (r - dist) * 1.5
+                // The perfect arc is no use if there is a roof in it. One that comes down a
+                // little long, with the brakes on, beats one that stops against an overhang.
+                if (err < bestErr && !arcClear(p, horizontal, vertical)) err += 5.0
                 if (err < bestErr) {
                     bestErr = err
                     bestPitch = p2
@@ -1619,12 +1907,123 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         doubleJump("$reason, ${"%.1f".format(r)} blocks, pitch ${"%.0f".format(pitch)}")
     }
 
+    /**
+     * Flies an air jump from here at this launch speed toward [p] the way the game would, and
+     * says whether it gets there without bumping its head. Running into a wall on the way up is
+     * nothing (the jump slides up it and carries on over the top: that is how every ledge is
+     * taken); coming up underneath an overhang ends the jump.
+     */
+    private fun arcClear(p: Location, horizontal: Double, vertical: Double): Boolean {
+        val map = lastMap ?: return true
+        val here = player.location
+        val r = hypot(p.x - here.x, p.z - here.z)
+        if (r < 0.5) return true
+        val nav = ArenaNav.of(player.world, map.voidLevel.toInt(), mobility())
+        val ux = (p.x - here.x) / r
+        val uz = (p.z - here.z) / r
+        var along = 0.0
+        var y = here.y
+        var vh = horizontal
+        var vy = vertical
+        for (t in 1..50) {
+            // Up (or down) first: something overhead on the way up is the end of the jump,
+            // something underfoot on the way down is a landing.
+            if (!nav.clear(here.x + ux * along, y + vy, here.z + uz * along)) return vy <= 0
+            y += vy
+            // Then across: a wall stops that for now, and steering pushes on once over it.
+            if (nav.clear(here.x + ux * (along + vh), y, here.z + uz * (along + vh))) along += vh else vh = 0.0
+            vh = vh * 0.91 + 0.02
+            vy = (vy - 0.08) * 0.98
+            if ((vy < 0 && y <= p.y + 0.3) || along >= r - 0.3) return true
+        }
+        return true
+    }
+
     private fun startGapJump(gap: Gap) {
         val landing = gap.landing ?: return
         navStats.gapJumps++
-        gapJump = GapJump(landing, tick, player.location.clone())
-        dbg("gap jump: ${"%.1f".format(gap.length)} blocks toward ${"%.1f %.1f".format(landing.x, landing.z)}")
+        val here = player.location
+        // The block the bot is standing on, if it is the one the route says it jumps from.
+        val from = routeAt?.takeIf { abs(it.y - here.y) < .6 && hypot(it.x + .5 - here.x, it.z + .5 - here.z) < 1.0 }
+        val jump = GapJump(landing, tick, here.clone(), from)
+        if (liquidOnTheWay(landing, jump.high)) {
+            // Water has got into the way since the route was planned (it flows). Stand still, not
+            // on over the edge, leave this jump alone for a while and look at the arena again.
+            dbg("water in the way of the jump to ${"%.1f %.1f %.1f".format(landing.x, landing.y, landing.z)}; finding another way")
+            val to = RouteNode(landing.blockX, (landing.y * 16).roundToInt(), landing.blockZ)
+            if (from != null) blockedEdges[from to to] = tick + 200 else blockedSteps[to] = tick + 200
+            lastMap?.let { forgetTerrain(landing.blockX, landing.blockZ, it); forgetTerrain(here.blockX, here.blockZ, it) }
+            route.clear(); routeSearch = null; nextRouteTick = tick
+            setInputs(0f, 0f, false)
+            return
+        }
+        jump.stepOff = stepOffSpeed(landing)
+        gapJump = jump
+        dbg((if (jump.stepOff > 0.0) "stepping off the edge" else "gap jump") +
+            ": ${"%.1f".format(gap.length)} blocks toward ${"%.1f %.1f %.1f".format(landing.x, landing.y, landing.z)}")
         continueGapJump(lastMap ?: return)
+    }
+
+    /**
+     * Is there water or lava where the feet go on a jump from here to [landing]? In the arena
+     * touching it is death, and it flows: it can be there now where it was not when the route was
+     * planned. The path looked at is the one the jump was planned along (straight up and over for
+     * a ledge taken that way, out and down for a drop, an arc for the rest), a low arc and a high
+     * one, because the real jump runs somewhere between the two.
+     */
+    private fun liquidOnTheWay(landing: Location, straightUp: Boolean): Boolean {
+        val here = player.location
+        val world = here.world ?: return false
+        fun wet(x: Double, y: Double, z: Double) =
+            world.getBlockAt(kotlin.math.floor(x).toInt(), kotlin.math.floor(y).toInt(), kotlin.math.floor(z).toInt()).isLiquid
+        val dx = landing.x - here.x
+        val dz = landing.z - here.z
+        val steps = ceil(hypot(dx, dz) * 3).toInt().coerceAtLeast(2)
+        val drop = here.y - landing.y > 3.0
+        if (straightUp || drop) {
+            // One end of the jump is a column: up it from the take-off, or down it onto the landing.
+            val columnX = if (straightUp) here.x else landing.x
+            val columnZ = if (straightUp) here.z else landing.z
+            var y = minOf(here.y, landing.y) + 0.1
+            while (y <= maxOf(here.y, landing.y) + 1.0) { if (wet(columnX, y, columnZ)) return true; y += 1.0 }
+        }
+        val level = if (straightUp) landing.y else here.y
+        for (i in 1..steps) {
+            val t = i.toDouble() / steps
+            val x = here.x + dx * t
+            val z = here.z + dz * t
+            // The height of the feet along the way: level out to a drop or over to a ledge, a slope otherwise.
+            val base = if (straightUp || drop) level else here.y + (landing.y - here.y) * t
+            val lift = kotlin.math.sin(Math.PI * t)
+            if (wet(x, base + 0.1 + lift * 0.9, z) || wet(x, base + 0.1 + lift * 1.8, z)) return true
+        }
+        return false
+    }
+
+    /** A landing with open air on most sides: a block to come down on exactly, not one to run across. */
+    private fun narrow(at: Location): Boolean {
+        var held = 0
+        for (side in CARDINALS) if (hasSolidBelow(Location(at.world, at.x + side.first, at.y + 0.3, at.z + side.second), 2)) held++
+        return held <= 2
+    }
+
+    /** See [GapJump.stepOff]: the pace to walk off the edge at for a landing well below, or zero if it needs a jump. */
+    private fun stepOffSpeed(landing: Location): Double {
+        val here = player.location
+        if (here.y - landing.y < 3.0 || !nms.onGround()) return 0.0
+        val r = hypot(landing.x - here.x, landing.z - here.z)
+        if (r < 0.3) return 0.0
+        val map = lastMap ?: return 0.0
+        val ux = (landing.x - here.x) / r
+        val uz = (landing.z - here.z) / r
+        // The floor has to end within a step in that direction, with nothing standing on its edge.
+        val nav = ArenaNav.of(player.world, map.voidLevel.toInt(), mobility())
+        if (!nav.clear(here.x + ux * 0.6, here.y + 0.05, here.z + uz * 0.6) || !nav.clear(here.x + ux * 1.2, here.y + 0.05, here.z + uz * 1.2)) return 0.0
+        if (hasSolidBelow(Location(here.world, here.x + ux * 1.25, here.y - 0.1, here.z + uz * 1.25), 2)) return 0.0
+        // Leaving the edge (about 0.6 away) at speed v, air drag lets the bot cover v/0.09 at most.
+        val fall = ticksUntilBelow(landing.y, 0.0, here.y)
+        val speed = (r - 0.6).coerceAtLeast(0.1) * 0.09 / (1 - Math.pow(0.91, fall.toDouble()))
+        return if (speed <= 0.28) speed else 0.0
     }
 
     private var lastMap: GameMapDef? = null
@@ -1765,7 +2164,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         for (y in (loc.blockY + 3) downTo (loc.blockY - depth)) {
             if (y < world.minHeight) return null
             val type = world.getBlockAt(x, y, z).type
-            if (type == org.bukkit.Material.LAVA || type == org.bukkit.Material.WATER) return null
+            if (ArenaTerrain.watery(type)) return null
             if (type.isSolid && !world.getBlockAt(x, y + 1, z).type.isSolid && !world.getBlockAt(x, y + 2, z).type.isSolid) {
                 return y
             }
@@ -1781,8 +2180,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         for (y in top downTo (top - depth)) {
             if (y < world.minHeight) return false
             val type = world.getBlockAt(x, y, z).type
-            // Lava (or deep water) on top of solid ground is not safe ground.
-            if (type == org.bukkit.Material.LAVA || type == org.bukkit.Material.WATER) return false
+            // Lava (or water, with or without weed growing in it) on top of solid ground is not safe ground.
+            if (ArenaTerrain.watery(type)) return false
             if (type.isSolid) return true
         }
         return false
@@ -1790,7 +2189,16 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
 
     private companion object {
         /** Enough to search a whole arena; the cached graph makes each step cheap. */
-        const val ROUTE_LIMIT = 8000
+        const val ROUTE_LIMIT = 20000
+        /** Wall climbing drains a full bar in 200 ticks at 0.4 blocks a tick: this much per block. */
+        const val CLIMB_ENERGY_PER_BLOCK = 0.0125
+        /** Route steps a dash must have ahead of it, all level, and how long the lane must be. */
+        const val DASH_NODES = 12
+        const val DASH_LENGTH = 9.5
+        /** Ticks into the jump at which the leap is fired: just before the top of it. */
+        const val DASH_DELAY = 4L
+        val DASH_SHOULDERS = doubleArrayOf(-0.3, 0.3)
+        val CARDINALS = listOf(1.0 to 0.0, -1.0 to 0.0, 0.0 to 1.0, 0.0 to -1.0)
     }
 
     private fun hasGroundNear(loc: Location, depth: Int): Boolean =

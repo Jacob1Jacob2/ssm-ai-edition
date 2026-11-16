@@ -20,10 +20,10 @@ import org.bukkit.World
  * not watch for that; instead a bot that finds a step missing or blocked calls [invalidate], and
  * that part of the graph is worked out again from the world as it now is.
  */
-class ArenaNav private constructor(private val world: World, private val voidY: Int, private val doubleJump: Boolean) {
+class ArenaNav private constructor(private val world: World, private val voidY: Int, private val mobility: Mobility) {
     private class Cached(val edges: List<RouteEdge>, val expires: Int)
 
-    private var terrain = ArenaTerrain(world, voidY, doubleJump)
+    private var terrain = ArenaTerrain(world, voidY, mobility, shared = true)
     private var terrainBorn = Bukkit.getCurrentTick()
     private val edges = HashMap<RouteNode, Cached>()
     private val warmSeen = HashSet<RouteNode>()
@@ -33,7 +33,7 @@ class ArenaNav private constructor(private val world: World, private val voidY: 
     private fun terrain(): ArenaTerrain {
         val now = Bukkit.getCurrentTick()
         if (now - terrainBorn > TERRAIN_TICKS) {
-            terrain = ArenaTerrain(world, voidY, doubleJump)
+            terrain = ArenaTerrain(world, voidY, mobility, shared = true)
             terrainBorn = now
         }
         return terrain
@@ -57,10 +57,14 @@ class ArenaNav private constructor(private val world: World, private val voidY: 
         return fresh
     }
 
+    /** Is there room for a body with its feet at this point? Answered from the columns the graph has already read. */
+    fun clear(x: Double, y: Double, z: Double): Boolean = terrain().clear(x, y, z)
+
     /** Forgets what was worked out around a block that turned out to be missing or in the way. */
     fun invalidate(x: Int, z: Int, radius: Int = 7) {
         edges.keys.removeIf { abs(it.x - x) <= radius && abs(it.z - z) <= radius }
-        terrain = ArenaTerrain(world, voidY, doubleJump)
+        ArenaTerrain.forget(world, x, z, radius)
+        terrain = ArenaTerrain(world, voidY, mobility, shared = true)
         terrainBorn = Bukkit.getCurrentTick()
     }
 
@@ -99,6 +103,22 @@ class ArenaNav private constructor(private val world: World, private val voidY: 
         val terrain = terrain()
         val x = floor(loc.x).toInt()
         val z = floor(loc.z).toInt()
+        // First what is right under their feet: their own column, or one of the columns their
+        // body (0.6 wide) reaches over. Someone on the lip of a roof is standing on the roof.
+        // Taking the floor ten blocks below them for it sent bots to stand underneath.
+        var held: RouteNode? = null
+        var heldScore = Double.MAX_VALUE
+        for (dx in -1..1) for (dz in -1..1) {
+            val gapX = maxOf(0.0, x + dx - loc.x, loc.x - (x + dx + 1))
+            val gapZ = maxOf(0.0, z + dz - loc.z, loc.z - (z + dz + 1))
+            if (gapX > 0.3 || gapZ > 0.3) continue
+            val own = dx == 0 && dz == 0
+            val node = terrain.surface(x + dx, z + dz, loc.y, if (own) up else minOf(up, 0.1), minOf(down, 0.75)) ?: continue
+            val score = gapX + gapZ + abs(node.y - loc.y) * 0.5
+            if (score < heldScore) { heldScore = score; held = node }
+        }
+        held?.let { return it }
+        // Otherwise they are in the air, and it is whatever is below them.
         terrain.surface(x, z, loc.y, up, down)?.let { return it }
         var best: RouteNode? = null
         var bestScore = Double.MAX_VALUE
@@ -115,15 +135,24 @@ class ArenaNav private constructor(private val world: World, private val voidY: 
         private const val TERRAIN_TICKS = 100
         private const val EDGE_TICKS = 1200
         private const val WARM_LIMIT = 20_000
-        private val navs = HashMap<UUID, HashMap<Boolean, ArenaNav>>()
+        private val navs = HashMap<UUID, HashMap<Mobility, ArenaNav>>()
 
-        fun of(world: World, voidY: Int, doubleJump: Boolean): ArenaNav {
+        /** The graph for fighters that move like [mobility]: a spider's has wall climbs in it, a chicken's long flights. */
+        fun of(world: World, voidY: Int, mobility: Mobility): ArenaNav {
             val perWorld = navs.getOrPut(world.uid) {
                 // A new arena is a good moment to forget the ones that have been unloaded.
                 navs.keys.removeIf { Bukkit.getWorld(it) == null }
                 HashMap()
             }
-            return perWorld.getOrPut(doubleJump) { ArenaNav(world, voidY, doubleJump) }
+            return perWorld.getOrPut(mobility) { ArenaNav(world, voidY, mobility) }
+        }
+
+        fun of(world: World, voidY: Int, doubleJump: Boolean): ArenaNav =
+            of(world, voidY, if (doubleJump) Mobility.JUMPER else Mobility.WALKER)
+
+        /** The arena changed around a block: every kind of fighter's graph of this world looks again. */
+        fun invalidateAll(world: World, x: Int, z: Int) {
+            navs[world.uid]?.values?.forEach { it.invalidate(x, z) }
         }
     }
 }

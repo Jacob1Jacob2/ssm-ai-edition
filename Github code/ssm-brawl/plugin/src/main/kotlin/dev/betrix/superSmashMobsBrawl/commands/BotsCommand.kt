@@ -17,6 +17,7 @@ import org.koin.core.component.inject
 @Command(name = "bots")
 class BotsCommand : KoinComponent {
     private val dataService: DataService by inject()
+    private val plugin: dev.betrix.superSmashMobsBrawl.SuperSmashMobsBrawl by inject()
 
     private fun allowed(sender: CommandSender): Boolean {
         if (sender is Player && !sender.isOp) {
@@ -196,6 +197,20 @@ class BotsCommand : KoinComponent {
     ) {
         if (!allowed(sender)) return
         sender.sendMessage(dev.betrix.superSmashMobsBrawl.bots.BotChaseTest.start(map, kit, BotDifficulty.parse(difficulty), pairs, samples, seconds, seed))
+    }
+
+    @Execute(name = "column")
+    @Description("Debug: what the route planner sees in one column of the running match's arena, and the blocks themselves")
+    fun column(@Context sender: CommandSender, @Arg x: Int, @Arg z: Int, @Arg fromY: Int, @Arg toY: Int) {
+        if (!allowed(sender)) return
+        val world = org.bukkit.Bukkit.getWorlds().lastOrNull { it.name.startsWith("ssmbworld") } ?: return sender.sendMessage("No arena is loaded.")
+        val terrain = dev.betrix.superSmashMobsBrawl.bots.ArenaTerrain(world, world.minHeight, dev.betrix.superSmashMobsBrawl.bots.Mobility.JUMPER, loadChunks = true)
+        plugin.logger.info("[column] $x,$z in ${world.name}: stand ${terrain.describe(x, z)}")
+        for (y in maxOf(fromY, toY) downTo minOf(fromY, toY)) {
+            val block = world.getBlockAt(x, y, z)
+            plugin.logger.info("[column] y=$y ${block.blockData.asString} boxes=" + block.collisionShape.boundingBoxes.joinToString(";") {
+                "%.2f-%.2f,%.2f-%.2f,%.2f-%.2f".format(it.minX, it.maxX, it.minY, it.maxY, it.minZ, it.maxZ) })
+        }
     }
 
     @Execute(name = "chasespot")

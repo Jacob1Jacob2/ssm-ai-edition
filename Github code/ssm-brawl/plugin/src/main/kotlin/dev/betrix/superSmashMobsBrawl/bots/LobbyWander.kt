@@ -96,22 +96,29 @@ class LobbyWander(private val nms: BotPlayer) {
             }
             progress = here.clone()
             // Revalidate edited blocks without retaining stale collision geometry forever.
-            if (ArenaTerrain(here.world, here.world.minHeight, false).surface(step.node.x, step.node.z, step.node.y, .1, .1) == null) {
+            if (lobbyTerrain(here).surface(step.node.x, step.node.z, step.node.y, .1, .1) == null) {
                 path.clear(); stop(); return
             }
         }
         val to = Location(here.world, step.node.x + .5, step.node.y, step.node.z + .5)
         val hop = !step.jump && onGround && tick - lastJump > 45 && random.nextDouble() < .008 &&
             path.size > 3 && abs(to.y - here.y) < .2 &&
-            ArenaTerrain(here.world, here.world.minHeight, false).clear(here.x, here.y + 1.25, here.z)
+            lobbyTerrain(here).clear(here.x, here.y + 1.25, here.z)
         val jump = onGround && tick - lastJump > 10 && (step.jump || hop)
         walkTo(to, jump, step.jump || sprint)
         if (jump && nms.jumpInput) { lastJump = tick; if (step.jump) airborneTarget = to }
     }
 
+    /**
+     * The lobby as a stroller sees it: steps and small hops only (nobody takes a twenty-block
+     * drop on a stroll), and nothing further down than a stroll goes.
+     */
+    private fun lobbyTerrain(here: Location) =
+        ArenaTerrain(here.world, maxOf(here.world.minHeight, here.blockY - 12), Mobility.WALKER, leaping = false)
+
     private fun plan(home: Location) {
         val here = player.location
-        val terrain = ArenaTerrain(here.world, here.world.minHeight, false)
+        val terrain = lobbyTerrain(here)
         val start = terrain.at(here) ?: return
         val goals = (0 until 18).mapNotNull {
             val angle = random.nextDouble(2 * PI)

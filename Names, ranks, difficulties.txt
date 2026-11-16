@@ -76,7 +76,7 @@ runningfridge: Rank, None: Difficultly, Harder
 RussianJoeBiden: Rank, Mythic: Difficultly, Harder
 Sailings: Rank, Mod: Difficultly, Normal
 Saiqul: Rank, Elite: Difficultly, Normal
-sebas11en: Rank, Elite: Difficultly, Hard
+sebas1en: Rank, Elite: Difficultly, Hard
 Sliccy: Rank, None: Difficultly, Normal
 SmartyAlek: Rank, None: Difficultly, Hard
 StormblazeZ: Rank, None: Difficultly, Hard

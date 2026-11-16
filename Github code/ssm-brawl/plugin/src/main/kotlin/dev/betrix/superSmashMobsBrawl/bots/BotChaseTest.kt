@@ -10,6 +10,7 @@ import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.roundToInt
 import kotlin.random.Random
 import org.bukkit.Bukkit
 import org.bukkit.Location
@@ -27,15 +28,20 @@ import org.koin.core.component.inject
  * a normal bot starts from the far side of the map and has to reach it. Every spot is logged as a
  * RESULT line, so stuck bots show up as numbers instead of anecdotes.
  *
- * Spots are "planned" (the route planner can find a way there) or "unplanned" (a double-jumping
- * player could get there, but the planner knows no route), to separate bad plans from bad execution.
+ * Spots are "planned" (the route planner can find a way there with plain walking and jumping),
+ * "leap" (planned, but only by way of the bigger moves: a long drop, a jump at an angle, a wall
+ * climb, a chicken's flight) or "unplanned" (a double-jumping player could get there, but the
+ * planner knows no route), to separate bad plans from bad execution.
+ *
+ * The map may be given as "ruins@big" (or "@small") to test the 2x bigger or smaller arena.
  */
 object BotChaseTest : KoinComponent {
     private val plugin: SuperSmashMobsBrawl by inject()
     private val minigameService: MinigameService by inject()
     private val dataService: DataService by inject()
 
-    private class Spot(val x: Double, val y: Double, val z: Double, val kind: String)
+    /** [start] is where the chaser sets off from: a spawn point the spot can actually be got to from, when there is one. */
+    private class Spot(val x: Double, val y: Double, val z: Double, val kind: String, val start: Location? = null)
     private class Result(val spot: Spot, val ticks: Int?, val hitTick: Int?, val deaths: Int, val detail: String)
     private class Chase(val chaser: Player, val dummy: Player) {
         var game: BrawlMinigame? = null
@@ -59,6 +65,7 @@ object BotChaseTest : KoinComponent {
     private var perPair = 8
     private var seed = 1
     private var label = ""
+    private var kitId = ""
     private var waited = 0
 
     val running: Boolean get() = task != null
@@ -70,8 +77,17 @@ object BotChaseTest : KoinComponent {
         if (running) return "A chase test is already running."
         val def = dataService.getMinigame("super_smash_mobs") ?: return "Minigame super_smash_mobs is missing."
         if (dataService.getKit(kit) == null) return "Unknown kit '$kit'."
+        val scale = when (mapId.substringAfter('@', "").lowercase()) {
+            "big", "2x" -> dev.betrix.superSmashMobsBrawl.services.MapScale.BIG
+            "small" -> dev.betrix.superSmashMobsBrawl.services.MapScale.SMALL
+            else -> dev.betrix.superSmashMobsBrawl.services.MapScale.NORMAL
+        }
+        val map = mapId.substringBefore('@')
+        // Nothing falling from the sky to wander off after: the test is about getting to the spot.
+        val setup = dev.betrix.superSmashMobsBrawl.services.GameSetupService.Setup(difficulty = difficulty, players = 2,
+            items = false, crystals = false, mapScale = scale)
         val started = LobbyRouting.ids.take(pairCount.coerceIn(1, 5)).mapNotNull { lobby ->
-            val bots = BotManager.startBotGame(def, 2, difficulty, mapId, listOf(kit, "skeleton"), lobby)
+            val bots = BotManager.startBotGame(def, 2, difficulty, map, listOf(kit, "skeleton"), lobby, setup.copy())
             if (bots.size < 2) { bots.forEach(BotManager::despawn); null }
             else Chase(bots[0], bots[1]).also { BotManager.brainOf(bots[1])?.passive = true }
         }
@@ -82,6 +98,7 @@ object BotChaseTest : KoinComponent {
         limitTicks = seconds.coerceIn(5, 120) * 20
         perPair = if (spot != null) 1 else samples.coerceIn(1, 200)
         this.seed = seed
+        kitId = kit
         label = "map=$mapId kit=$kit diff=${difficulty.name.lowercase()}"
         waited = 0
         task = Bukkit.getScheduler().runTaskTimer(plugin, Runnable { tick() }, 1L, 1L)
@@ -91,7 +108,7 @@ object BotChaseTest : KoinComponent {
     private fun tick() {
         try {
             pairs.forEach(::step)
-            if (pairs.any { it.game == null } && ++waited > 1200) {
+            if (pairs.any { it.game == null && !it.done } && ++waited > 1200) {
                 log("ABORT matches did not start within 60s")
                 pairs.filter { it.game == null }.forEach { it.done = true }
             }
@@ -161,7 +178,9 @@ object BotChaseTest : KoinComponent {
         val world = game.worldManager.getWorld() ?: run { pair.done = true; return }
         val at = Location(world.world, spot.x, spot.y, spot.z)
         // Start from the spawn point furthest away, so every chase crosses the map.
-        val start = world.data.spawnPoints.map { Location(world.world, it.x, it.y, it.z) }.maxByOrNull { it.distanceSquared(at) } ?: at
+        // (Every pair plays in its own copy of the arena: the same coordinates, in this pair's world.)
+        val start = spot.start?.let { Location(world.world, it.x, it.y, it.z) }
+            ?: world.data.spawnPoints.map { Location(world.world, it.x, it.y, it.z) }.maxByOrNull { it.distanceSquared(at) } ?: at
         game.teams.forEach { it.metadata["stocks"] = 4 }
         pair.dummy.teleport(at)
         pair.chaser.teleport(start)
@@ -199,14 +218,41 @@ object BotChaseTest : KoinComponent {
 
     /** Everywhere a fighter could stand: half the sample from planned cells, half from unplanned. */
     private fun survey(world: World, voidY: Int, spawns: List<Location>): List<Spot> {
-        val terrain = ArenaTerrain(world, voidY, true)
-        val roots = spawns.mapNotNull { terrain.at(it) }
-        val planned = LinkedHashSet<RouteNode>(roots)
-        val queue = ArrayDeque(roots)
-        while (queue.isNotEmpty() && planned.size < 40_000) {
-            for (edge in terrain.neighbours(queue.removeFirst())) if (planned.add(edge.node)) queue.addLast(edge.node)
+        /**
+         * Everything a graph gets to, and what it gets to from each spawn point on its own. A
+         * route is one-way in places (a long drop does not go back up), and some arenas have a
+         * spawn on a part the rest cannot get to: a spot is only a fair test of the chaser if it
+         * starts somewhere the spot can be reached from.
+         */
+        fun graph(of: ArenaTerrain): Pair<LinkedHashSet<RouteNode>, List<Set<RouteNode>>> {
+            val edges = HashMap<RouteNode, List<RouteNode>>()
+            val all = LinkedHashSet<RouteNode>()
+            val each = spawns.map { spawn ->
+                val root = of.at(spawn) ?: return@map emptySet<RouteNode>()
+                val seen = LinkedHashSet<RouteNode>()
+                seen += root
+                val todo = ArrayDeque<RouteNode>()
+                todo += root
+                while (todo.isNotEmpty() && seen.size < 60_000) {
+                    val at = todo.removeFirst()
+                    for (n in edges.getOrPut(at) { of.neighbours(at).map { it.node } }) if (seen.add(n)) todo.addLast(n)
+                }
+                all += seen
+                seen
+            }
+            return all to each
         }
-        val top = (spawns.maxOfOrNull { it.y } ?: 100.0) + 40
+        // What walking, hopping and a plain double jump get to, and what the chaser's kit gets to.
+        var began = System.nanoTime()
+        val (plain, plainFrom) = graph(ArenaTerrain(world, voidY, Mobility.JUMPER, leaping = false, loadChunks = true))
+        val plainMs = (System.nanoTime() - began) / 1_000_000
+        began = System.nanoTime()
+        val terrain = ArenaTerrain(world, voidY, Mobility.of(kitId, true), loadChunks = true)
+        val (planned, plannedFrom) = graph(terrain)
+        val plannedMs = (System.nanoTime() - began) / 1_000_000
+        val queue = ArrayDeque<RouteNode>()
+
+        val top = (spawns.maxOfOrNull { it.y } ?: 100.0) + 80
         val columns = HashMap<Pair<Int, Int>, List<RouteNode>>()
         fun column(x: Int, z: Int): List<RouteNode> = columns.getOrPut(x to z) {
             val found = ArrayList<RouteNode>()
@@ -245,17 +291,61 @@ object BotChaseTest : KoinComponent {
             }
         }
         val unplanned = reachable.filter { it !in planned }
-        log("SURVEY $label planned=${planned.size} reachableByPlayers=${reachable.size} unplanned=${unplanned.size}")
+        val leap = planned.filter { it !in plain }
+        log("SURVEY $label planned=${planned.size} reachableByPlayers=${reachable.size} unplanned=${unplanned.size} leap=${leap.size} graphMs=$plainMs/$plannedMs")
         val random = Random(seed)
+        // Why the planner has no way to what is left: the easiest hop a player could make there.
+        if (unplanned.isNotEmpty()) {
+            val why = HashMap<String, Int>()
+            val example = HashMap<String, RouteNode>()
+            for (b in unplanned.shuffled(Random(7)).take(250)) {
+                var best: RouteNode? = null
+                var bestDist = Double.MAX_VALUE
+                for (dx in -7..7) for (dz in -7..7) {
+                    val dist = hypot(dx.toDouble(), dz.toDouble())
+                    if ((dx == 0 && dz == 0) || dist > 7.0 || dist >= bestDist) continue
+                    for (a in column(b.x + dx, b.z + dz)) {
+                        if (a !in planned || b.y > a.y + 4.5 || b.y < a.y - 40) continue
+                        if (arc(a, b)) { best = a; bestDist = dist; break }
+                    }
+                }
+                val from = best
+                val key = if (from == null) "chain" else {
+                    val dy = b.y - from.y
+                    val across = when { bestDist <= 1.5 -> "beside"; bestDist <= 5.0 -> "to5"; bestDist <= 6.0 -> "to6"; else -> "to7" }
+                    val height = when { dy < -3 -> "drop"; dy <= 1.25 -> "level"; dy <= 4.0 -> "up"; else -> "up4+" }
+                    "$across/$height"
+                }
+                why.merge(key, 1, Int::plus)
+                if (example.putIfAbsent(key, b) == null && from != null) {
+                    // The hop itself, and what stands in the columns from one end of it to the other.
+                    val n = max(abs(b.x - from.x), abs(b.z - from.z)).coerceAtLeast(1)
+                    log("SURVEY-HOP $key from ${from.x},${"%.2f".format(from.y)},${from.z} to ${b.x},${"%.2f".format(b.y)},${b.z} edges=" +
+                        terrain.neighbours(from).joinToString(";") { "${it.node.x},${"%.1f".format(it.node.y)},${it.node.z}${if (it.jump) "j" else ""}" })
+                    for (i in 0..n) {
+                        val x = from.x + ((b.x - from.x) * i.toDouble() / n).roundToInt()
+                        val z = from.z + ((b.z - from.z) * i.toDouble() / n).roundToInt()
+                        log("SURVEY-COL $x,$z: ${terrain.describe(x, z)}")
+                    }
+                }
+            }
+            log("SURVEY-WHY $label " + why.entries.sortedByDescending { it.value }.joinToString(" ") {
+                "${it.key}=${it.value}@${example[it.key]?.let { n -> "${n.x},${"%.1f".format(n.y)},${n.z}" }}" })
+        }
         val total = perPair * pairs.size
         val wantUnplanned = if (unplanned.isEmpty()) 0 else total / 4
+        val wantLeap = if (leap.isEmpty()) 0 else total / 4
         fun spots(from: List<RouteNode>, count: Int, kind: String) = from.shuffled(random).take(count).map { n ->
             // One in three stands at the lip of its block, the way a hiding player hugs an edge.
             val (ox, oz) = if (random.nextInt(3) == 0) listOf(0.58 to 0.0, -0.58 to 0.0, 0.0 to 0.58, 0.0 to -0.58).random(random) else 0.0 to 0.0
             val x = n.x + .5 + ox
             val z = n.z + .5 + oz
-            if (abs(ox) + abs(oz) > 0 && !terrain.clear(x, n.y, z)) Spot(n.x + .5, n.y, n.z + .5, kind) else Spot(x, n.y, z, kind)
+            // The far side of the map, among the spawn points this spot can be got to from.
+            val reach = when (kind) { "planned" -> plainFrom; "leap" -> plannedFrom; else -> null }
+            val start = reach?.let { sets -> spawns.filterIndexed { i, _ -> n in sets[i] }.maxByOrNull { hypot(it.x - x, it.z - z) } }
+            if (abs(ox) + abs(oz) > 0 && !terrain.clear(x, n.y, z)) Spot(n.x + .5, n.y, n.z + .5, kind, start) else Spot(x, n.y, z, kind, start)
         }
-        return (spots(planned.toList(), total - wantUnplanned, "planned") + spots(unplanned, wantUnplanned, "unplanned")).shuffled(random)
+        return (spots(planned.filter { it in plain }, total - wantUnplanned - wantLeap, "planned") + spots(leap, wantLeap, "leap") +
+            spots(unplanned, wantUnplanned, "unplanned")).shuffled(random)
     }
 }
