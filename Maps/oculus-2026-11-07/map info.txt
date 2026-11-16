@@ -1,0 +1,3 @@
+size: small
+new map: yes
+icon: obsidian

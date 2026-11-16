@@ -1,0 +1,3 @@
+size: small
+new map: yes
+icon: white stained glass

@@ -1,0 +1,3 @@
+size: medium
+new map: no
+icon: cracked stone brick

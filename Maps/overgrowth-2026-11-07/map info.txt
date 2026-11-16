@@ -1,0 +1,3 @@
+size: large
+new map: yes
+icon: lime clay block hardened

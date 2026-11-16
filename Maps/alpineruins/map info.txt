@@ -1,0 +1,3 @@
+size: large
+new map: no
+icon: spruce log block

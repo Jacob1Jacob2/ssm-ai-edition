@@ -1,0 +1,11 @@
+#These settings are shared across an entire server.  If multiworld is enabled, they act as the default values for the individual world properties; otherwise, they are used directly.
+#Fri Feb 17 02:05:37 CET 2023
+Messages.enableAll=true
+Messages.REMOVE_ENTITY=false
+Messages.PLUGIN_CHANNEL_MESSAGE=false
+Messages.INFO=true
+LinkedWorlds=
+ServerName=clans.mineplex.com
+LastSaved=1676595937519
+Messages.ON_WORLD_LOAD=false
+Messages.SAVING=true
