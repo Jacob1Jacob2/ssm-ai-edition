@@ -1,0 +1,4 @@
+size: large
+new map: yes
+icon: iron block
+plateless markers: -7 70 -87, 8 70 -87, -7 73 -77, 8 73 -77

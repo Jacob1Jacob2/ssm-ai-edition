@@ -1,0 +1,3 @@
+size: medium
+new map: no
+icon: dirt grass block savanna colored

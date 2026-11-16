@@ -1,0 +1,3 @@
+size: medium
+new map: no
+icon: gray hardened block or terracotta whatever its called
