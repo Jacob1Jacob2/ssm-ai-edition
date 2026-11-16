@@ -53,7 +53,7 @@ object KitPresentation : KoinComponent {
 
     fun equipPreview(player: Player, kit: KitDef) {
         kit.abilities.forEach { entry ->
-            data.getAbility(entry.id)?.let { player.inventory.setItem(it.itemSlot, abilityItem(kit.id, it.id, true)) }
+            data.getAbility(entry.id)?.let { player.inventory.setItem(it.itemSlot, KitStatsService.dress(player, kit.id, abilityItem(kit.id, it.id, true))) }
         }
         kit.passives.firstOrNull { it.id == "arrow_recharge" }?.let { entry ->
             val defaults = data.getPassive(entry.id)?.metadata

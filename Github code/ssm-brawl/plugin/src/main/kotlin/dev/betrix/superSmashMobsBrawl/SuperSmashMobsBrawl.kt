@@ -90,6 +90,7 @@ class SuperSmashMobsBrawl : SuspendingJavaPlugin(), KoinComponent {
         ComboTrackerService.setup()
         HotbarService.setup()
         runCatching { GameSetupService.setup() }.onFailure { logger.warning("Game setups not loaded: ${it.message}") }
+        runCatching { dev.betrix.superSmashMobsBrawl.services.KitStatsService.setup() }.onFailure { logger.warning("Kit stats not loaded: ${it.message}") }
         ScoreboardService.setup()
         CombatLogService.setup()
         dev.betrix.superSmashMobsBrawl.smash.SmashService.setup()

@@ -54,13 +54,13 @@ open class BrawlKit(val id: String, val player: Player) : KoinComponent {
     private fun fuel() = getPassive("fuel_the_fire") as? FuelTheFirePassive
     fun getArmor(): Double {
         val kitArmor = if(dev.betrix.superSmashMobsBrawl.smash.SmashService.has(player,"pig:3") && player.health<10) 10.0 else (if (dev.betrix.superSmashMobsBrawl.smash.SmashService.has(player,"pig:3")) 7.5 else if ((getPassive("nether_pig") as? NetherPigPassive)?.active==true) 7.5 else if (dev.betrix.superSmashMobsBrawl.smash.SmashService.has(player,"villager:3")) 7.5 else art()?.armor ?: kitData.armor) + (fuel()?.armorBonus ?: 0.0) + (dev.betrix.superSmashMobsBrawl.smash.SmashService.session(player)?.armorBonus() ?: 0.0)
-        return kitArmor + dev.betrix.superSmashMobsBrawl.items.DiamondHelmet.armorBonus(player)
+        return kitArmor + dev.betrix.superSmashMobsBrawl.items.DiamondHelmet.armorBonus(player) + dev.betrix.superSmashMobsBrawl.services.KitStatsService.armorBonus(player, kitData)
     }
 
     fun getHurtSound(): org.bukkit.Sound = kitData.hurtSound ?: org.bukkit.Sound.ENTITY_PLAYER_HURT
 
     fun getMeleeDamage(): Double = (if(dev.betrix.superSmashMobsBrawl.smash.SmashService.has(player,"villager:3")) 7.0 else art()?.damage ?: kitData.meleeDamage) +
-        (if ((getAbility("goated_ram") as? GoatedRamAbility)?.boosted == true) 1.0 else 0.0) + ((getPassive("ravage") as? RavagePassive)?.bonus() ?: 0.0) + (fuel()?.stacks ?: 0) + (dev.betrix.superSmashMobsBrawl.smash.SmashService.session(player)?.meleeBonus() ?: 0.0)
+        (if ((getAbility("goated_ram") as? GoatedRamAbility)?.boosted == true) 1.0 else 0.0) + ((getPassive("ravage") as? RavagePassive)?.bonus() ?: 0.0) + (fuel()?.stacks ?: 0) + (dev.betrix.superSmashMobsBrawl.smash.SmashService.session(player)?.meleeBonus() ?: 0.0) + dev.betrix.superSmashMobsBrawl.services.KitStatsService.damageBonus(player, kitData)
 
     fun getOutgoingKnockbackMultiplier(): Double = (if ((getAbility("goated_ram") as? GoatedRamAbility)?.boosted == true) 1.6 else 1.0) * (if (dev.betrix.superSmashMobsBrawl.smash.SmashService.has(player,"villager:1")) 1.3 else 1.0) * if (art() == VillagerArt.BUTCHER && !dev.betrix.superSmashMobsBrawl.smash.SmashService.has(player,"villager:3")) 0.75 else 1.0
 
@@ -87,6 +87,7 @@ open class BrawlKit(val id: String, val player: Player) : KoinComponent {
     }
 
     open fun setup() {
+        dev.betrix.superSmashMobsBrawl.services.KitStatsService.wear(player, kitData.id)
         disguise = kitData.disguiseId?.let { BrawlDisguiseFactory.create(player, it) }
         if (kitData.disguiseId != null && disguise == null) {
             logger.severe("No disguise known with id ${kitData.disguiseId}")

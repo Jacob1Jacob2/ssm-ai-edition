@@ -95,10 +95,16 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
         private val lol = voice.lol
         private val names = HashMap<UUID, String>()
         private val myKit get() = BotSlang.kit(bot.kit)
-        private val salty get() = personality == BotPersonality.SALTY
-
-        private fun say(pool: String, salty: List<String>, chill: List<String>) =
-            pick(pool, if (this.salty) salty else chill, personality)
+        /**
+         * One line from the pool for this bot's personality. A Salty bot (the complainer) uses its
+         * own wording where it has one and otherwise sounds like a Toxic one.
+         */
+        private fun say(pool: String, toxic: List<String>, chill: List<String>, salty: List<String>? = null) =
+            pick(pool, when (personality) {
+                BotPersonality.CHILL -> chill
+                BotPersonality.SALTY -> salty ?: toxic
+                else -> toxic
+            }, personality)
 
         /** Name, nickname or kit, chosen once so a line never calls the same person two things. */
         fun ref(f: BotDialogue.Fighter): String = names.getOrPut(f.id) {
@@ -125,7 +131,9 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
                 listOf("gl", "yo", "lets go", "gl dont camp", "no campers this round pls", "pls actually fight this time",
                     "first one to camp gets reported $lol", "gl no hiding") +
                     if (kit != null) listOf("ugh $kit", "ofc theres a $kit", "$kit huh") else emptyList(),
-                listOf("gl", "glhf", "gl all", "hf", "yo gl", "lets go", "gl everyone"))
+                listOf("gl", "glhf", "gl all", "hf", "yo gl", "lets go", "gl everyone"),
+                listOf("gl i guess", "pls no campers this time", "watch me get targeted first again", "bet i get the worst spawn",
+                    "if i lag again im done", "pls let me have one good game", "everyone goes for me first watch"))
         }
 
         fun killed(victim: BotDialogue.Fighter, ability: String): String? {
@@ -134,21 +142,28 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
             val withMove = if (named(ability)) listOf("$a too strong for u $v?", "$bro walked right into $a", "$a diff") else emptyList()
             return if (out) say("kill.out",
                 listOf("ez", "ez $v", "$v is out $lol", "bye $v", "sit down $v", "gg $v ur done", "gg ez $v", "that was free", "ez / next"),
-                listOf("gg $v", "gf $v", "wp $v", "gg that was close", "gf"))
+                listOf("gg $v", "gf $v", "wp $v", "gg that was close", "gf"),
+                listOf("finally", "about time $v", "took way too long", "ok finally one goes my way", "finally $v is out", "thank god"))
             else say("kill",
                 listOf("ez", "ez $v", "ezz", "get rekt", "$v down to $left $lol", "get good $v", "skill issue", "thats $left left $v",
                     "u good $v? $lol", "free", "sit $v", "too ez", "$v $left lives left keep talking", "ez / skill issue") + withMove,
                 listOf("gf", "nice fight $v", "got u $lol", "gf $v", "close one", "wp") +
-                    if (named(ability)) listOf("that $a finally hit $lol") else emptyList())
+                    if (named(ability)) listOf("that $a finally hit $lol") else emptyList(),
+                listOf("finally", "about time", "finally a hit registers", "see when the game actually works", "took like 5 tries",
+                    "ok finally", "one thing goes right for once", "$v still has $left tho ugh") +
+                    if (named(ability)) listOf("finally $a hits something", "$a actually worked for once") else emptyList())
         }
 
         fun diedTo(killer: BotDialogue.Fighter?, ability: String, killerSpams: Boolean): String? {
             val a = move(ability)
             if (killer == null) return if (ability == "Void") say("death.void",
                 listOf("wtf", "i fell $lol", "bruh i slipped", "nah the void", "my double jump didnt work", "lag", "$bro i missed the jump"),
-                listOf("oops", "whoops fell off", "lol i fell", "missed that jump"))
+                listOf("oops", "whoops fell off", "lol i fell", "missed that jump"),
+                listOf("are u kidding me", "i pressed jump", "my jump didnt go off again", "this map is so bad", "this game hates me",
+                    "nah im so done", "ofc i fall", "why is the edge right there", "i hate this map"))
             else (if (ability == "the environment") "the map" else a).let { what ->
-                say("death.map", listOf("wtf was that", "died to $what $lol", "bruh", "nah $what got me"), listOf("oops", "rip", "lol $what got me"))
+                say("death.map", listOf("wtf was that", "died to $what $lol", "bruh", "nah $what got me"), listOf("oops", "rip", "lol $what got me"),
+                    listOf("ofc", "are u kidding", "why does $what even exist", "this map is so bad", "i cant even walk around without dying"))
             }
             val k = ref(killer)
             val withMove = if (named(ability)) listOf("$a is so bs", "nah that $a is broken", "ofc $a", "one $a and hes cocky", "how did that $a hit") else emptyList()
@@ -157,14 +172,22 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
                 listOf("wtf", "bs", "how did that hit", "ok $k", "$bro what", "lucky", "$k got lucky", "ok that was bs", "im lagging",
                     "that hitbox $lol", "whatever", "bruh", "??", "wtf / how") + withMove + spam,
                 listOf("gf", "ok that was clean", "u got me $lol", "nice one", "wp $k", "oof") +
-                    if (named(ability)) listOf("nice $a $k") else emptyList())
+                    if (named(ability)) listOf("nice $a $k") else emptyList(),
+                listOf("are u kidding", "every time", "im so done", "this is so unfair", "why is it always me", "i cant do anything",
+                    "i was one hit off", "nothing i do works", "i had u $k", "my $myKit does nothing", "this kit is so bad", "ofc i die",
+                    "i cant even play", "omg", "why do i even try", "are u kidding / i was one hit off", "im so done / every single time") +
+                    (if (named(ability)) listOf("$a again really", "im so sick of $a", "$a needs a nerf", "how do u even dodge $a",
+                        "i cant do anything about $a") else emptyList()) +
+                    if (killerSpams && named(ability)) listOf("$k just spams $a its not fair", "all i ever see is $a") else emptyList())
         }
 
         fun crystal(holder: BotDialogue.Fighter, tier: String): String? {
             val n = ref(holder); val t = tier.lowercase()
             return say("crystal",
                 listOf("ofc $n gets the crystal", "$n with a crystal great", "run", "oh no", "everyone run $lol", "$bro who let $n get that", "not the $t"),
-                listOf("$n has a crystal watch out", "uh oh $n got the $t", "nice grab $n", "careful $n has smash"))
+                listOf("$n has a crystal watch out", "uh oh $n got the $t", "nice grab $n", "careful $n has smash"),
+                listOf("ofc i never get the crystal", "why does $n always get it", "i was right there", "great now im dead",
+                    "that crystal spawned on $n i swear", "i never get a smash", "and $n gets the $t ofc"))
         }
 
         fun spam(spammer: BotDialogue.Fighter, ability: String, count: Int): String? {
@@ -172,7 +195,9 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
             return say("spam",
                 listOf("$n stop spamming $a", "$count ${a}s in a row $lol", "$n only has one button", "its just $a over and over", "all $n does is $a",
                     "$bro learn another move", "spam $a more $n", "$a $a $a", "wow $n big skill", "sit and spam $a", "press something else $n"),
-                listOf("thats a lot of $a $n $lol", "$n loves that $a", "ok $n i see the $a plan", "$a again $lol"))
+                listOf("thats a lot of $a $n $lol", "$n loves that $a", "ok $n i see the $a plan", "$a again $lol"),
+                listOf("$n pls stop with the $a", "i cant move without getting hit by $a", "$count ${a}s how is that fair", "$a is so annoying",
+                    "im so tired of $a", "can u use anything else $n", "i cant even get close bc of $a", "$a every 2 seconds im done"))
         }
 
         /** [height] is 1 when the camper is above this bot, -1 below, 0 level. [level] rises each time they are called out. */
@@ -187,23 +212,31 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
                 return say("hold.spam",
                     listOf("$n just sits $where spamming $a", "sit and spam $a", "camp and $a thats the whole strat", "all $n does is hide and $a",
                         "$a spam from $where wow", "big skill $n", "hide spam $a repeat $lol", "$n $come and stop spamming $a"),
-                    listOf("$n u been $where using $a for a while $lol", "that $a from $where is annoying ngl", "$come and fight up close $n"))
+                    listOf("$n u been $where using $a for a while $lol", "that $a from $where is annoying ngl", "$come and fight up close $n"),
+                    listOf("i cant even get to $n and i keep getting hit by $a", "$a from $where is so unfair", "how am i supposed to fight that",
+                        "$n pls $come im so sick of $a", "i cant do anything about $a from $where"))
             }
             return when (level) {
                 0 -> say("hold.0",
                     listOf("$n come fight", "$n $come", "$bro $come", "$n stop hiding", "u gonna fight or what $n", "$n is hiding $lol",
                         "$n stop running", "fight me $n", "why is $n just standing $where"),
-                    listOf("$n $come lets fight", "come fight $n", "where u hiding $n $lol"))
+                    listOf("$n $come lets fight", "come fight $n", "where u hiding $n $lol"),
+                    listOf("$n pls just fight", "i cant reach $n", "how am i supposed to get $where", "why does $n get to hide",
+                        "$n $come pls", "i cant hit anything $where"))
                 1 -> say("hold.1",
                     listOf("$n has been $where for ${seconds}s", "$n is camping", "hes just camping", "$bro is camping $where $lol",
                         "aint no way ur having fun $n", "actually play the game $n", "$n playing hide n seek", "imagine camping $lol",
                         "this $kit just camps", "$n scared?", "whats the point $n", "${seconds}s in the same spot $lol", "$n just sits $where"),
-                    listOf("nice spot $n", "ok i cant reach u $where $lol", "$n found a good spot", "how do i get $where"))
+                    listOf("nice spot $n", "ok i cant reach u $where $lol", "$n found a good spot", "how do i get $where"),
+                    listOf("ive been trying to hit $n for ${seconds}s", "this is so annoying", "why does everyone camp against me",
+                        "i cant get $where its not fair", "${seconds}s and i cant touch $n", "this isnt even fun anymore", "my $myKit cant reach $where"))
                 else -> say("hold.2",
                     listOf("ok im not chasing u $n", "whatever have fun camping", "so boring", "$n still $where $lol", "hes not gonna come out",
                         "im just gonna wait", "camp harder $n", "wake me up when $n moves", "reported for stalling $lol", "still camping", "yawn",
                         "$bro u have ${camper.lives} lives and ur hiding"),
-                    listOf("ill wait here then", "ur safe $where i guess $lol", "ok u win that spot", "coming for u eventually $n"))
+                    listOf("ill wait here then", "ur safe $where i guess $lol", "ok u win that spot", "coming for u eventually $n"),
+                    listOf("im so bored", "i give up", "whats even the point", "ok i quit chasing $n", "this game is so boring like this",
+                        "$n still $where im done", "i hate this"))
             }
         }
 
@@ -213,39 +246,52 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
                 listOf("wtf", "wtf $n", "$hits hits in a sec??", "hacks", "$n is hacking", "nah thats hacks", "reach", "$bro has reach", "reported",
                     "$n reported", "how is $n not banned", "turn it off $n", "aint no way thats legit", "recording this", "ok hacker",
                     "kill aura $lol", "nobody hits that fast", "sus", "$n lagging or hacking??", "nice client $n", "wtf / $n is hacking", "?? / reported"),
-                listOf("nice combo $n", "wow $n", "that combo tho", "ok that was clean", "$n is cracked", "sheesh", "how did u do that $lol", "teach me that $n"))
+                listOf("nice combo $n", "wow $n", "that combo tho", "ok that was clean", "$n is cracked", "sheesh", "how did u do that $lol", "teach me that $n"),
+                listOf("how do i even fight that", "i couldnt even move", "$hits hits and i cant do anything", "that is so unfair",
+                    "i got no time to react", "i was stuck", "why cant i ever do that", "my screen froze", "i cant even hit back",
+                    "omg $n", "what am i supposed to do there", "i couldnt move / $hits hits in a sec"))
         }
 
         fun retreat(threat: BotDialogue.Fighter?): String? {
-            val t = threat?.let(::ref) ?: return say("retreat.alone", listOf("im low", "one sec", "im one hit"), listOf("im low one sec", "need a sec"))
+            val t = threat?.let(::ref) ?: return say("retreat.alone", listOf("im low", "one sec", "im one hit"), listOf("im low one sec", "need a sec"),
+                listOf("im always low", "im one hit again", "i cant get one second to heal"))
             return say("retreat",
                 listOf("$t chill", "im one hit", "stop chasing me $t", "$bro im low", "ofc $t targets me when im low", "leave me alone $lol",
                     "one sec", "go fight someone else $t", "why me"),
-                listOf("im low one sec", "brb healing $lol", "need a sec", "ok ok backing off", "u almost got me $t"))
+                listOf("im low one sec", "brb healing $lol", "need a sec", "ok ok backing off", "u almost got me $t"),
+                listOf("why is it always me $t", "$t pls go hit someone else", "i cant get one second", "everyone targets me",
+                    "im one hit leave me alone", "ofc im the one getting chased", "can i heal for once", "$t pls"))
         }
 
         fun status(leader: BotDialogue.Fighter): String? {
             val n = ref(leader)
             return say("status", listOf("$n still has ${leader.lives} lives", "$n is winning somehow", "${leader.lives} lives $n?? ok"),
-                listOf("$n is up with ${leader.lives} lives", "$n leading rn with ${leader.lives}"))
+                listOf("$n is up with ${leader.lives} lives", "$n leading rn with ${leader.lives}"),
+                listOf("how does $n still have ${leader.lives} lives", "$n has ${leader.lives} lives its so over", "nobody ever hits $n"))
         }
 
-        fun won(): String? = say("won", listOf("gg ez", "ez", "ggez", "gg", "too ez", "ez game", "gg get good"), listOf("gg", "gg all", "ggs", "gg wp", "that was fun gg"))
+        fun won(): String? = say("won", listOf("gg ez", "ez", "ggez", "gg", "too ez", "ez game", "gg get good"), listOf("gg", "gg all", "ggs", "gg wp", "that was fun gg"),
+            listOf("finally", "gg finally", "about time i won one", "gg that was stressful", "ok finally a win"))
 
         fun lost(winner: BotDialogue.Fighter, camped: Boolean): String? {
             val w = ref(winner)
             return say("lost",
                 listOf("gg", "gg i guess", "ok $w", "whatever gg", "$w got lucky", "rematch", "run it back", "bs game") +
                     if (camped) listOf("gg $w nice camping", "camped the whole game and won gg") else emptyList(),
-                listOf("gg $w", "gg wp", "wp $w", "ggs", "gg that was close"))
+                listOf("gg $w", "gg wp", "wp $w", "ggs", "gg that was close"),
+                listOf("gg i guess", "ofc", "i never win", "this game hates me", "gg whatever i had the worst luck", "i was lagging the whole game",
+                    "everyone targeted me all game", "i hate this kit", "im done") +
+                    if (camped) listOf("$w camped all game ofc", "cant win when $w hides the whole time") else emptyList())
         }
 
         /** A second bot backing up what another bot just said. */
         fun agree(about: String): String? = when (about) {
             "hold" -> say("agree.hold", listOf("fr", "fr fr", "real", "ikr", "just ignore him", "let him camp $lol", "so annoying", "$bro fr", "facts"),
-                listOf("lol", "its a good spot tbh", "fr", "lets go get him"))
-            "burst" -> say("agree.burst", listOf("fr", "i saw that", "yea thats sus", "sus", "reported too"), listOf("that was clean", "cracked", "fr"))
-            else -> say("agree.kill", listOf("rip", "f", "lol", "oof"), listOf("rip", "f", "oof", "gf"))
+                listOf("lol", "its a good spot tbh", "fr", "lets go get him"),
+                listOf("fr its so annoying", "ikr i cant reach either", "same", "fr im so sick of it", "every game"))
+            "burst" -> say("agree.burst", listOf("fr", "i saw that", "yea thats sus", "sus", "reported too"), listOf("that was clean", "cracked", "fr"),
+                listOf("same thing happened to me", "fr its not fair", "ikr u cant do anything"))
+            else -> say("agree.kill", listOf("rip", "f", "lol", "oof"), listOf("rip", "f", "oof", "gf"), listOf("rip", "f", "thatll be me next", "oof"))
         }
 
         // ------------------------------------------------------------ bots talking to each other
@@ -280,7 +326,17 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
             }
             return say("comeback.$about",
                 listOf("shut up $n", "ok $n", "nobody asked $n", "$n talks so much", "1v1 me then $n", "cry", "$bro shut up $lol", "keep typing $n") + score + heated,
-                listOf("lol ok $n", "relax $n its a game", "all good $n", "its not that serious $n $lol") + easygoing)
+                listOf("lol ok $n", "relax $n its a game", "all good $n", "its not that serious $n $lol") + easygoing,
+                listOf("leave me alone $n", "why is everyone on me", "ok i get it $n", "u dont have to rub it in", "wow thx $n",
+                    "it wasnt even my fault", "stop $n im already mad", "omg $n stop") + when (about) {
+                    "kill" -> listOf("u got lucky and u know it", "i was already low $n", "i was fighting 2 ppl", "i had no jump left")
+                    "hold", "spam" -> listOf("what else am i supposed to do", "its the only thing that works for me", "im not camping i just keep dying",
+                        "every time i go in i die $n")
+                    "burst" -> listOf("im not hacking i finally hit something", "the one time i land a combo", "so im not allowed to hit u")
+                    "death" -> listOf("so im not allowed to hit u", "u do it to me all game", "ok sorry for playing", "now u know how it feels")
+                    "retreat" -> listOf("u chased me all game", "now u know how it feels", "nobody lets me heal either")
+                    else -> emptyList()
+                })
         }
 
         /** A chill bot sticking up for [victim] (or just telling [bully] to calm down) after a salty line. */
@@ -303,7 +359,7 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
             val d = ref(defender)
             return pick("rebuke", listOf("nobody asked $d", "ok $d", "$d stay out of it", "who asked", "$d defending everyone $lol", "ur next $d",
                 "$d u have ${defender.lives} lives worry about that", "im not mad", "not mad just right", "ok so ur teaming with them", "$bro who asked"),
-                BotPersonality.SALTY)
+                BotPersonality.TOXIC)
         }
 
         /** A chill bot suggesting everyone goes after [bully] first. */
@@ -328,7 +384,7 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
 
         /** The salty bot finding [count] fighters have turned on it. */
         fun ganged(count: Int): String? = pick("ganged", listOf("teaming?? ok", "yall teaming is crazy", "${count}v1 nice", "wow ${count}v1 so brave",
-            "reported for teaming $lol", "need $count of u to beat me $lol", "ok all of u come then", "teamers $lol"), BotPersonality.SALTY)
+            "reported for teaming $lol", "need $count of u to beat me $lol", "ok all of u come then", "teamers $lol"), BotPersonality.TOXIC)
 
         /** A salty bot annoyed that [nice] is being friendly about a fight. */
         fun sneer(nice: BotDialogue.Fighter, about: String): String? {
@@ -340,7 +396,7 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
                 else -> listOf("gf?? ok", "less gf more fighting")
             }
             return pick("sneer.$about", listOf("stop being nice $n its a fight", "$n complimenting the enemy $lol", "why r u so nice $n",
-                "$n is too friendly", "nobody says that $n $lol") + topic, BotPersonality.SALTY)
+                "$n is too friendly", "nobody says that $n $lol") + topic, BotPersonality.TOXIC)
         }
 
         /** A chill bot not taking the bait. */
@@ -350,12 +406,61 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
                 "$n needs a snack $lol"), BotPersonality.CHILL)
         }
 
+        /** A toxic bot going after [whiner], who just complained: it wants them madder. [mine] is true when this bot killed them. */
+        fun needle(whiner: BotDialogue.Fighter, about: String, mine: Boolean): String? {
+            val n = ref(whiner)
+            val topic = when (about) {
+                "death" -> listOf("u died bc ur bad $n", "nothing is ever ur fault huh $n", "its not the game its u $n") +
+                    if (mine) listOf("ez", "ez $n", "ez / stay mad", "that was so free $n", "u make it too ez $n") else emptyList()
+                "hold", "spam" -> listOf("then go hit them $n", "u cant reach bc ur slow", "sounds like a u problem $n")
+                "burst" -> listOf("its called a combo $n", "u stood still and got hit $lol", "learn to dodge $n")
+                "retreat" -> listOf("run $n run $lol", "$n running again", "low again $n? $lol")
+                else -> emptyList()
+            }
+            return pick("needle.$about", listOf("cry more $n", "$n is so mad $lol", "$n always whining", "stay mad $n", "skill issue $n",
+                "excuses $lol", "$n complaining again", "u complain more than u fight $n", "someone get $n a tissue $lol", "mad?",
+                "$n types more than $n hits") + topic, BotPersonality.TOXIC)
+        }
+
+        /** The salty bot losing it at [heckler] and going after them. */
+        fun snap(heckler: BotDialogue.Fighter): String? {
+            val n = ref(heckler)
+            return pick("snap", listOf("shut up $n", "im so sick of u $n", "ok thats it $n", "$n ur dead", "im coming for u $n", "say that again $n",
+                "u wont be laughing in a sec $n", "ok $n ur first", "omg shut up $n", "i swear $n ur next", "shut up / im coming for u $n",
+                "$n i am so done with u"), BotPersonality.SALTY)
+        }
+
+        /** The toxic bot loving that [angry] took the bait. */
+        fun taunt(angry: BotDialogue.Fighter): String? {
+            val n = ref(angry)
+            return pick("taunt", listOf("come then $lol", "ok come get me $n", "im so scared $lol", "u cant even hit me $n", "$n so mad $lol",
+                "bet", "pull up then $n", "ur gonna lose that too $n", "aw $n is mad", "come die again $n"), BotPersonality.TOXIC)
+        }
+
+        /** A chill bot trying to cheer [sad] up after a complaint. */
+        fun console(sad: BotDialogue.Fighter): String? {
+            val n = ref(sad)
+            return pick("console", listOf("its ok $n", "unlucky $n", "u got this $n", "happens to everyone $n", "ur doing fine $n",
+                "that was unlucky ngl", "next one $n", "dont worry about it $n", "it was close tho $n"), BotPersonality.CHILL)
+        }
+
+        /** The salty bot not really cheered up by [kind]. */
+        fun grumble(kind: BotDialogue.Fighter): String? {
+            val n = ref(kind)
+            return pick("grumble", listOf("thx i guess", "easy for u to say", "ya ya", "im still mad", "doesnt help $n", "ok but its still bs",
+                "u have ${kind.lives} lives ofc ur fine", "ty $n but im so done"), BotPersonality.SALTY)
+        }
+
+        /** One salty bot recognising another's pain. */
+        fun sameHere(): String? = pick("samehere", listOf("same", "fr this game", "ikr im so done too", "happens to me every time",
+            "fr nothing works", "literally me all game", "at least its not just me"), BotPersonality.SALTY)
+
         /** A salty bystander laughing at another bot's excuse for dying. [fell] is true when it fell off the map. */
         fun mock(dead: BotDialogue.Fighter, fell: Boolean): String? {
             val n = ref(dead)
             return pick("mock", listOf("skill issue", "$lol", "nice one $n", "sure $n", "excuses", "$n always has an excuse") +
                 if (fell) listOf("nice jump $n", "u fell $lol", "lag sure $lol", "void diff") else listOf("get good $n", "u got outplayed $n"),
-                BotPersonality.SALTY)
+                BotPersonality.TOXIC)
         }
 
         // ------------------------------------------------------------ answering chat

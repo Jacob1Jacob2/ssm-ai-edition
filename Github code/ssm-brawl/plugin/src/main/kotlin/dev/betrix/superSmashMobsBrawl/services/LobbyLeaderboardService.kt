@@ -86,7 +86,10 @@ object LobbyLeaderboardService {
     }
 
     fun recordVictory(matchId: String, winners: List<OfflinePlayer>) {
-        val identities = winners.map { winner ->
+        // A win with a Buffed kit (Change Kit Stats) is not a leaderboard win.
+        val fair = winners.filter { KitStatsService.countsForLeaderboard(it.uniqueId) }
+        if (fair.isEmpty()) return
+        val identities = fair.map { winner ->
             val bot = winner.player?.let(BotManager::profileOf)
             val name = bot?.name ?: winner.name ?: winner.uniqueId.toString()
             WinIdentity(winner.uniqueId.toString(), name, bot != null,
@@ -106,6 +109,7 @@ object LobbyLeaderboardService {
     }
 
     fun recordKill(player: Player) {
+        if (!KitStatsService.countsForLeaderboard(player.uniqueId)) return
         val bot = BotManager.profileOf(player)
         val identity = WinIdentity(player.uniqueId.toString(), bot?.name ?: player.name, bot != null,
             bot?.rank ?: if (player.name.equals("Jacob1Jacob2", true)) "god" else "none")

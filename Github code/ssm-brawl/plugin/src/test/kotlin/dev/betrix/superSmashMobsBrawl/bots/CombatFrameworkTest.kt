@@ -16,7 +16,7 @@ class CombatFrameworkTest : StringSpec({
     val bot = BotDialogue.Fighter(UUID(0,2), "Dino", "Guardian", 3, true)
     val other = BotDialogue.Fighter(UUID(0,3), "Fox", "Creeper", 2, true)
     val facts = listOf(human, bot, other)
-    class Match(mode: BotPersonality = BotPersonality.SALTY) {
+    class Match(mode: BotPersonality = BotPersonality.TOXIC) {
         val bus = CombatEventBus()
         val dialogue = BotDialogue(Random(2), LineMemory(), 1.0).also { it.mode = mode }
         init { CombatChatBridge(bus, dialogue) { it == bot.id || it == other.id } }
@@ -128,7 +128,7 @@ class CombatFrameworkTest : StringSpec({
     }
     "a bot says ez after its own kill" {
         val lines = (0..40).mapNotNull { seed ->
-            val bus = CombatEventBus(); val d = BotDialogue(Random(seed), LineMemory(), 1.0).also { it.mode = BotPersonality.SALTY }
+            val bus = CombatEventBus(); val d = BotDialogue(Random(seed), LineMemory(), 1.0).also { it.mode = BotPersonality.TOXIC }
             CombatChatBridge(bus, d) { it == bot.id }
             bus.publish(FighterDied(human.id, bot.id, "Target Laser", 1000))
             d.poll(5000, facts) { a, b -> a != b }?.also { it.speaker shouldBe bot.id }?.text
@@ -149,7 +149,7 @@ class CombatFrameworkTest : StringSpec({
         val banned = listOf("mom", "gay", "kys", "retard", "fat", "touched")
         val said = mutableListOf<String>()
         for (seed in 0..60) {
-            val bus = CombatEventBus(); val d = BotDialogue(Random(seed), LineMemory(), 1.0).also { it.mode = BotPersonality.SALTY }
+            val bus = CombatEventBus(); val d = BotDialogue(Random(seed), LineMemory(), 1.0).also { it.mode = BotPersonality.TOXIC }
             CombatChatBridge(bus, d) { it == bot.id }
             when (seed % 3) {
                 0 -> repeat(3) { bus.publish(DamageDealt(human.id, bot.id, 4.0, 20.0, "Attack", 1000L + it * 300)) }
@@ -163,8 +163,11 @@ class CombatFrameworkTest : StringSpec({
         (said.size > 20) shouldBe true
         said.forEach { line -> banned.forEach { word -> Regex("\\b$word\\b").containsMatchIn(line) shouldBe false } }
     }
-    "old Toxic saves load as Salty" {
-        BotPersonality.restore("TOXIC") shouldBe BotPersonality.SALTY
+    "saves from before Toxic was split off load their Salty as Toxic" {
+        BotPersonality.restore("SALTY", legacy = true) shouldBe BotPersonality.TOXIC
+        BotPersonality.restore("SALTY") shouldBe BotPersonality.SALTY
+        BotPersonality.restore("TOXIC") shouldBe BotPersonality.TOXIC
+        BotPersonality.restore("CHILL", legacy = true) shouldBe BotPersonality.CHILL
     }
 
     // ---------------------------------------------------------------- state machine

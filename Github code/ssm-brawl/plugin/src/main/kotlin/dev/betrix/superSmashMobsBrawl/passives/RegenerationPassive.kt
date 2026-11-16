@@ -20,7 +20,9 @@ class RegenerationPassive(player: Player) : BrawlPassive("regeneration", player)
 
                 val playerMaxHealth = player.getAttribute(Attribute.MAX_HEALTH)?.value ?: 20.0
                 if (player.health < playerMaxHealth) {
-                    val newHealth = (player.health + healAmount).coerceAtMost(playerMaxHealth)
+                    // A player may have changed their own kit's regen (Change Kit Stats).
+                    val amount = dev.betrix.superSmashMobsBrawl.services.KitStatsService.regen(player, kitData?.id) ?: healAmount
+                    val newHealth = (player.health + amount).coerceAtMost(playerMaxHealth)
                     player.health = newHealth
                 }
             }

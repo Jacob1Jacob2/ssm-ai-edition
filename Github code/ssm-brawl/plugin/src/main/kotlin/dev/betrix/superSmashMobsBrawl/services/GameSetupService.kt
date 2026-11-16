@@ -80,13 +80,17 @@ object GameSetupService : KoinComponent {
     private val file: File
         get() = File(plugin.dataFolder, "game-setups.properties")
 
+    private const val FORMAT_KEY = "personality-format"
     private val required = setOf("Difficulty", "Items", "Crystals", "Personality", "Mode", "Players")
     fun settingsChosen(player:Player) = true
     fun setup() {
         if (!file.exists()) return
         val props = Properties()
         file.inputStream().use { props.load(it) }
+        // Saves from before Toxic was split off from Salty have no format line: their "Salty" is today's Toxic.
+        val legacyPersonalities = (props.getProperty(FORMAT_KEY)?.toIntOrNull() ?: 1) < 2
         props.stringPropertyNames().forEach { key ->
+            if (key == FORMAT_KEY) return@forEach
             val parts = props.getProperty(key).split(",")
             if (parts.size < 4) return@forEach
             val savedPlayers = parts[1].toIntOrNull() ?: 4
@@ -109,7 +113,7 @@ object GameSetupService : KoinComponent {
                     mapScale = MapScale.entries.find { it.name == parts.getOrNull(13) } ?: MapScale.NORMAL,
                     enabledItems = dev.betrix.superSmashMobsBrawl.items.ArenaItem.restoreSelection(
                         parts.getOrNull(14), parts.getOrNull(15)?.toIntOrNull() ?: 0),
-                    botPersonality = BotPersonality.restore(parts.getOrNull(16)),
+                    botPersonality = BotPersonality.restore(parts.getOrNull(16), legacyPersonalities),
                     botKits = parts.getOrNull(17)?.split('|')?.mapNotNull {entry -> entry.split(':').takeIf {it.size==2}?.let {it[0].lowercase() to it[1]}}?.toMap() ?: emptyMap(),
                 )
         }
@@ -122,6 +126,7 @@ object GameSetupService : KoinComponent {
 
     internal fun save() {
         val props = Properties()
+        props.setProperty(FORMAT_KEY, "2")
         setups.forEach { (uuid, s) ->
             props.setProperty(
                 uuid.toString(),
@@ -153,6 +158,10 @@ object GameSetupService : KoinComponent {
     }
     private val CHOICE_COLUMNS = listOf(2, 3, 4, 5, 7)
     private val CHOICE_COLORS = listOf(NamedTextColor.GREEN, NamedTextColor.YELLOW, NamedTextColor.GOLD, NamedTextColor.RED, NamedTextColor.LIGHT_PURPLE)
+    /** Columns 1 to 7 of the frame rows. */
+    private val COLUMN_PANES = listOf(Material.RED_STAINED_GLASS_PANE, Material.LIME_STAINED_GLASS_PANE, Material.YELLOW_STAINED_GLASS_PANE,
+        Material.ORANGE_STAINED_GLASS_PANE, Material.RED_STAINED_GLASS_PANE, Material.WHITE_STAINED_GLASS_PANE, Material.MAGENTA_STAINED_GLASS_PANE)
+    private val PERSONALITY_COLORS = listOf(NamedTextColor.GRAY, NamedTextColor.GREEN, NamedTextColor.GOLD, NamedTextColor.RED, NamedTextColor.LIGHT_PURPLE)
     private val DYES = listOf(Material.LIME_DYE, Material.YELLOW_DYE, Material.ORANGE_DYE, Material.RED_DYE, Material.MAGENTA_DYE)
     private val CANDLES = listOf(Material.LIME_CANDLE, Material.YELLOW_CANDLE, Material.ORANGE_CANDLE, Material.RED_CANDLE, Material.MAGENTA_CANDLE)
     private val DIFFICULTIES = listOf(BotDifficulty.NORMAL, BotDifficulty.HARD, BotDifficulty.HARDER, BotDifficulty.EXPERT, null)
@@ -179,7 +188,7 @@ object GameSetupService : KoinComponent {
             onClick { isCancelled = true
                 if(clickedInventory==inventory) {
                     val group=when(slot) {
-                        0,9,18,27 -> "Personality"
+                        0,9,18,27,36 -> "Personality"
                         10,11,12,13,14,16 -> "Difficulty"
                         19,20,21,22,23,25 -> "Items"
                         28,29,30,31,32,34 -> "Crystals"
@@ -191,6 +200,9 @@ object GameSetupService : KoinComponent {
                 }
             }
             for (slot in 0 until 54) set(slot, menuItem(Material.GRAY_STAINED_GLASS_PANE, ""))
+            // A coloured frame above and below the choices, each pane matching its column.
+            COLUMN_PANES.forEachIndexed { i, pane -> set(1 + i, menuItem(pane, "")); set(37 + i, menuItem(pane, "")) }
+            for (row in 1..3) set(row * 9 + 6, menuItem(Material.WHITE_STAINED_GLASS_PANE, ""))
 
             set(8, menuItem(Material.HOPPER, "Change Lobbies", lore = listOf("Current: Lobby ${LobbyService.lobbyOf(player)}", "Choose one of five lobbies"))) { LobbyService.openMenu(player) }
             set(10,menuItem(Material.BARRIER,"None",NamedTextColor.RED,listOf("Bots stand still and do not attack"),"Difficulty" in chosen && s.botsIdle)) {s.botsIdle=true;changed(player)}
@@ -238,13 +250,31 @@ object GameSetupService : KoinComponent {
                 }
             }
 
-            listOf(Triple(9,Material.FURNACE_MINECART,BotPersonality.SILENT),Triple(18,Material.CHEST_MINECART,BotPersonality.CHILL),Triple(27,Material.TNT_MINECART,BotPersonality.SALTY)).forEach { (slot,material,personality) ->
-                set(slot,menuItem(material,personality.label,selected="Personality" in chosen && s.botPersonality==personality)) { s.botPersonality=personality;changed(player) }
+            // The personality column, quietest at the top.
+            listOf(
+                Triple(Material.MINECART, BotPersonality.SILENT, listOf("Bots do not chat")),
+                Triple(Material.FURNACE_MINECART, BotPersonality.CHILL, listOf("Friendly: gf, nice combo, its just a game")),
+                Triple(Material.CHEST_MINECART, BotPersonality.SALTY, listOf("Complains when things go wrong", "Gets mad at whoever rubs it in")),
+                Triple(Material.TNT_MINECART, BotPersonality.TOXIC, listOf("Trash talk: tries to make everyone else mad")),
+                // Every bot is dealt its own, so the lobby argues with itself.
+                Triple(Material.COMMAND_BLOCK_MINECART, BotPersonality.RANDOM, listOf("Each bot gets its own personality",
+                    "They argue, take sides and go after each other", "No more than half are Silent")),
+            ).forEachIndexed { row, (material, personality, lore) ->
+                set(row * 9, menuItem(material, personality.label, PERSONALITY_COLORS[row], lore,
+                    "Personality" in chosen && s.botPersonality == personality)) { s.botPersonality = personality; changed(player) }
             }
-            // Top of the personality column: every bot is dealt its own, so the lobby argues with itself.
-            set(0,menuItem(Material.COMMAND_BLOCK_MINECART,BotPersonality.RANDOM.label,NamedTextColor.LIGHT_PURPLE,
-                listOf("Each bot gets its own personality","Salty, Chill or Silent","No more than half are Silent"),
-                "Personality" in chosen && s.botPersonality==BotPersonality.RANDOM)) { s.botPersonality=BotPersonality.RANDOM;changed(player) }
+            val kit = KitService.currentSelectedKitForPlayer(player)
+            set(44, menuItem(Material.ENDER_CHEST, "Change Kit Stats", NamedTextColor.LIGHT_PURPLE, listOf(
+                "Health regen, armor, attack damage", "and cooldowns of your selected kit", "Current: ${KitStatsService.verdict(player.uniqueId, kit).label}"))) {
+                KitStatsService.openMenu(player)
+            }
+            // Only there when there is something to put back.
+            if (KitStatsService.changed(player.uniqueId, kit)) set(43, menuItem(Material.COPPER_CHEST, "Reset to Normal Kit Stats", NamedTextColor.GOLD,
+                listOf("Puts your selected kit back to normal"))) {
+                KitStatsService.reset(player.uniqueId, kit)
+                player.playSound(player.location, Sound.UI_BUTTON_CLICK, 0.6f, 1.2f)
+                openMenu(player)
+            }
             set(47, menuItem(Material.COPPER_SWORD, if (s.allBotsVsPlayer) "${s.bots}v1 — All Bots vs You" else "FFA — Free for All", NamedTextColor.AQUA,
                 listOf("Click to switch match mode", "Every fighter keeps four lives"),selected="Mode" in chosen)) {
                 s.allBotsVsPlayer = !s.allBotsVsPlayer

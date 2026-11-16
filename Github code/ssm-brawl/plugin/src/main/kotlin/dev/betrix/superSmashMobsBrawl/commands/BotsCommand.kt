@@ -162,7 +162,7 @@ class BotsCommand : KoinComponent {
     }
 
     @Execute(name = "chatgame")
-    @Description("Debug: a bots-only game with a chat personality (salty, chill, silent, random); the chat is written to the log")
+    @Description("Debug: a bots-only game with a chat personality (toxic, salty, chill, silent, random); the chat is written to the log")
     fun chatGame(
         @Context sender: CommandSender,
         @Arg count: Int,
@@ -173,7 +173,7 @@ class BotsCommand : KoinComponent {
         if (!allowed(sender)) return
         val def = dataService.getMinigame("super_smash_mobs") ?: return
         val mode = dev.betrix.superSmashMobsBrawl.bots.BotPersonality.entries.find { it.name.equals(personality, true) }
-            ?: return sender.sendMessage("Personality is one of salty, chill, silent, random")
+            ?: return sender.sendMessage("Personality is one of toxic, salty, chill, silent, random")
         BotManager.debug = true
         val setup = dev.betrix.superSmashMobsBrawl.services.GameSetupService.Setup(
             difficulty = if (difficulty == "any") null else BotDifficulty.parse(difficulty),

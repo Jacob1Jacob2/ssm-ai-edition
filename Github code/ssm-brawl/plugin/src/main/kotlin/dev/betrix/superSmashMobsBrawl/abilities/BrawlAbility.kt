@@ -136,7 +136,8 @@ abstract class BrawlAbility(val id: String, val player: Player) : Manageable(), 
     }
 
     override fun setup() {
-        hotbarItemStack = dev.betrix.superSmashMobsBrawl.services.KitPresentation.abilityItem(kitData?.id ?: "hub", id)
+        hotbarItemStack = (kitData?.id ?: "hub").let { kit -> dev.betrix.superSmashMobsBrawl.services.KitStatsService.dress(player, kit,
+            dev.betrix.superSmashMobsBrawl.services.KitPresentation.abilityItem(kit, id)) }
 
         val hotBarItemSlot =
             when (player.inventory.getItem(abilityData.itemSlot)) {
@@ -287,7 +288,11 @@ abstract class BrawlAbility(val id: String, val player: Player) : Manageable(), 
         ((effectiveCooldown * 1000.0 - elapsedSinceLastActivation) / 1000.0).coerceAtLeast(0.0)
 
     protected open val effectiveCooldown: Double
-        get() = dev.betrix.superSmashMobsBrawl.smash.SmashService.session(player)?.cooldown(abilityData.cooldown.toDouble()) ?: abilityData.cooldown.toDouble()
+        get() {
+            // A player may have changed this cooldown on their own copy of the kit (Change Kit Stats).
+            val seconds = dev.betrix.superSmashMobsBrawl.services.KitStatsService.cooldown(player, kitData?.id, id) ?: abilityData.cooldown.toDouble()
+            return dev.betrix.superSmashMobsBrawl.smash.SmashService.session(player)?.cooldown(seconds) ?: seconds
+        }
 
     fun activateFromSmash() { if(canActivate()) activate() }
     fun readyForBot(): Boolean = canActivate(false)

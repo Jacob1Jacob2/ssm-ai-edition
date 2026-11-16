@@ -211,21 +211,23 @@ object BotConversationService : KoinComponent, Listener {
             onClick { isCancelled = true }
             BotPersonality.entries.forEachIndexed { i, mode ->
                 val material = when(mode) {
-                    BotPersonality.SALTY -> Material.BLAZE_POWDER; BotPersonality.CHILL -> Material.SUNFLOWER
-                    BotPersonality.SILENT -> Material.GRAY_DYE; BotPersonality.RANDOM -> Material.COMMAND_BLOCK_MINECART
+                    BotPersonality.SILENT -> Material.MINECART; BotPersonality.CHILL -> Material.FURNACE_MINECART
+                    BotPersonality.SALTY -> Material.CHEST_MINECART; BotPersonality.TOXIC -> Material.TNT_MINECART
+                    BotPersonality.RANDOM -> Material.COMMAND_BLOCK_MINECART
                 }
                 val color = when(mode) {
-                    BotPersonality.SALTY -> NamedTextColor.RED; BotPersonality.CHILL -> NamedTextColor.GREEN
+                    BotPersonality.SALTY -> NamedTextColor.GOLD; BotPersonality.CHILL -> NamedTextColor.GREEN; BotPersonality.TOXIC -> NamedTextColor.RED
                     BotPersonality.SILENT -> NamedTextColor.GRAY; BotPersonality.RANDOM -> NamedTextColor.LIGHT_PURPLE
                 }
                 val description = when(mode) {
-                    BotPersonality.SALTY -> listOf("Trash talk about camping, spam and skill", "Reacts to fights and your chat")
+                    BotPersonality.TOXIC -> listOf("Trash talk about camping, spam and skill", "Tries to make everyone else mad")
+                    BotPersonality.SALTY -> listOf("Complains when things go wrong", "Gets mad at whoever rubs it in")
                     BotPersonality.CHILL -> listOf("Friendly reactions and conversation", "Reacts to fights and your chat")
                     BotPersonality.SILENT -> listOf("Bots do not send chat messages")
-                    BotPersonality.RANDOM -> listOf("Each bot gets its own personality", "They argue, defend and team up", "No more than half are Silent")
+                    BotPersonality.RANDOM -> listOf("Each bot gets its own personality", "They argue, take sides and go after each other", "No more than half are Silent")
                 }
                 val scope = if (mode == BotPersonality.RANDOM) "Dealt fresh every match" else "Applies to every bot in your match"
-                set(10 + i * 2, ItemStack.of(material).apply { editMeta {
+                set(9 + i * 2, ItemStack.of(material).apply { editMeta {
                     it.displayName(Component.text(mode.label, color, TextDecoration.BOLD).decoration(TextDecoration.ITALIC, false))
                     it.lore((description + scope + if(mode == selected) listOf("Selected") else listOf("Click to select")).map { line -> Component.text(line, NamedTextColor.GRAY).decoration(TextDecoration.ITALIC, false) })
                     it.setEnchantmentGlintOverride(mode == selected)

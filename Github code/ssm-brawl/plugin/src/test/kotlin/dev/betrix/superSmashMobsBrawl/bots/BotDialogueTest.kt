@@ -14,7 +14,7 @@ class BotDialogueTest : StringSpec({
     val bot = BotDialogue.Fighter(UUID(0,2), "Dino", "Guardian", 3, true)
     val other = BotDialogue.Fighter(UUID(0,3), "Fox", "Creeper", 2, true)
     // A private memory and guaranteed reactions keep each test independent of the others.
-    fun engine(mode: BotPersonality = BotPersonality.SALTY, seed: Int = 2, memory: LineMemory = LineMemory()) =
+    fun engine(mode: BotPersonality = BotPersonality.TOXIC, seed: Int = 2, memory: LineMemory = LineMemory()) =
         BotDialogue(Random(seed), memory, 1.0).also { it.mode = mode }
     fun BotDialogue.reply(text: String, time: Long = 1000, facts: List<BotDialogue.Fighter> = listOf(human,bot)): BotDialogue.Reply? {
         chat(human.id,text,time); return poll(time+3000,facts) {a,b -> a != b}
@@ -105,7 +105,7 @@ class BotDialogueTest : StringSpec({
         d.finish(setOf(human.id),listOf(human,bot),5000) shouldBe null
     }
     "changing to Silent cancels an already queued reply even after changing back" {
-        val d=engine();d.chat(human.id,"ez",1000);d.mode=BotPersonality.SILENT;d.mode=BotPersonality.SALTY
+        val d=engine();d.chat(human.id,"ez",1000);d.mode=BotPersonality.SILENT;d.mode=BotPersonality.TOXIC
         d.poll(4000,listOf(human,bot)){_,_->true} shouldBe null
     }
     "Chill answers the same facts without accusations or salt" {
@@ -169,7 +169,7 @@ class BotDialogueTest : StringSpec({
             (dealt.values.count { it == BotPersonality.SILENT } <= count / 2) shouldBe true
         }
         // Bots joining a match that is already half silent can only be talkers.
-        val known = mapOf(UUID(9, 1) to BotPersonality.SILENT, UUID(9, 2) to BotPersonality.SALTY)
+        val known = mapOf(UUID(9, 1) to BotPersonality.SILENT, UUID(9, 2) to BotPersonality.TOXIC)
         for (seed in 0..50) BotPersonality.deal(listOf(UUID(9, 3)), known, Random(seed)).values.single() shouldNotBe BotPersonality.SILENT
     }
     "a random lobby mixes personalities and they stay put for the match" {
@@ -183,12 +183,12 @@ class BotDialogueTest : StringSpec({
             d.personalities() shouldBe first
             seen += first.values
         }
-        seen shouldBe setOf(BotPersonality.SALTY, BotPersonality.CHILL, BotPersonality.SILENT)
+        seen shouldBe setOf(BotPersonality.TOXIC, BotPersonality.SALTY, BotPersonality.CHILL, BotPersonality.SILENT)
     }
     "a bot dealt Silent never says a word, whatever happens to it" {
         for (seed in 0..40) {
             val d = engine(BotPersonality.RANDOM, seed)
-            d.assign(bot.id, BotPersonality.SILENT); d.assign(other.id, BotPersonality.SALTY); d.assign(third.id, BotPersonality.CHILL)
+            d.assign(bot.id, BotPersonality.SILENT); d.assign(other.id, BotPersonality.TOXIC); d.assign(third.id, BotPersonality.CHILL)
             val facts = listOf(human, bot, other, third)
             d.burst(bot.id, human.id, 3, 1000); d.death(bot.id, human.id, "Chicken Missile", 1200)
             val said = d.listen(1500, 30_000, facts) + listOfNotNull(d.reply("Dino what kit are you", 40_000, facts)) +
@@ -198,8 +198,8 @@ class BotDialogueTest : StringSpec({
     }
     "each bot answers in its own personality" {
         val d = engine(BotPersonality.RANDOM)
-        d.assign(bot.id, BotPersonality.SALTY); d.assign(other.id, BotPersonality.CHILL)
-        d.personalityOf(bot.id) shouldBe BotPersonality.SALTY
+        d.assign(bot.id, BotPersonality.TOXIC); d.assign(other.id, BotPersonality.CHILL)
+        d.personalityOf(bot.id) shouldBe BotPersonality.TOXIC
         d.personalityOf(other.id) shouldBe BotPersonality.CHILL
         d.reply("Dino ur hacking", facts = listOf(human, bot, other))!!.text shouldSay "legit|no|hitbox|good|hacking|report|cope|aim"
         d.reply("Fox ur hacking", 20_000, listOf(human, bot, other))!!.text shouldSay "lucky|no hacks|lol no|wish"
@@ -208,7 +208,7 @@ class BotDialogueTest : StringSpec({
         var defended = 0; var rebuked = 0; var teamed = 0
         for (seed in 0..400) {
             val d = engine(BotPersonality.RANDOM, seed)
-            d.assign(bot.id, BotPersonality.SALTY); d.assign(other.id, BotPersonality.CHILL); d.assign(third.id, BotPersonality.CHILL)
+            d.assign(bot.id, BotPersonality.TOXIC); d.assign(other.id, BotPersonality.CHILL); d.assign(third.id, BotPersonality.CHILL)
             val facts = listOf(human, bot, other, third)
             d.burst(bot.id, human.id, 3, 1000)
             val said = d.listen(1500, 25_000, facts)
@@ -234,22 +234,77 @@ class BotDialogueTest : StringSpec({
     }
     "two salty bots keep an argument going; a chill one shrugs it off" {
         var clapbacks = 0; var shrugs = 0
-        for (seed in 0..200) for (mood in listOf(BotPersonality.SALTY, BotPersonality.CHILL)) {
+        for (seed in 0..200) for (mood in listOf(BotPersonality.TOXIC, BotPersonality.CHILL)) {
             val d = engine(BotPersonality.RANDOM, seed)
-            d.assign(bot.id, BotPersonality.SALTY); d.assign(other.id, mood)
+            d.assign(bot.id, BotPersonality.TOXIC); d.assign(other.id, mood)
             val facts = listOf(human, bot, other.copy(fighting = false))
             // Dino kills Fox; Dino (the killer) gloats and Fox answers from the respawn screen.
             d.death(other.id, bot.id, "Static Laser", 1000)
             val said = d.listen(1500, 20_000, facts)
             val answer = said.firstOrNull { it.speaker == other.id } ?: continue
             if (said.first().speaker != bot.id) continue
-            if (mood == BotPersonality.SALTY) clapbacks++ else {
+            if (mood == BotPersonality.TOXIC) clapbacks++ else {
                 shrugs++
                 listOf("shut up", "cry", "nobody asked").forEach { answer.text.shouldNotContain(it) }
             }
         }
         (clapbacks > 20) shouldBe true
         (shrugs > 20) shouldBe true
+    }
+    "a toxic bot gloats over a salty one, the salty one snaps, and the two go for each other" {
+        var snapped = 0; var mutual = 0
+        for (seed in 0..300) {
+            val d = engine(BotPersonality.RANDOM, seed)
+            d.assign(bot.id, BotPersonality.TOXIC); d.assign(other.id, BotPersonality.SALTY)
+            val facts = listOf(human, bot, other.copy(fighting = false))
+            // Dino kills Fox and says something like "ez"; Fox, already salty, has had enough.
+            d.death(other.id, bot.id, "Static Laser", 1000)
+            val said = d.listen(1500, 20_000, facts)
+            if (said.firstOrNull()?.speaker != bot.id) continue
+            val answer = said.firstOrNull { it.speaker == other.id } ?: continue
+            if (!Regex("shut up|sick of u|thats it|ur dead|coming for u|say that again|laughing|ur first|ur next|done with u").containsMatchIn(answer.text)) continue
+            snapped++
+            // It is not just talk: the salty one now hunts the toxic one...
+            d.grudge(other.id, 20_000) shouldBe bot.id
+            // ...and when the toxic one answers, it hunts back.
+            if (said.dropWhile { it.speaker != other.id }.any { it.speaker == bot.id }) { mutual++; d.grudge(bot.id, 20_000) shouldBe other.id }
+        }
+        (snapped > 60) shouldBe true
+        (mutual > 30) shouldBe true
+    }
+    "teammates can argue but never get a grudge against each other" {
+        for (seed in 0..150) {
+            val d = engine(BotPersonality.RANDOM, seed)
+            d.assign(bot.id, BotPersonality.TOXIC); d.assign(other.id, BotPersonality.SALTY)
+            val facts = listOf(human, bot, other)
+            // Fox dies to the human while Dino, on Fox's team, watches and may rub it in.
+            d.death(other.id, human.id, "Chicken Missile", 1000)
+            (1500L..20_000L step 250).forEach { d.poll(it, facts) { a, b -> setOf(a, b) != setOf(bot.id, other.id) } }
+            d.grudge(bot.id, 20_000) shouldBe null
+            d.grudge(other.id, 20_000) shouldBe null
+        }
+    }
+    "a salty bot complains about what happened to it, and a toxic bystander rubs it in" {
+        var complaints = 0; var needled = 0; var consoled = 0
+        for (seed in 0..300) for (mood in listOf(BotPersonality.TOXIC, BotPersonality.CHILL)) {
+            val d = engine(BotPersonality.RANDOM, seed)
+            d.assign(other.id, BotPersonality.SALTY); d.assign(bot.id, mood)
+            val facts = listOf(human, bot, other.copy(fighting = false))
+            d.death(other.id, human.id, "Chicken Missile", 1000)
+            val said = d.listen(1500, 20_000, facts)
+            if (said.firstOrNull()?.speaker != other.id) continue
+            complaints++
+            // A complaint is about its own bad luck, never a gloat.
+            listOf("ez", "get rekt", "skill issue", "sit down").forEach { said.first().text shouldNotBe it }
+            val reply = said.firstOrNull { it.speaker == bot.id } ?: continue
+            if (mood == BotPersonality.TOXIC) needled++ else {
+                consoled++
+                listOf("cry", "whining", "skill issue", "stay mad").forEach { reply.text.shouldNotContain(it) }
+            }
+        }
+        (complaints > 200) shouldBe true
+        (needled > 40) shouldBe true
+        (consoled > 20) shouldBe true
     }
     "one personality for everyone still gives the old short pile-on and no team-ups" {
         for (seed in 0..120) {
@@ -273,7 +328,7 @@ class BotDialogueTest : StringSpec({
         val said = mutableListOf<String>()
         val prompts = listOf("ez", "stop spamming", "why are you targeting me", "come fight", "ur hacking", "gg", "hi", "what kit",
             "how many lives", "this is boring", "nice shot", "sorry", "ur a bot", "always chicken")
-        for (mode in listOf(BotPersonality.SALTY, BotPersonality.CHILL)) for (seed in 0..40) {
+        for (mode in listOf(BotPersonality.TOXIC, BotPersonality.SALTY, BotPersonality.CHILL)) for (seed in 0..40) {
             val d = engine(mode, seed)
             repeat(4) { d.cast(human.id, "Chicken Missile", 100L + it) }
             when (seed % 6) {

@@ -4,15 +4,26 @@ import java.util.UUID
 import kotlin.random.Random
 
 enum class BotPersonality(val label: String) {
-    SALTY("Salty"), CHILL("Chill"), SILENT("Silent"),
-
-    /** Not a personality of its own: every bot in the match is dealt one of the three above. */
+    /** Says nothing. */
+    SILENT("Silent"),
+    /** Friendly: compliments, apologies, calming people down. */
+    CHILL("Chill"),
+    /** Gets mad when things go wrong for it and complains about all of it. */
+    SALTY("Salty"),
+    /** Tries to make everyone else mad: gloating, accusations, needling. */
+    TOXIC("Toxic"),
+    /** Not a personality of its own: every bot in the match is dealt one of the four above. */
     RANDOM("Random");
 
     companion object {
-        /** Salty was saved as "TOXIC" before it was renamed. */
-        fun restore(value: String?) =
-            if (value.equals("TOXIC", true)) SALTY else entries.find { it.name.equals(value, true) } ?: SILENT
+        /**
+         * Reads a saved personality. Before Toxic existed as its own personality the gloating one
+         * was called Salty, so a [legacy] save that says Salty means what is now Toxic.
+         */
+        fun restore(value: String?, legacy: Boolean = false): BotPersonality {
+            val saved = entries.find { it.name.equals(value, true) } ?: return SILENT
+            return if (legacy && saved == SALTY) TOXIC else saved
+        }
 
         /**
          * Deals a personality to each of [newcomers] for a Random match. [known] are the bots that
@@ -24,8 +35,8 @@ enum class BotPersonality(val label: String) {
             var quiet = known.values.count { it == SILENT }
             // Shuffled, so the seats that may be Silent do not always go to the first bots in the list.
             return newcomers.shuffled(random).associateWith {
-                var dealt = listOf(SALTY, CHILL, SILENT).random(random)
-                if (dealt == SILENT && quiet >= quietSeats) dealt = if (random.nextBoolean()) SALTY else CHILL
+                var dealt = listOf(TOXIC, SALTY, CHILL, SILENT).random(random)
+                if (dealt == SILENT && quiet >= quietSeats) dealt = listOf(TOXIC, SALTY, CHILL).random(random)
                 if (dealt == SILENT) quiet++
                 dealt
             }

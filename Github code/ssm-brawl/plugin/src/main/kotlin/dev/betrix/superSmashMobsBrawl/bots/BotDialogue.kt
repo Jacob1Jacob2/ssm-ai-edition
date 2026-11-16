@@ -59,7 +59,7 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
     /** How this bot talks. A bot that has not been dealt a personality yet says nothing. */
     fun personalityOf(bot: UUID): BotPersonality =
         if (mode != BotPersonality.RANDOM) mode else cast[bot] ?: BotPersonality.SILENT
-    private fun talks(bot: UUID) = personalityOf(bot).let { it == BotPersonality.SALTY || it == BotPersonality.CHILL }
+    private fun talks(bot: UUID) = personalityOf(bot).let { it == BotPersonality.TOXIC || it == BotPersonality.SALTY || it == BotPersonality.CHILL }
     /** The personalities dealt so far in a Random match (empty in the other modes). */
     fun personalities(): Map<UUID, BotPersonality> = cast.toMap()
     /** Who [bot] announced it is going after, while that still stands. Chat has consequences. */
@@ -221,9 +221,11 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
     /**
      * Lets the other bots answer the line [speaker] just sent, each in its own personality. This is
      * where a mixed lobby comes alive: the bot that was trash-talked answers back, a chill bot
-     * tells a salty one to calm down and gets told to stay out of it, and if the chill ones have
-     * had enough they agree to go after the salty one together, and then really do
-     * (see [grudge]). With every bot on one personality it reduces to the occasional short pile-on.
+     * tells a toxic one to calm down and gets told to stay out of it, and if the chill ones have
+     * had enough they agree to go after the toxic one together, and then really do
+     * (see [grudge]). A salty bot complains, a toxic one rubs it in until the salty one snaps, and
+     * the two of them go for each other. With every bot on one personality it reduces to the
+     * occasional short exchange.
      *
      * [about] is the subject of the line and [who] the fighter it was about, if any.
      */
@@ -246,7 +248,19 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
         // fresh out of another exchange.
         val idle = talkers.filter { it.lives > 0 && it.id != who?.id && now - (lastBot[it.id] ?: -100_000L) >= 12000 }
         val calm = idle.filter { mood(it) == BotPersonality.CHILL }
+        val mean = idle.filter { mood(it) == BotPersonality.TOXIC }
         val sour = idle.filter { mood(it) == BotPersonality.SALTY }
+        /** [a] says it is going after [b]: true when the two can actually fight each other. */
+        fun feud(a: Fighter, b: Fighter) = a.lives > 0 && b.lives > 0 && enemies(a.id, b.id)
+        /**
+         * [angry] has had enough of [heckler] and says so; the heckler enjoys it. Both lines come
+         * with a grudge, so in a free-for-all the two of them leave everyone else and fight it out.
+         */
+        fun blowUp(angry: Fighter, heckler: Fighter) {
+            val real = feud(angry, heckler)
+            if (queue(angry, voice(angry).snap(heckler), heckler.id.takeIf { real }) && roll(0.7))
+                queue(heckler, voice(heckler).taunt(angry), angry.id.takeIf { real })
+        }
         // A lobby that argues about every single hit is as fake as one that never does.
         val fresh = now - lastBanter >= ARGUMENT_GAP_MS
         val humanDied = about == "kill" && who?.bot == false
@@ -272,12 +286,18 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
             if (roll(0.6)) queue(bully, voice(bully).ganged(posse.size))
         }
 
-        if (mood(speaker) == BotPersonality.SALTY) {
-            // 1. Whoever it was aimed at answers back; two salty bots go another round.
+        if (mood(speaker) == BotPersonality.TOXIC) {
+            // 1. Whoever it was aimed at answers back; two toxic bots go another round, and a salty
+            //    one that was just gloated at loses it completely.
             var answered = false
+            if (aimedAt != null && mood(aimedAt) == BotPersonality.SALTY && roll(if (fresh) 0.75 else 0.35)) {
+                blowUp(aimedAt, speaker)
+                lastBanter = now
+                return
+            }
             if (aimedAt != null && roll(if (fresh) 0.6 else 0.3)) {
                 answered = queue(aimedAt, voice(aimedAt).comeback(speaker, about))
-                if (answered && mood(aimedAt) == BotPersonality.SALTY && roll(0.5)) queue(speaker, voice(speaker).comeback(aimedAt, "beef"))
+                if (answered && mood(aimedAt) == BotPersonality.TOXIC && roll(0.5)) queue(speaker, voice(speaker).comeback(aimedAt, "beef"))
             }
             // 2. A chill bystander steps in, gets told off, and may decide enough is enough.
             val defender = calm.randomOrNull(random)
@@ -287,15 +307,41 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
                 return
             }
             if (answered) { lastBanter = now; return }
-            // 3. Otherwise another salty bot laughs at the excuse, or piles on.
-            val heckler = sour.randomOrNull(random)
+            // 3. Otherwise another toxic bot laughs at the excuse, or piles on.
+            val heckler = mean.randomOrNull(random)
             if (about == "death" && heckler != null && fresh && roll(0.3) && queue(heckler, voice(heckler).mock(speaker, fell))) {
                 lastBanter = now
                 if (roll(0.5)) queue(speaker, voice(speaker).comeback(heckler, "beef"))
-            } else pileOn(sour)
+            } else pileOn(mean)
+        } else if (mood(speaker) == BotPersonality.SALTY) {
+            // A complaint (or a grudging "finally" after a kill).
+            // 1. A toxic bot rubs it in: the one it was about if there is one, else a bystander.
+            //    The salty one snaps and the two go for each other.
+            val heckler = aimedAt?.takeIf { mood(it) == BotPersonality.TOXIC } ?: mean.randomOrNull(random)
+            if (heckler != null && about != "kill" && roll(if (fresh) 0.65 else 0.25) &&
+                queue(heckler, voice(heckler).needle(speaker, about, about == "death" && heckler.id == who?.id))) {
+                lastBanter = now
+                if (roll(0.8)) blowUp(speaker, heckler)
+                return
+            }
+            // 2. A chill bot tries to cheer it up, which does not really work.
+            val friend = aimedAt?.takeIf { mood(it) == BotPersonality.CHILL } ?: calm.randomOrNull(random)
+            if (friend != null && about != "kill" && fresh && roll(0.45) && queue(friend, voice(friend).console(speaker))) {
+                lastBanter = now
+                if (roll(0.5)) queue(speaker, voice(speaker).grumble(friend))
+                return
+            }
+            // 3. Whoever it was about answers for themselves.
+            if (aimedAt != null && roll(if (fresh) 0.45 else 0.2)) {
+                if (queue(aimedAt, voice(aimedAt).comeback(speaker, about))) lastBanter = now
+                return
+            }
+            // 4. Or another salty bot knows the feeling.
+            val fellow = sour.randomOrNull(random)
+            if (fellow != null && about != "kill" && roll(0.3)) queue(fellow, voice(fellow).sameHere())
         } else {
-            // A friendly line. 1. A salty bot cannot stand it, and the chill one does not take the bait.
-            val hater = (sour + listOfNotNull(aimedAt?.takeIf { mood(it) == BotPersonality.SALTY })).distinctBy { it.id }.randomOrNull(random)
+            // A friendly line. 1. A toxic bot cannot stand it, and the chill one does not take the bait.
+            val hater = (mean + listOfNotNull(aimedAt?.takeIf { mood(it) == BotPersonality.TOXIC })).distinctBy { it.id }.randomOrNull(random)
             if (hater != null && about in setOf("kill", "death", "burst", "hold") && fresh && roll(0.45) &&
                 queue(hater, voice(hater).sneer(speaker, about))) {
                 lastBanter = now
