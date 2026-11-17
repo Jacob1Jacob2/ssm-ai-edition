@@ -122,6 +122,7 @@ object ResourcePackService : KoinComponent {
         event<PlayerQuitEvent> { loadedPlayers.remove(player.uniqueId) }
         event<PlayerResourcePackStatusEvent> {
             if (id != packId) return@event
+            plugin.logger.info("Resource pack for ${player.name}: $status")
             when (status) {
                 PlayerResourcePackStatusEvent.Status.SUCCESSFULLY_LOADED -> loadedPlayers.add(player.uniqueId)
                 PlayerResourcePackStatusEvent.Status.DECLINED,

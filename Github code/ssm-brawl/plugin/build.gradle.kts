@@ -1,4 +1,4 @@
-plugins {
+﻿plugins {
     kotlin("jvm") version "2.4.21"
     kotlin("plugin.serialization") version "2.4.21"
     id("com.gradleup.shadow") version "9.6.1"
@@ -11,7 +11,7 @@ val ktor_version: String by project
 
 group = "dev.betrix"
 
-version = "0.1.0-ai-full-scoreboard-20261117"
+version = "0.1.0-ai-pack-status-20261117"
 
 repositories {
     mavenCentral()
