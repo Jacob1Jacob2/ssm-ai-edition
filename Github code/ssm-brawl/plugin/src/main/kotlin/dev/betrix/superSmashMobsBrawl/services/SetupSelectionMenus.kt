@@ -137,7 +137,7 @@ object SetupSelectionMenus {
             }
             set(47,item(Material.LIME_DYE,"Add Player",listOf("Add a Minecraft username"))) {CustomBotService.prompt(player,current)}
             set(49,item(Material.PAPER,"${s.selectedBotNames.size}/${s.bots} chosen",listOf("Choose up to ${s.bots} opponents","Random built-in bots fill the rest")))
-            set(51,item(Material.ENDER_EYE,"Random Opponents",listOf("Use random built-in opponents","Custom opponents are never picked randomly"))) {s.selectedBotNames=emptyList();GameSetupService.save();LobbyBotService.configure(player);opponents(player,current)}
+            set(51,item(Material.ENDER_EYE,"Random Opponents",listOf("Use random built-in opponents","Custom opponents are never picked randomly","Also resets every kit you chose for them"))) {s.selectedBotNames=emptyList();s.botKits=emptyMap();GameSetupService.save();LobbyBotService.configure(player);opponents(player,current)}
             if(current<pages-1)set(53,item(Material.ARROW,"Next Page")) {opponents(player,current+1)}
         })
     }
