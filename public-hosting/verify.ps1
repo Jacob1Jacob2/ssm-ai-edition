@@ -69,7 +69,8 @@ $names = $zip.Entries | ForEach-Object FullName
 foreach ($required in 'pack.mcmeta', 'assets/ssm/font/maps.json') {
     if ($names -notcontains $required) { throw "Resource pack is missing $required" }
 }
-$pictures = ($names | Where-Object { $_ -like 'assets/ssm/textures/font/maps/*' -and $_ -notlike '*/' }).Count
+# Each picture is a grid of tiles named <map>_<row>_<column>.png: count the maps, not the tiles.
+$pictures = ($names | Where-Object { $_ -like 'assets/ssm/textures/font/maps/*' -and $_ -notlike '*/' } | ForEach-Object { ($_ -split '/')[-1] -replace '_\d+_\d+\.png$', '' } | Select-Object -Unique).Count
 if ($pictures -ne $ExpectedMapPictures) { throw "Expected $ExpectedMapPictures map pictures in the pack, found $pictures" }
 "Pack: $([math]::Round($pack.Length / 1MB, 1)) MB, $pictures map pictures"
 'PASSED: the server answers and the resource pack downloads. (This does not log a player in.)'
