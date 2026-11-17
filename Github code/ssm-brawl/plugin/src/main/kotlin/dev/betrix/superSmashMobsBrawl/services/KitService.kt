@@ -340,8 +340,10 @@ object KitService : KoinComponent, Manageable() {
                                     )
                                 }
 
-                                val loreList = listOf(
-                                    Component.text("Left-click to select", net.kyori.adventure.text.format.NamedTextColor.YELLOW),
+                                val loreList = statLines(kit) + listOf(
+                                    Component.empty(),
+                                    if (isKitSelected && botName == null) Component.text("You already have this kit selected.", net.kyori.adventure.text.format.NamedTextColor.RED)
+                                    else Component.text("Left-click to select", net.kyori.adventure.text.format.NamedTextColor.YELLOW),
                                     Component.text("Right-click for stats", net.kyori.adventure.text.format.NamedTextColor.GRAY)
                                 ).map { it.decoration(net.kyori.adventure.text.format.TextDecoration.ITALIC, false) }
 
@@ -427,14 +429,15 @@ object KitService : KoinComponent, Manageable() {
                 meta.lore(lore.map { it.decoration(net.kyori.adventure.text.format.TextDecoration.ITALIC, false) })
             }
         }
-        player.openInventory(brawlGui(lang.t("kits.${kit.id}.name").append(Component.text(" Stats")), 54) {
+        // One chest: weapons top left, smashes top right, passives under the weapons,
+        // Back / kit icon / Select along the bottom.
+        player.openInventory(brawlGui(lang.t("kits.${kit.id}.name").append(Component.text(" Stats")), 27) {
             onClick { isCancelled = true }
-            for(slot in 0..53) set(slot, display(Material.GRAY_STAINED_GLASS_PANE, Component.empty()))
-            set(4, MenuIcons.kit(kit.id, kit.displayItem ?: Material.BOOK).apply {
-                editMeta { it.displayName(lang.t("kits.${kit.id}.name").color(color)); it.lore(statsLore(kit)) }
+            set(22, MenuIcons.kit(kit.id, kit.displayItem ?: Material.BOOK).apply {
+                editMeta { it.displayName(lang.t("kits.${kit.id}.name").color(color).decoration(net.kyori.adventure.text.format.TextDecoration.ITALIC, false)); it.lore(statsLore(kit)) }
             })
             dev.betrix.superSmashMobsBrawl.smash.SmashTier.entries.forEachIndexed { index, tier ->
-                set(16 + index * 9, GuideMenus.smashItem(kit.id, tier))
+                set(5 + index, GuideMenus.smashItem(kit.id, tier))
             }
             kit.abilities.take(5).forEachIndexed { index, entry ->
                 val ability = dataService.getAbility(entry.id) ?: return@forEachIndexed
@@ -446,42 +449,54 @@ object KitService : KoinComponent, Manageable() {
                     "Knockback" to listOf("knockback", "explosionKnockbackMultiplier", "projectileKnockbackModifier"))) {
                     keys.firstNotNullOfOrNull { values[it]?.content }?.let { lore.add(Component.text("$label: $it", gray)) }
                 }
-                set(19+index, display(Material.matchMaterial(ability.hotbarItem) ?: Material.IRON_AXE,
+                set(index, display(Material.matchMaterial(ability.hotbarItem) ?: Material.IRON_AXE,
                     lang.t("abilities.${entry.id}.name").color(color), lore))
             }
             kit.passives.filter { dataService.getPassive(it.id)?.userFacing == true }.take(5).forEachIndexed { index, entry ->
                 val passive = dataService.getPassive(entry.id)!!
-                set(37+index, display(passive.displayItem?.let(Material::matchMaterial) ?: Material.PAPER,
+                set(9+index, display(passive.displayItem?.let(Material::matchMaterial) ?: Material.PAPER,
                     lang.t("passives.${entry.id}.name").color(color), listOf(lang.t("passives.${entry.id}.description").color(gray))))
             }
-            set(45, MenuIcons.navigation(false).apply { editMeta { it.displayName(Component.text("Back", gray)) } }) {
+            set(18, display(Material.REDSTONE_BLOCK, Component.text("Back", net.kyori.adventure.text.format.NamedTextColor.RED))) {
                 openKitSelection(player, botName, page)
             }
-            set(53, display(Material.LIME_DYE, Component.text("Select Kit", color))) {
+            set(26, display(Material.LIME_DYE, Component.text("Select Kit", color))) {
                 selectFromMenu(player, kit, botName, page)
             }
         })
     }
 
+    /** The classic kit card: two coloured columns, white values. */
+    private fun statLines(kit: KitDef): List<Component> {
+        val white = net.kyori.adventure.text.format.NamedTextColor.WHITE
+        fun stat(label: String, value: String, color: net.kyori.adventure.text.format.NamedTextColor): Component =
+            Component.text("$label: ", color).append(Component.text(value, white))
+        fun row(left: Component, gap: String, right: Component) =
+            Component.empty().decoration(net.kyori.adventure.text.format.TextDecoration.ITALIC, false)
+                .append(left).append(Component.text(gap, white)).append(right)
+        val regen = kit.passives.firstOrNull { it.id == "regeneration" }
+            ?.overrides?.metadata?.get("healAmount")?.content?.toDoubleOrNull() ?: 0.25
+        val lines = arrayListOf(
+            row(stat("Damage", "${kit.meleeDamage}", net.kyori.adventure.text.format.NamedTextColor.RED), "    ",
+                stat("Knockback Taken", "${(kit.knockbackMultiplier * 100).toInt()}%", net.kyori.adventure.text.format.NamedTextColor.YELLOW)),
+            row(stat("Armor", "${kit.armor}", net.kyori.adventure.text.format.NamedTextColor.AQUA), "      ",
+                stat("Health Regeneration", "$regen per Second", net.kyori.adventure.text.format.NamedTextColor.GREEN)),
+        )
+        fun extra(label: String, value: String) = lines.add(row(
+            stat(label, value, net.kyori.adventure.text.format.NamedTextColor.GOLD), "", Component.empty()))
+        if (kit.id == "snowman") extra("On Arctic Aura snow", "7.0 damage")
+        if (kit.id == "skeleton") extra("Arrow Damage", "6.0")
+        if (kit.id == "villager") {
+            extra("Butcher", "7 damage / 4.5 armor")
+            extra("Blacksmith", "5 damage / 7.5 armor")
+            extra("Speedster", "4 damage / 4 armor")
+        }
+        return lines
+    }
+
     private fun statsLore(kit: KitDef): List<Component> {
     val loreList = arrayListOf<Component>()
-
-    fun stat(label: String, value: String) =
-        Component.text("$label: ", net.kyori.adventure.text.format.NamedTextColor.GRAY)
-            .append(Component.text(value, net.kyori.adventure.text.format.NamedTextColor.YELLOW))
-            .decoration(net.kyori.adventure.text.format.TextDecoration.ITALIC, false)
-    val regen = kit.passives.firstOrNull { it.id == "regeneration" }
-        ?.overrides?.metadata?.get("healAmount")?.content?.toDoubleOrNull() ?: 0.25
-    loreList.add(stat("Damage", if (kit.id == "snowman") "6.0 (7.0 on Arctic Aura snow)" else "${kit.meleeDamage}"))
-    loreList.add(stat("Armor", "${kit.armor}"))
-    loreList.add(stat("Knockback Taken", "${(kit.knockbackMultiplier * 100).toInt()}%"))
-    loreList.add(stat("Regeneration", "$regen / second"))
-    if (kit.id == "skeleton") loreList.add(stat("Arrow Damage", "6.0"))
-    if (kit.id == "villager") {
-        loreList.add(stat("Butcher", "7 damage / 4.5 armor"))
-        loreList.add(stat("Blacksmith", "5 damage / 7.5 armor"))
-        loreList.add(stat("Speedster", "4 damage / 4 armor"))
-    }
+    loreList.addAll(statLines(kit))
     loreList.add(Component.empty())
     loreList.add(lang.t("gui.kitSelection.abilityList.title"))
 
