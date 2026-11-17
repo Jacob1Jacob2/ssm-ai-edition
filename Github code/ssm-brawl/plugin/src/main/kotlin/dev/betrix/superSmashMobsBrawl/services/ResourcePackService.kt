@@ -69,6 +69,8 @@ object ResourcePackService : KoinComponent {
     private const val PACK_FORMAT_MINOR = 1
     /** Picture texture height in pixels. The tooltip shows it ~600px tall on a 4K screen. */
     private const val TEXTURE_HEIGHT = 480
+    private const val TILE_ROWS = 2
+    private const val TILE_SIZE = 240
 
     private val packId: UUID = UUID.nameUUIDFromBytes("ssm-ai-edition-pack".toByteArray())
 
@@ -76,13 +78,14 @@ object ResourcePackService : KoinComponent {
     private var publicUrl = ""
     @Volatile private var packBytes: ByteArray? = null
     @Volatile private var packSha1: String? = null
-    private val glyphs = ConcurrentHashMap<String, Char>()
+    private val glyphs = ConcurrentHashMap<String, String>()
     private val loadedPlayers = ConcurrentHashMap.newKeySet<UUID>()
 
     private val dataFolder: File
         get() = File(plugin.dataFolder, "resourcepack")
 
-    fun glyphFor(mapId: String): Char? = glyphs[mapId]
+    /** The characters that draw this map's picture (a grid of small tiles) in the [MAP_FONT]. */
+    fun glyphFor(mapId: String): String? = glyphs[mapId]
 
     /** True once this player's client has actually loaded the pack. */
     fun hasPack(player: Player): Boolean = player.uniqueId in loadedPlayers
@@ -197,9 +200,9 @@ object ResourcePackService : KoinComponent {
         }
     }
 
-    private fun build(maps: List<Pair<GameMapDef, File?>>): Pair<ByteArray, Map<String, Char>> {
+    private fun build(maps: List<Pair<GameMapDef, File?>>): Pair<ByteArray, Map<String, String>> {
         val files = sortedMapOf<String, ByteArray>()
-        val newGlyphs = mutableMapOf<String, Char>()
+        val newGlyphs = mutableMapOf<String, String>()
         dev.betrix.superSmashMobsBrawl.smash.SmashAssets.addTo(files)
         MenuAssets.addTo(files)
         ScaledTreePosts.addAssets(files)
@@ -212,21 +215,50 @@ object ResourcePackService : KoinComponent {
             """{"pack":{"description":"SSM AI Edition","min_format":[$PACK_FORMAT_MAJOR,0],"max_format":[$PACK_FORMAT_MAJOR,$PACK_FORMAT_MINOR]}}"""
                 .toByteArray()
 
-        // Map pictures -> one bitmap glyph each in the ssm:maps font.
+        // Map pictures -> a grid of small bitmap glyphs in the ssm:maps font. One big glyph per
+        // picture stopped drawing on clients that reloaded the pack without restarting, so no
+        // tile is larger than 240x240 (the client's glyph sheets are 256x256).
         val providers = mutableListOf<String>()
+        val spaces = mutableListOf<String>()
         var next = 0xE000
+        fun esc(code: Int) = "\\u" + "%04x".format(code) // JSON escape for a private-use character
+        val joiner = next++ // closes the 1px gap the client leaves after every bitmap glyph
+        spaces += "\"${esc(joiner)}\":-1"
+        val rowHeight = PICTURE_HEIGHT / TILE_ROWS
         maps.sortedBy { it.first.id }.forEach { (map, picture) ->
             val png = picture?.let { scaledPicture(map.id, it) } ?: return@forEach
-            val ch = next.toChar()
-            next++
-            newGlyphs[map.id] = ch
-            files["assets/ssm/textures/font/maps/${map.id}.png"] = png
-            val escaped = "\\u" + "%04x".format(ch.code) // JSON escape for the private-use character
-            providers +=
-                "{\"type\":\"bitmap\",\"file\":\"ssm:font/maps/${map.id}.png\",\"height\":$PICTURE_HEIGHT," +
-                    "\"ascent\":7,\"chars\":[\"$escaped\"]}"
+            val image = runCatching { ImageIO.read(png.inputStream()) }.getOrNull() ?: return@forEach
+            val tileHeight = image.height / TILE_ROWS
+            val scale = tileHeight / rowHeight // texture pixels per GUI pixel
+            if (scale < 1) return@forEach
+            val width = image.width / scale * scale // whole GUI pixels only, so tiles meet exactly
+            val text = StringBuilder()
+            for (row in 0 until TILE_ROWS) {
+                var x = 0
+                var column = 0
+                while (x < width) {
+                    val w = minOf(TILE_SIZE, width - x)
+                    val ch = next++
+                    files["assets/ssm/textures/font/maps/${map.id}_${row}_$column.png"] =
+                        png(image.getSubimage(x, row * tileHeight, w, tileHeight))
+                    providers +=
+                        "{\"type\":\"bitmap\",\"file\":\"ssm:font/maps/${map.id}_${row}_$column.png\",\"height\":$rowHeight," +
+                            "\"ascent\":${7 - row * rowHeight},\"chars\":[\"${esc(ch)}\"]}"
+                    if (column > 0) text.append(joiner.toChar())
+                    text.append(ch.toChar())
+                    x += w
+                    column++
+                }
+                if (row < TILE_ROWS - 1) {
+                    val back = next++ // return to the left edge for the next row
+                    spaces += "\"${esc(back)}\":${-(width / scale + 1)}"
+                    text.append(back.toChar())
+                }
+            }
+            newGlyphs[map.id] = text.toString()
         }
-        files["assets/ssm/font/maps.json"] = """{"providers":[${providers.joinToString(",")}]}""".toByteArray()
+        files["assets/ssm/font/maps.json"] =
+            """{"providers":[{"type":"space","advances":{${spaces.joinToString(",")}}},${providers.joinToString(",")}]}""".toByteArray()
         SidebarAssets.addTo(files)
 
         // Coloured eyes of ender for the random-old / random-new buttons: the vanilla eye of ender

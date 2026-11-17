@@ -359,6 +359,15 @@ messages:
       success: <blue>Game></blue> <gray>You used <green>{lang:abilities.{abilityId}.name}</green>.
       cooldown: <blue>Recharge></blue> <gray>You cannot use <green>{lang:abilities.{abilityId}.name}</green>
         for <green>{seconds} Seconds</green>.
+    hitByAbility: <blue>Game></blue> <yellow>{attacker}</yellow> <gray>hit you with
+      <green>{lang:abilities.{abilityId}.name}</green>.
+    deathsGrasp:
+      hit: <blue>Game></blue> <gray>You hit <yellow>{target}</yellow> with <green>{lang:abilities.{abilityId}.name}</green>.
+      hitBy: <blue>Game></blue> <yellow>{attacker}</yellow> <gray>hit you with <green>{lang:abilities.{abilityId}.name}</green>.
+    glidingGallop:
+      hitBy: <blue>Game></blue> <yellow>{attacker}</yellow> <gray>hit you with <green>{lang:abilities.{abilityId}.name}</green>.
+    hoofBash:
+      hitBy: <blue>Game></blue> <yellow>{attacker}</yellow> <gray>hit you with <green>{lang:abilities.{abilityId}.name}</green>.
     explode:
       alreadyCharging: '{lang:prefix} <warning>Already charging explosion!</warning>'
     targetLaser:

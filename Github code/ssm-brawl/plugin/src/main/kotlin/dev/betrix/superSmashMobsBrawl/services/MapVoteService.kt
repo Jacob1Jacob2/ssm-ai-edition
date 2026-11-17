@@ -197,7 +197,7 @@ object MapVoteService : KoinComponent {
                 val glyph = ResourcePackService.glyphFor(map.id)
                 if (glyph != null && ResourcePackService.hasPack(player)) {
                     lore +=
-                        Component.text(glyph.toString())
+                        Component.text(glyph)
                             .font(ResourcePackService.MAP_FONT)
                             .color(NamedTextColor.WHITE)
                             .shadowColor(ShadowColor.none())
