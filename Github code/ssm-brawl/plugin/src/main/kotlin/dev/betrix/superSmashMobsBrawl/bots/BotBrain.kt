@@ -153,6 +153,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     fun resetNavigation() {
         route.clear();routeSearch=null;routeGoal=null;nextRouteTick=0
         blockedSteps.clear();blockedEdges.clear();failedClimbs.clear();unreachableUntil.clear();unreachableAt.clear();withdrawUntil=0;stuckRef=null;gapJump=null;climb=null
+        bridge=null;reachable=emptySet()
         lastSafe=null;recovering=false;recoveryGoal=null;comboQueue.clear();shot=null
         fleeGoal=null;fleeFailedUntil=0;itemGoal=null
         navStats.reset()
@@ -193,6 +194,10 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
 
     /** Whether the last finished search found a way all the way to its goal. */
     private var routeReached = true
+
+    /** The blocks the last search that found no way could get to, and when that was. */
+    private var reachable: Set<RouteNode> = emptySet()
+    private var reachableTick = -100000L
 
     private fun routeToward(to: Location, map: GameMapDef,
                             unreachable: () -> Unit = { target?.let(::markUnreachable) }): RouteStep? {
@@ -241,6 +246,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                 route.addAll(search.remainingFrom(here.x,here.y,here.z,result))
                 routeSearch=null
                 routeReached=search.reached
+                // A search that found no way has been everywhere this bot can get to: worth
+                // remembering for whatever makes a way of its own (a Snowman's ice bridge).
+                if(!search.reached) { reachable=search.visited();reachableTick=tick }
                 routeAt=search.start
                 nextRouteTick=tick+5
                 // No way through, and the bot already stands where the best attempt ends.
@@ -512,7 +520,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             route.clear();routeSearch=null;nextRouteTick=0
             blockedSteps.clear();blockedEdges.clear();stuckRef=null
             comboQueue.clear();bowReleaseTick=0;player.isSneaking=false
-            shot=null;carried=null;channelUntil=0;perch=null
+            shot=null;carried=null;channelUntil=0;perch=null;bridge=null
             enterState(CombatState.IDLE)
             opponents=emptyList();healthLosses.clear();lastHealth=0.0
             itemGoal=null;ignoredItems.clear();fleeFailedUntil=0;trackedId=null
@@ -631,6 +639,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         if (climb != null && continueClimb(map)) return
         if (gapJump != null && continueGapJump(map)) return
         perch?.let { if (tickPerch(it, map)) return }
+        bridge?.let { if (it.stage > 0 && tickBridge(it, map)) return }
 
         // A hop across a small gap passes over the drop for a few ticks. That is the route
         // working, not a fall: recovering from it (a double jump back the way it came) used to
@@ -1239,6 +1248,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         // A Sheep with no way over and no shot from here makes itself a place to shoot from.
         if (decide && ((sieging && (!sees || dist > 36.0)) || (BotManager.forcePerch && t.y < player.y - 3 && dist > 10)) &&
             startPerch(t, dist)) return
+        // A Snowman with no way over lays one: off to the ledge its ice bridge starts from.
+        if (decide && sieging && bridge == null) startBridge(t, map)
+        bridge?.let { if (it.stage == 0 && approachBridge(it, t, map)) return }
         if (sieging && d.smartTargeting) {
             if (tick >= withdrawUntil && healthLosses.isNotEmpty() && !canHarmAt(dist)) {
                 withdrawUntil = tick + 160
@@ -1412,8 +1424,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     }
 
     /** Can a jump from here, followed by this kit's air jump at the top, land on [p]? */
-    private fun jumpReaches(p: Location): Boolean {
-        val here = player.location
+    private fun jumpReaches(p: Location, here: Location = player.location): Boolean {
         val from = here.y + 1.2
         val r = hypot(p.x - here.x, p.z - here.z)
         val jumps = airJumpsLeft()
@@ -1895,6 +1906,218 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                     useAbility("wooly_rocket", AbilityHints.of("wooly_rocket"), false)
                     p.rocketed = true
                 } else if (!nms.onGround()) recover(map, true)
+            }
+        }
+        return true
+    }
+
+    // ------------------------------------------------------------------ snowman: ice bridge
+
+    /**
+     * A Snowman that cannot get to an opponent makes its own way: it goes to a ledge it can reach
+     * with open air between it and them, lays an Ice Path aimed at where they stand, and runs
+     * across before it melts, jumping from the far end if the ice stops short.
+     */
+    private class Bridge(val targetId: java.util.UUID, val launch: Location, val landing: Location, var since: Long) {
+        /** 0 walking to the ledge, 1 lining up, 2 on the ice, 3 in the jump off its end. */
+        var stage = 0
+        var origin: Location? = null
+        var line: BridgeLine? = null
+    }
+    /**
+     * The straight line an Ice Path takes: unit direction over the ground, blocks risen per block
+     * across, how far the ice goes, and whether that is all the way to the landing.
+     */
+    private class BridgeLine(val ux: Double, val uz: Double, val slope: Double, val reach: Double, val direct: Boolean)
+    private var bridge: Bridge? = null
+    private var nextBridgeTick = 0L
+
+    /** What the ice would stand on (or be) in this block of the path, or null if the path has a hole or a wall there. */
+    private fun bridgeTop(world: org.bukkit.World, x: Int, y: Int, z: Int): Int? {
+        val type = world.getBlockAt(x, y, z).type
+        var top = y + 1
+        // Ice only forms in air and thin snow. Solid ground in the line is a floor as it is;
+        // anything else (a plant, water) stays what it is and leaves a hole.
+        if (type != org.bukkit.Material.AIR && type != org.bukkit.Material.SNOW) {
+            if (!type.isSolid || ArenaTerrain.watery(type)) return null
+            while (top - y <= 3 && world.getBlockAt(x, top, z).type.isSolid) top++
+            if (top - y > 3) return null
+        }
+        if (!world.getBlockAt(x, top, z).isPassable || !world.getBlockAt(x, top + 1, z).isPassable) return null
+        return top
+    }
+
+    /** The Ice Path from [from] toward [landing], if it makes a way a fighter can run. */
+    private fun bridgeLine(from: Location, landing: Location): BridgeLine? {
+        val world = from.world ?: return null
+        val dx = landing.x - from.x
+        val dz = landing.z - from.z
+        val across = hypot(dx, dz)
+        if (across < 3.0 || across > BRIDGE_AHEAD + 6.5) return null
+        val ux = dx / across
+        val uz = dz / across
+        // The ice forms in the block the line passes through, so its top is the next whole block
+        // up: aim half a block under the landing and the last of it comes out level with it.
+        val rise = landing.y - 0.5 - from.y
+        var slope = if (rise <= 0) rise / across else rise / minOf(across, BRIDGE_AHEAD)
+        if (rise > 0) slope = rise / minOf(across, BRIDGE_AHEAD / sqrt(1 + slope * slope))
+        // Up is a jump for every block of it, so no steeper than one in two; the path itself
+        // gives out at one in one.
+        if (slope > 0.5 || slope < -1.0) return null
+        val reach = BRIDGE_AHEAD / sqrt(1 + slope * slope)
+        val direct = across <= reach + 0.3
+        val last = if (direct) across - 0.5 else reach
+        // The path lifts whoever lays it a block, onto its first ice.
+        var prev = kotlin.math.floor(from.y + 1e-6).toInt() + 1
+        var top = prev
+        var h = 0.8
+        while (h <= last) {
+            top = bridgeTop(world, kotlin.math.floor(from.x + ux * h).toInt(), kotlin.math.floor(from.y + slope * h).toInt(),
+                kotlin.math.floor(from.z + uz * h).toInt()) ?: return null
+            if (top - prev > 1 || prev - top > 5) return null
+            prev = top
+            h += 0.4
+        }
+        if (direct) {
+            if (landing.y - top > 1.05 || top - landing.y > 5.0) return null
+        } else {
+            // The ice stops short: the rest is a jump from its end, with nothing in the way.
+            val end = Location(world, from.x + ux * (reach - 1.5), top.toDouble(), from.z + uz * (reach - 1.5))
+            if (across - reach > 5.5 || !jumpReaches(landing, end)) return null
+            val eye = end.clone().add(0.0, 1.7, 0.0)
+            val gap = landing.clone().add(0.0, 1.7, 0.0).toVector().subtract(eye.toVector())
+            if (world.rayTraceBlocks(eye, gap.clone().normalize(), gap.length(), org.bukkit.FluidCollisionMode.NEVER, true) != null) return null
+        }
+        return BridgeLine(ux, uz, slope, reach, direct)
+    }
+
+    /** Looks for a ledge to bridge from, among the places the last failed route search got to. */
+    private fun startBridge(t: Player, map: GameMapDef): Boolean {
+        if (tick < nextBridgeTick || !d.smartTargeting || "ice_path" !in kitAbilityIds()) return false
+        // In the middle of a shot or a jump: look again at the next decision, not in two seconds.
+        if (holdUntilTick >= 0 || shot != null || gapJump != null || climb != null || !nms.onGround()) return false
+        nextBridgeTick = tick + 40
+        if (!isReady("ice_path") || !canDoubleJump() || tick - reachableTick > 1500) return false
+        val world = player.world
+        // Where they are standing, as the walking graph sees it.
+        val node = ArenaNav.of(world, map.voidLevel.toInt(), true).nearest(t.location, 3.0) ?: return false
+        val landing = Location(world, node.x + .5, node.y, node.z + .5)
+        val here = player.location
+        // Nearest to them first, with a little in it for being near the bot.
+        val ledges = reachable.asSequence()
+            .filter { abs(it.x + .5 - landing.x) <= BRIDGE_AHEAD + 6.5 && abs(it.z + .5 - landing.z) <= BRIDGE_AHEAD + 6.5 && it.y - landing.y in -7.5..14.0 }
+            .map { it to hypot(it.x + .5 - landing.x, it.z + .5 - landing.z) }
+            .filter { it.second in 3.0..(BRIDGE_AHEAD + 6.5) }
+            .sortedBy { (n, across) -> across + 0.25 * hypot(n.x + .5 - here.x, n.z + .5 - here.z) }
+            .take(80).toList()
+        for ((n, _) in ledges) {
+            val launch = Location(world, n.x + .5, n.y, n.z + .5)
+            if (bridgeLine(launch, landing) == null) continue
+            bridge = Bridge(t.uniqueId, launch, landing, tick)
+            prowlGoal = null
+            route.clear(); routeSearch = null; nextRouteTick = tick
+            comboQueue.clear()
+            dbg("no way to ${t.name}: going to ${n.x},${"%.1f".format(n.y)},${n.z} to lay an ice bridge to ${node.x},${"%.1f".format(node.y)},${node.z}")
+            return true
+        }
+        nextBridgeTick = tick + 100
+        return false
+    }
+
+    private fun endBridge(reason: String, rest: Long = 200) {
+        dbg("ice bridge over: $reason")
+        bridge = null
+        nextBridgeTick = tick + rest
+    }
+
+    /** Walks to the ledge the bridge starts from. False once the plan is off and the fight should carry on. */
+    private fun approachBridge(b: Bridge, t: Player, map: GameMapDef): Boolean {
+        val here = player.location
+        if (t.uniqueId != b.targetId || t.world != here.world || hypot(t.x - b.landing.x, t.z - b.landing.z) > 3.5 || abs(t.y - b.landing.y) > 3.0) {
+            endBridge("they are not where the bridge was going", 40); return false
+        }
+        if (tick - b.since > 400 || !isReady("ice_path")) { endBridge("did not get to the ledge with the path ready"); return false }
+        // They have not moved: no need to go looking for a route to them again halfway there.
+        unreachableUntil[t.uniqueId] = maxOf(unreachableUntil[t.uniqueId] ?: 0L, tick + 100)
+        if (nms.onGround() && hypot(b.launch.x - here.x, b.launch.z - here.z) < 0.45 && abs(b.launch.y - here.y) < 1.0) {
+            setInputs(0f, 0f, false)
+            b.stage = 1; b.since = tick
+            return true
+        }
+        travel(b.launch, map) { endBridge("no way to the ledge") }
+        return true
+    }
+
+    /** One tick of laying the bridge and running it. False once it is over and the normal brain should carry on. */
+    private fun tickBridge(b: Bridge, map: GameMapDef): Boolean {
+        val t = target?.takeIf { it.isOnline && it.world == player.world && it.gameMode == GameMode.SURVIVAL && it.uniqueId == b.targetId }
+        val here = player.location
+        val age = tick - b.since
+        fun across() {
+            unreachableUntil.remove(b.targetId); unreachableAt.remove(b.targetId)
+            route.clear(); routeSearch = null; nextRouteTick = tick
+            lastMap?.let { forgetTerrain(b.landing.blockX, b.landing.blockZ, it) }
+            endBridge("across", 100)
+        }
+        fun arrived() = nms.onGround() && hypot(b.landing.x - here.x, b.landing.z - here.z) < 2.2 && abs(here.y - b.landing.y) < 1.5
+        when (b.stage) {
+            // Stand still, face down the line, lay it.
+            1 -> {
+                if (t == null || age > 40 || !isReady("ice_path")) { endBridge("could not line the bridge up", 100); return false }
+                if (!nms.onGround()) return false
+                if (hypot(t.x - b.landing.x, t.z - b.landing.z) > 3.5) { endBridge("they moved", 40); return false }
+                setInputs(0f, 0f, false)
+                val line = bridgeLine(here, b.landing) ?: run { endBridge("no clear line from here", 60); return false }
+                val yaw = Math.toDegrees(atan2(-line.ux, line.uz)).toFloat()
+                val pitch = (-Math.toDegrees(atan2(line.slope, 1.0))).toFloat()
+                turnTowards(yaw, pitch, d.turnSpeed * 2)
+                val v = nms.deltaMovement
+                if (abs(wrapDegrees(yaw - nms.yRot)) < 4f && abs(pitch - nms.xRot) < 4f && hypot(v.x, v.z) < 0.03) {
+                    // The path goes exactly where the bot is looking: no rounding off.
+                    nms.setYRot(yaw); nms.setYHeadRot(yaw); nms.setXRot(pitch)
+                    useAbility("ice_path", AbilityHints.of("ice_path"), false)
+                    if (isReady("ice_path")) { endBridge("the path would not lay", 100); return false }
+                    b.origin = here.clone(); b.line = line
+                    b.stage = 2; b.since = tick
+                    dbg("ice bridge laid toward ${"%.1f %.1f %.1f".format(b.landing.x, b.landing.y, b.landing.z)}" +
+                        " (${"%.1f".format(hypot(b.landing.x - here.x, b.landing.z - here.z))} across, ice for ${"%.1f".format(line.reach)})")
+                }
+            }
+            // Run it. The ice forms a block a tick ahead of the runner and melts six seconds later.
+            2 -> {
+                val o = b.origin!!
+                val line = b.line!!
+                lastSafe = b.launch
+                if (arrived()) { across(); return false }
+                val h = (here.x - o.x) * line.ux + (here.z - o.z) * line.uz
+                if (age > 220 || (age > 25 && here.y < o.y + line.slope * h - 3.0)) { endBridge("fell off or ran out of time"); return false }
+                // Keep to the middle of it: head for a point on the line a few blocks on.
+                val on = h + 3.0
+                val (yaw, _) = lookAngles(player.eyeLocation, Location(here.world, o.x + line.ux * on, here.y + 1.6, o.z + line.uz * on))
+                turnTowards(yaw, 0f, 30f)
+                // Lifted and dropped back onto the first of the ice: nothing to do until it lands.
+                if (!nms.onGround() && age < 16) { setInputs(0f, 0f, false); return true }
+                fun iceAt(ahead: Double) = hasSolidBelow(Location(here.world, here.x + line.ux * ahead, here.y + 0.6, here.z + line.uz * ahead), 6)
+                val toEnd = line.reach - h
+                if (!line.direct && toEnd < 1.6) {
+                    // The end of the ice: the rest is a jump, taken before the bot slides off.
+                    if (nms.onGround() && jumpReaches(b.landing) && clearHop(b.landing, map)) {
+                        b.stage = 3; b.since = tick
+                        dbg("end of the ice: jumping the last ${"%.1f".format(hypot(b.landing.x - here.x, b.landing.z - here.z))} blocks")
+                        startGapJump(Gap(hypot(b.landing.x - here.x, b.landing.z - here.z), b.landing))
+                        return true
+                    }
+                    setInputs(0f, 0f, false)
+                }
+                // Ice slides: only as fast as there is ice to stop on.
+                val forward = if (iceAt(1.0) && iceAt(2.6)) 1f else if (iceAt(1.0)) 0.7f else 0f
+                setInputs(forward, 0f, forward > 0f && nms.horizontalCollision && nms.onGround())
+            }
+            // The jump off the end has finished, one way or the other.
+            else -> {
+                if (arrived()) { across(); return false }
+                endBridge(if (nms.onGround()) "came down somewhere else" else "the jump off the end fell short")
+                return false
             }
         }
         return true
@@ -2427,6 +2650,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         const val DASH_LENGTH = 9.5
         /** Ticks into the jump at which the leap is fired: just before the top of it. */
         const val DASH_DELAY = 4L
+        /** An Ice Path runs 14 blocks ahead of whoever lays it; the last of it is not counted on. */
+        const val BRIDGE_AHEAD = 13.0
         val DASH_SHOULDERS = doubleArrayOf(-0.3, 0.3)
         val CARDINALS = listOf(1.0 to 0.0, -1.0 to 0.0, 0.0 to 1.0, 0.0 to -1.0)
     }

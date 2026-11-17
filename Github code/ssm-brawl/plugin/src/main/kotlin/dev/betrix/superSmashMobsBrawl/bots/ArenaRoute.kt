@@ -50,6 +50,9 @@ class ArenaRoute(
         }
         return null
     }
+    /** Every block the search got to. After a search that found no way, that is everywhere the fighter can go. */
+    fun visited(): Set<RouteNode> = costs.keys
+
     /** A bot may move while a search is running. Never send it back over completed steps. */
     fun remainingFrom(x: Double, y: Double, z: Double, result: List<RouteStep>): List<RouteStep> {
         val passed = result.indexOfLast { abs(it.node.y-y)<.7 && hypot(it.node.x+.5-x,it.node.z+.5-z)<1.0 }

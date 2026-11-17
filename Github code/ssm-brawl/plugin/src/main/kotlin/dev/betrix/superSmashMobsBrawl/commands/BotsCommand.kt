@@ -83,6 +83,21 @@ class BotsCommand : KoinComponent {
         }
     }
 
+    @Execute(name = "platform")
+    @Description("Debug: puts a 3x3 stone platform in the running bots match, so that x y z is somewhere to stand")
+    fun platform(@Context sender: CommandSender, @Arg x: Double, @Arg y: Double, @Arg z: Double) {
+        if (!allowed(sender)) return
+        val world = BotManager.onlineBots().firstOrNull { it.world.key.value().startsWith("ssmbworld") }?.world
+            ?: run { plugin.logger.info("[platform] no match world"); return }
+        val bx = kotlin.math.floor(x).toInt(); val by = kotlin.math.floor(y).toInt() - 1; val bz = kotlin.math.floor(z).toInt()
+        for (dx in -1..1) for (dz in -1..1) {
+            world.getBlockAt(bx + dx, by, bz + dz).setType(org.bukkit.Material.STONE, false)
+            for (up in 1..3) world.getBlockAt(bx + dx, by + up, bz + dz).setType(org.bukkit.Material.AIR, false)
+        }
+        dev.betrix.superSmashMobsBrawl.bots.ArenaNav.invalidateAll(world, bx, bz)
+        plugin.logger.info("[platform] 3x3 stone at $bx,$by,$bz in ${world.key.value()}")
+    }
+
     @Execute(name = "snowcount")
     @Description("Debug: counts snow layers in the running bots match that are nowhere near a Snowman (left-over snow)")
     fun snowCount(@Context sender: CommandSender) {
