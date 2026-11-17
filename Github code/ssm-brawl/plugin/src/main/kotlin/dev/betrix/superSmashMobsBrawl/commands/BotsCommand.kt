@@ -59,6 +59,30 @@ class BotsCommand : KoinComponent {
         sender.sendMessage("Forced Wool Mine perch ${if (BotManager.forcePerch) "ON" else "OFF"}.")
     }
 
+    @Execute(name = "cubtest")
+    @Description("Debug: an enemy bot punches every summoned mob (cubs etc.) six times; logs its health")
+    fun cubTest(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        val summons = dev.betrix.superSmashMobsBrawl.abilities.ClassicSummons.owners.toMap()
+        plugin.logger.info("[cub] START ${summons.size} summons")
+        summons.forEach { (id, owner) ->
+            val mob = org.bukkit.Bukkit.getEntity(id) as? org.bukkit.entity.LivingEntity ?: return@forEach
+            val hitter = BotManager.onlineBots().firstOrNull {
+                it != owner && it.world == mob.world && it.gameMode == org.bukkit.GameMode.SURVIVAL
+            } ?: run { plugin.logger.info("[cub] no enemy bot for ${mob.type}"); return@forEach }
+            var n = 0
+            object : org.bukkit.scheduler.BukkitRunnable() {
+                override fun run() {
+                    if (!mob.isValid) { plugin.logger.info("[cub] ${mob.type} of ${owner.name} DEAD after $n hits"); cancel(); return }
+                    if (n >= 6) { plugin.logger.info("[cub] ${mob.type} of ${owner.name} SURVIVED health ${mob.health}"); cancel(); return }
+                    val before = mob.health
+                    hitter.attack(mob); n++
+                    plugin.logger.info("[cub] ${hitter.name} hit ${mob.type} of ${owner.name}: $before -> ${if (mob.isValid) mob.health.toString() else "removed"}")
+                }
+            }.runTaskTimer(plugin, 1L, 12L)
+        }
+    }
+
     @Execute(name = "debug")
     @Description("Toggle logging of bot movement decisions")
     fun debug(@Context sender: CommandSender) {

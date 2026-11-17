@@ -21,7 +21,7 @@ class PolarBearCubAbility(player: Player) : ClassicKitAbility("cub_carrier", pla
             bear.ageLock = true
             bear.removeWhenFarAway = false
             bear.canPickupItems = false
-            summon(bear, if (adult) metadata.double("adultHealth") ?: 30.0 else metadata.double("cubHealth") ?: 12.0)
+            summon(bear, if (adult) metadata.double("adultHealth") ?: 30.0 else metadata.double("cubHealth") ?: 12.0, tagged = true)
             bear.velocity = player.eyeLocation.direction.rotateAroundY((index - (count - 1) / 2.0) * .12)
                 .multiply(upgradedValue("throwSpeed", 1.4)).add(Vector(0.0, .35, 0.0))
             var lastAttack = -20

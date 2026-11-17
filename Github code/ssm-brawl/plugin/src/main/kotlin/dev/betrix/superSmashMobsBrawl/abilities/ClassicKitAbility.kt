@@ -79,13 +79,21 @@ abstract class ClassicKitAbility(id: String, player: Player) : BrawlAbility(id, 
         entity.remove()
     }
 
-    protected fun summon(entity: LivingEntity, health: Double) {
+    /** Health over a summon's head, so it is plain that it can be killed and how close it is. */
+    private fun healthTag(entity: LivingEntity) {
+        entity.customName(net.kyori.adventure.text.Component.text("${player.name} ", net.kyori.adventure.text.format.NamedTextColor.YELLOW)
+            .append(net.kyori.adventure.text.Component.text("❤ ${kotlin.math.ceil(entity.health).toInt()}", net.kyori.adventure.text.format.NamedTextColor.RED)))
+        entity.isCustomNameVisible = true
+    }
+
+    protected fun summon(entity: LivingEntity, health: Double, tagged: Boolean = false) {
         entity.setAI(true)
         if (entity is Mob) Bukkit.getMobGoals().removeAllGoals(entity)
         entity.isPersistent = false
         entity.isSilent = true
         entity.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH)?.baseValue = health
         entity.health = health
+        if (tagged) healthTag(entity)
         ownedEntities.add(entity)
         ClassicSummons.owners[entity.uniqueId] = player
         var lastMelee = 0L
@@ -97,10 +105,23 @@ abstract class ClassicKitAbility(id: String, player: Player) : BrawlAbility(id, 
             if (damageType == null && now - lastMelee < 500) return@event
             if (damageType == null) lastMelee = now
             appliedDamage = damage.coerceAtLeast(0.0)
-            if (damage >= entity.health) remove(entity)
-            else {
+            // Summons are silent and take no vanilla damage, so every accepted hit has to show itself.
+            val at = entity.location.add(0.0, entity.height / 2, 0.0)
+            val hurt = entity.hurtSound ?: Sound.ENTITY_GENERIC_HURT
+            if (damage >= entity.health) {
+                entity.world.playSound(at, entity.deathSound ?: hurt, SoundCategory.PLAYERS, 1f, 1f)
+                entity.world.spawnParticle(Particle.POOF, at, 12, .25, .25, .25, .03)
+                remove(entity)
+            } else {
                 entity.health -= appliedDamage
+                if (tagged) healthTag(entity)
                 entity.playHurtAnimation(0f)
+                entity.world.playSound(at, hurt, SoundCategory.PLAYERS, 1f, 1f)
+                entity.world.spawnParticle(Particle.DAMAGE_INDICATOR, at, 3, .2, .2, .2, .05)
+                if (tagged && damageType == null) {
+                    val away = entity.location.toVector().subtract(attacker.location.toVector()).setY(0.0)
+                    if (away.lengthSquared() > .0001) entity.velocity = away.normalize().multiply(.45).setY(.3)
+                }
             }
         })
         listeners.add(gg.flyte.twilight.event.event<org.bukkit.event.entity.EntityDamageEvent>(
