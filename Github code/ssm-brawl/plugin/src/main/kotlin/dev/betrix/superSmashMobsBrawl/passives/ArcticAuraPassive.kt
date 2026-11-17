@@ -28,7 +28,7 @@ class ArcticAuraPassive(player: Player) : BrawlPassive("arctic_aura", player) {
         runnables.add(repeatingTask(1) {
             ticks++
             val expired = snow.filter { (block, until) -> until <= ticks || block.type != Material.SNOW }.keys.toList()
-            expired.forEach { if (it.type == Material.SNOW) it.setType(Material.AIR, false); snow.remove(it) }
+            expired.forEach { if (it.type == Material.SNOW) it.setType(Material.AIR, false); snow.remove(it); dev.betrix.superSmashMobsBrawl.utils.TemporarySnow.remove(it) }
             val game = minigameService.getMinigameForPlayer(player) ?: return@repeatingTask
             if (ticks % 5 == 0L) {
                 val radius=5.0*player.exp + if(dev.betrix.superSmashMobsBrawl.smash.SmashService.has(player,"snowman:0"))5.0 else 0.0
@@ -40,6 +40,7 @@ class ArcticAuraPassive(player: Player) : BrawlPassive("arctic_aura", player) {
                     if ((block.type == Material.AIR || (block.type == Material.SNOW && snow.containsKey(block))) && block.getRelative(0,-1,0).type.isSolid && block.getRelative(0,-1,0).type !in setOf(Material.ICE,Material.PACKED_ICE,Material.BLUE_ICE,Material.FROSTED_ICE)) {
                         block.setType(Material.SNOW,false)
                         snow[block]=ticks+40
+                        dev.betrix.superSmashMobsBrawl.utils.TemporarySnow.add(block)
                     }
                 }
             }
@@ -52,7 +53,7 @@ class ArcticAuraPassive(player: Player) : BrawlPassive("arctic_aura", player) {
 
     override fun teardown() {
         super.teardown()
-        snow.keys.forEach { if (it.type == Material.SNOW) it.setType(Material.AIR, false) }
+        snow.keys.forEach { if (it.type == Material.SNOW) it.setType(Material.AIR, false); dev.betrix.superSmashMobsBrawl.utils.TemporarySnow.remove(it) }
         snow.clear()
     }
 }

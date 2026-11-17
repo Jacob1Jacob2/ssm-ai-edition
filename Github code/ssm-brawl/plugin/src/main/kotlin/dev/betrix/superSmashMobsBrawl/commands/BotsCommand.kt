@@ -83,6 +83,27 @@ class BotsCommand : KoinComponent {
         }
     }
 
+    @Execute(name = "snowcount")
+    @Description("Debug: counts snow layers in the running bots match that are nowhere near a Snowman (left-over snow)")
+    fun snowCount(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        val bots = BotManager.onlineBots().filter { it.world.key.value().startsWith("ssmbworld") }
+        val world = bots.firstOrNull()?.world ?: run { plugin.logger.info("[snow] no match world"); return }
+        val snowmen = bots.filter { it.world == world && dev.betrix.superSmashMobsBrawl.services.KitService.getKitForPlayer(it)?.id == "snowman" }
+        val centre = bots.first { it.world == world }.location
+        var total = 0; var stray = 0
+        for (x in -70..70) for (z in -70..70) {
+            if (!world.isChunkLoaded((centre.blockX + x) shr 4, (centre.blockZ + z) shr 4)) continue
+            for (y in -40..40) {
+                val block = world.getBlockAt(centre.blockX + x, centre.blockY + y, centre.blockZ + z)
+                if (block.type != org.bukkit.Material.SNOW) continue
+                total++
+                if (snowmen.none { it.location.distanceSquared(block.location) < 15 * 15 }) stray++
+            }
+        }
+        plugin.logger.info("[snow] total=$total stray=$stray snowmen=${snowmen.size}")
+    }
+
     @Execute(name = "debug")
     @Description("Toggle logging of bot movement decisions")
     fun debug(@Context sender: CommandSender) {

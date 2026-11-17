@@ -60,8 +60,8 @@ class BlizzardAbility(player: Player) : ClassicKitAbility("blizzard", player) {
             }.onHitBlock {block,_ ->
                 val above=block.getRelative(org.bukkit.block.BlockFace.UP)
                 if(above.isEmpty && block.type.isSolid && block.type !in setOf(Material.ICE,Material.PACKED_ICE,Material.BLUE_ICE,Material.FROSTED_ICE) && above !in snow) {
-                    snow[above]=above.state;above.setType(Material.SNOW,false)
-                    loop(finish={snow.remove(above)?.update(true,false)}) {it<40}
+                    snow[above]=above.state;above.setType(Material.SNOW,false);dev.betrix.superSmashMobsBrawl.utils.TemporarySnow.add(above)
+                    loop(finish={dev.betrix.superSmashMobsBrawl.utils.TemporarySnow.remove(above);snow.remove(above)?.let { state -> if(above.type==Material.SNOW)state.update(true,false) }}) {it<40}
                 }
                 ProjectileAction.DESTROY
             }.onTeardown {projectiles.remove(it)}.upgraded().launch()
@@ -69,7 +69,7 @@ class BlizzardAbility(player: Player) : ClassicKitAbility("blizzard", player) {
     }
     override fun teardown() {
         projectiles.toList().forEach {it.teardown()};projectiles.clear()
-        snow.values.forEach {it.update(true,false)};snow.clear()
+        snow.forEach {(block,state) -> dev.betrix.superSmashMobsBrawl.utils.TemporarySnow.remove(block);if(block.type==Material.SNOW)state.update(true,false)};snow.clear()
         super.teardown()
     }
 }

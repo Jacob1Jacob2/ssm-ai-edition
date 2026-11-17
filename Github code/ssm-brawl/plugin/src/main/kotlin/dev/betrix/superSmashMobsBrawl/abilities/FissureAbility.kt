@@ -260,7 +260,7 @@ class FissureAbility(player: Player) : BrawlAbility("fissure", player) {
 
         private fun scheduleBlockChange(block: Block, newData: BlockData, durationMs: Long) {
             if (!trackedBlockStates.containsKey(block)) {
-                trackedBlockStates[block] = block.blockData.clone()
+                trackedBlockStates[block] = dev.betrix.superSmashMobsBrawl.utils.TemporarySnow.original(block)
             }
             val originalData = trackedBlockStates[block]
             val appliedData = newData.clone()
