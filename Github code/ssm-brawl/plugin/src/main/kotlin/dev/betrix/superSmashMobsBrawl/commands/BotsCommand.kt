@@ -51,6 +51,14 @@ class BotsCommand : KoinComponent {
         sender.sendMessage("Spawned ${spawned.size} bots: ${spawned.joinToString { it.name }}")
     }
 
+    @Execute(name = "perchtest")
+    @Description("Debug: Sheep bots try the Wool Mine perch on any opponent well below them")
+    fun perchTest(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        BotManager.forcePerch = !BotManager.forcePerch
+        sender.sendMessage("Forced Wool Mine perch ${if (BotManager.forcePerch) "ON" else "OFF"}.")
+    }
+
     @Execute(name = "debug")
     @Description("Toggle logging of bot movement decisions")
     fun debug(@Context sender: CommandSender) {

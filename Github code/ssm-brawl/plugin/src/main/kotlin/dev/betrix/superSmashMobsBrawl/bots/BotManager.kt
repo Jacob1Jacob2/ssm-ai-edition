@@ -61,6 +61,8 @@ object BotManager : KoinComponent {
 
     /** /bots debug: log every bot jump, double jump and recovery decision. */
     @Volatile var debug = false
+    /** Debug: Sheep bots try their Wool Mine perch on any opponent well below them, reachable or not. */
+    @Volatile var forcePerch = false
     private var roster: List<BotProfile> = emptyList()
     private var rankStyles: Map<String, String> = emptyMap()
 

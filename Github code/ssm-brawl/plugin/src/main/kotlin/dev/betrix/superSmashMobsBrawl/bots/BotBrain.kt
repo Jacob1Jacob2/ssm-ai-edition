@@ -222,7 +222,12 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                 }, ROUTE_LIMIT)
                 routeGoal = to.clone()
                 nextRouteTick = tick + if(d.smartTargeting) 30 else 50
-            } else nextRouteTick = tick + 10
+            } else {
+                nextRouteTick = tick + 10
+                // Nowhere to stand anywhere near them (hanging in the air, far out over the void):
+                // that is as unreachable as it gets, not a reason to stand and wait for a route.
+                if (start != null && goal == null) unreachable()
+            }
         }
         // A search takes at most 2.5ms of a tick, and all bots together at most six.
         val search = routeSearch
@@ -507,7 +512,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             route.clear();routeSearch=null;nextRouteTick=0
             blockedSteps.clear();blockedEdges.clear();stuckRef=null
             comboQueue.clear();bowReleaseTick=0;player.isSneaking=false
-            shot=null;carried=null;channelUntil=0
+            shot=null;carried=null;channelUntil=0;perch=null
             enterState(CombatState.IDLE)
             opponents=emptyList();healthLosses.clear();lastHealth=0.0
             itemGoal=null;ignoredItems.clear();fleeFailedUntil=0;trackedId=null
@@ -625,6 +630,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         // A wall climb or a gap jump in progress steers itself; recovery must not turn it around mid-air.
         if (climb != null && continueClimb(map)) return
         if (gapJump != null && continueGapJump(map)) return
+        perch?.let { if (tickPerch(it, map)) return }
 
         // A hop across a small gap passes over the drop for a few ticks. That is the route
         // working, not a fall: recovering from it (a double jump back the way it came) used to
@@ -1230,6 +1236,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         val sees = player.hasLineOfSight(t)
         // Nothing routes to an opponent we just found unreachable: hold the closest ground instead.
         val sieging = besieging(t)
+        // A Sheep with no way over and no shot from here makes itself a place to shoot from.
+        if (decide && ((sieging && (!sees || dist > 36.0)) || (BotManager.forcePerch && t.y < player.y - 3 && dist > 10)) &&
+            startPerch(t, dist)) return
         if (sieging && d.smartTargeting) {
             if (tick >= withdrawUntil && healthLosses.isNotEmpty() && !canHarmAt(dist)) {
                 withdrawUntil = tick + 160
@@ -1255,7 +1264,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         } else lookAlongRoute(step)
 
         // Abilities.
-        if (decide && sees && shot == null && holdUntilTick < 0 && bowReleaseTick==0L && comboQueue.isEmpty() && rng.nextDouble() < d.abilityChance) {
+        if (decide && sees && shot == null && holdUntilTick < 0 && bowReleaseTick==0L && comboQueue.isEmpty() && rng.nextDouble() < d.abilityChance &&
+            !(BotManager.forcePerch && perchesDone == 0)) {
             planAbility(t, dist)
         }
 
@@ -1645,7 +1655,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         if (hint.aimUp != 0f) nms.setXRot((nms.xRot - hint.aimUp).coerceIn(-90f, 90f))
 
         val usage = dataService.getAbility(id)?.usage ?: AbilityUsage.RIGHT_CLICK
-        val holdFor = if (hint.holdTicks.last > 0) hint.holdTicks.random() else 0
+        val holdFor = if (id == "static_laser") laserHold() else if (hint.holdTicks.last > 0) hint.holdTicks.random() else 0
         if (holdFor > 0) {
             // Charge abilities fire when the player stops "blocking" with the item.
             nms.startUsingItem(InteractionHand.MAIN_HAND)
@@ -1672,6 +1682,221 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         dbg("ability $id" + if (followup) "" else " (follow-up)")
         val cooldownMs = ((dataService.getAbility(id)?.cooldown ?: 3.0) * 1000).toLong()
         abilityReadyAtMs[id] = System.currentTimeMillis() + cooldownMs + 250
+        return true
+    }
+
+    /**
+     * A Static Laser reaches 40 blocks at full charge and proportionally less before that (3.5% a
+     * tick), so it is held long enough to get to the opponent, with a little to spare.
+     */
+    private fun laserHold(): Int {
+        val t = target ?: return 20
+        val dist = player.eyeLocation.distance(aimPointOf(t))
+        return (ceil((dist + 3.0) / 40.0 / 0.035).toInt() + 1 + rng.nextInt(3)).coerceIn(12, 29)
+    }
+
+    // ------------------------------------------------------------------ sheep: wool mine perch
+
+    /**
+     * A Sheep that cannot get to an opponent and cannot see them (or is out of laser range) from
+     * where it stands makes itself somewhere to stand: it throws the Wool Mine out over the drop,
+     * sets it in mid-air where the opponent is in view, drops onto it, fires the laser, then sets
+     * the mine off under itself and rides the blast, the Wooly Rocket and the double jump home.
+     */
+    private class Perch(val home: Location, val yaw: Float, val pitch: Float, var since: Long) {
+        var stage = 0
+        var block: Location? = null
+        var setTick = 0L
+        var fired = false
+        var cool = 0
+        var rocketed = false
+        var jumpTick = 0L
+    }
+    private var perch: Perch? = null
+    private var nextPerchTick = 0L
+    private var perchesDone = 0
+
+    private fun woolMine() =
+        KitService.getKitForPlayer(player)?.getAbility("wool_mine") as? dev.betrix.superSmashMobsBrawl.abilities.WoolMineAbility
+
+    private fun startPerch(t: Player, dist: Double): Boolean {
+        if (perch != null || tick < nextPerchTick || !d.smartTargeting) return false
+        if (KitService.getKitForPlayer(player)?.id != "sheep" || !nms.onGround()) return false
+        if (holdUntilTick >= 0 || shot != null || gapJump != null || climb != null || dist !in 6.0..48.0) return false
+        if (player.health < 10.0 || !canDoubleJump()) return false
+        if (!isReady("wool_mine") || !isReady("static_laser") || !isReady("wooly_rocket")) return false
+        val mine = woolMine() ?: return false
+        if (mine.inFlight() || mine.mineBlock() != null) return false
+        val eye = player.eyeLocation
+        val (yaw, toTarget) = lookAngles(eye, aimPointOf(t))
+        // Only from the edge of a drop on their side: thrown from the middle of a floor the mine
+        // just lands on it.
+        val ahead = eye.clone().also { it.yaw = yaw; it.pitch = 0f }.direction
+        val feet = player.location
+        if ((2..4).any { hasSolidBelow(feet.clone().add(ahead.x * it, 0.5, ahead.z * it), 5) }) {
+            nextPerchTick = tick + 15
+            return false
+        }
+        // There has to be open air to throw into: down at them if the ledge allows, flatter if not.
+        val pitch = listOf((toTarget + 10f).coerceIn(25f, 55f), 35f, 25f, 15f, 5f).firstOrNull { p ->
+            val dir = eye.clone().also { it.yaw = yaw; it.pitch = p }.direction
+            eye.world.rayTraceBlocks(eye, dir, 8.0, org.bukkit.FluidCollisionMode.NEVER, true) == null
+        } ?: run {
+            nextPerchTick = tick + 40
+            return false
+        }
+        perch = Perch(player.location.clone(), yaw, pitch, tick)
+        comboQueue.clear()
+        dbg("no way to ${t.name} and no shot from here: making a wool mine perch")
+        return true
+    }
+
+    private fun endPerch(reason: String, rest: Long = 300) {
+        dbg("wool mine perch over: $reason")
+        if ((perch?.stage ?: 0) >= 2) perchesDone++
+        perch = null
+        nextPerchTick = tick + rest
+        recoveryGoal = null
+    }
+
+    /** Would a mine set at [at] be somewhere the bot can drop onto and see [t] from? */
+    private fun perchSpot(at: Location, home: Location, t: Player): Boolean {
+        val b = at.block
+        if (!b.type.isAir || !b.getRelative(0, 1, 0).isPassable || !b.getRelative(0, 2, 0).isPassable) return false
+        val top = b.location.add(0.5, 1.0, 0.5)
+        if (home.y - top.y !in -1.0..10.0 || hypot(top.x - home.x, top.z - home.z) !in 2.0..10.5) return false
+        val eye = top.clone().add(0.0, 1.5, 0.0)
+        val aim = aimPointOf(t)
+        val dist = eye.distance(aim)
+        if (dist !in 3.0..35.0) return false
+        val dir = aim.toVector().subtract(eye.toVector()).normalize()
+        return eye.world.rayTraceBlocks(eye, dir, dist, org.bukkit.FluidCollisionMode.NEVER, true) == null
+    }
+
+    /** One tick of the perch play. False once it is over and the normal brain should carry on. */
+    private fun tickPerch(p: Perch, map: GameMapDef): Boolean {
+        val t = target?.takeIf { it.isOnline && it.world == player.world && it.gameMode == GameMode.SURVIVAL }
+        val mine = woolMine() ?: run { endPerch("no wool mine"); return false }
+        val hint = AbilityHints.of("wool_mine")
+        val age = tick - p.since
+        fun next(stage: Int) { p.stage = stage; p.since = tick }
+        when (p.stage) {
+            // Line up and throw.
+            0 -> {
+                if (t == null || !nms.onGround() || age > 30) { endPerch("could not line up the throw", 100); return false }
+                setInputs(0f, 0f, false)
+                turnTowards(p.yaw, p.pitch, d.turnSpeed * 2)
+                if (abs(wrapDegrees(p.yaw - nms.yRot)) < 3f && abs(p.pitch - nms.xRot) < 3f) {
+                    useAbility("wool_mine", hint, false)
+                    if (!mine.inFlight()) { endPerch("the mine did not launch", 100); return false }
+                    next(1)
+                }
+            }
+            // Watch it fly; set it the moment it is somewhere worth standing.
+            1 -> {
+                setInputs(0f, 0f, false)
+                val at = mine.projectileLocation()
+                if (t == null || at == null || age > 50) { endPerch("the mine found no spot in the air", 200); return false }
+                // (The mine cannot be set for 0.8 seconds after the throw.)
+                if (age >= 18 && perchSpot(at, p.home, t)) {
+                    useAbility("wool_mine", hint, false)
+                    val block = mine.mineBlock() ?: run { endPerch("the mine would not set", 200); return false }
+                    p.block = block.location
+                    p.setTick = tick
+                    forgetTerrain(block.x, block.z, map)
+                    dbg("mine set at ${block.x},${block.y},${block.z}; dropping onto it")
+                    next(2)
+                }
+            }
+            // Get onto it: walk off the edge, then steer (and jump) like a recovery aimed at the mine.
+            2 -> {
+                lastSafe = p.home
+                val block = p.block!!
+                val top = block.clone().add(0.5, 1.0, 0.5)
+                if (mine.mineBlock() == null) { endPerch("the mine went off early"); return false }
+                if (age > 90) { endPerch("could not get onto the mine"); return false }
+                val here = player.location
+                if (nms.onGround()) {
+                    if (hypot(here.x - top.x, here.z - top.z) < 0.85 && abs(here.y - top.y) < 0.4) {
+                        setInputs(0f, 0f, false)
+                        next(3)
+                        return true
+                    }
+                    if (here.y < p.home.y - 1.5) { endPerch("landed somewhere else"); return false }
+                    val (yaw, _) = lookAngles(player.eyeLocation, top)
+                    turnTowards(yaw, 0f, d.turnSpeed * 2)
+                    setInputs(if (abs(wrapDegrees(yaw - nms.yRot)) < 20f) 1f else 0f, 0f, nms.horizontalCollision)
+                } else if (hypot(here.x - top.x, here.z - top.z) < 0.9 && here.y >= top.y - 0.1) {
+                    // Right above it: just come down, no jump needed.
+                    val (f, s) = steerTo(top)
+                    setInputs(f, s, false)
+                } else {
+                    recoveryGoal = top
+                    recoveryScanTick = tick
+                    recover(map, true)
+                }
+            }
+            // On the mine: laser them.
+            3 -> {
+                lastSafe = p.home
+                setInputs(0f, 0f, false)
+                if (mine.mineBlock() == null) { endPerch("the mine went off under the bot"); return false }
+                if (t != null) {
+                    val (yaw, pitch) = lookAngles(player.eyeLocation, aimPointOf(t))
+                    turnTowards(yaw, pitch, d.turnSpeed * 2)
+                    if (!p.fired && holdUntilTick < 0 && isReady("static_laser") && player.hasLineOfSight(t) &&
+                        abs(wrapDegrees(yaw - nms.yRot)) < 3f && abs(pitch - nms.xRot) < 3f) {
+                        useAbility("static_laser", AbilityHints.of("static_laser"), false)
+                        p.fired = true
+                    }
+                }
+                if (p.fired && holdUntilTick < 0) p.cool++
+                // The mine goes off by itself eight seconds after it is set: be gone before then.
+                if (p.cool >= 3 || t == null || tick - p.setTick > 110 || (!p.fired && age > 50)) next(4)
+            }
+            // Jump, and set the mine off underneath for the lift.
+            4 -> {
+                lastSafe = p.home
+                val (yaw, _) = lookAngles(player.eyeLocation, p.home)
+                turnTowards(yaw, -30f, 90f)
+                // The blast throws whoever is on the mine away from its middle, hard. Standing on
+                // the half nearest the ledge makes that the way home instead of anywhere at all.
+                val block = p.block!!
+                val here = player.location
+                val hx = p.home.x - (block.x + 0.5)
+                val hz = p.home.z - (block.z + 0.5)
+                val far = hypot(hx, hz).coerceAtLeast(0.01)
+                val lean = ((here.x - (block.x + 0.5)) * hx + (here.z - (block.z + 0.5)) * hz) / far
+                if (p.jumpTick == 0L) {
+                    if (lean < 0.25 && age < 12 && nms.onGround()) {
+                        val (f, s) = inputToward(p.home)
+                        setInputs(f * 0.5f, s * 0.5f, false)
+                    } else {
+                        setInputs(0f, 0f, true)
+                        p.jumpTick = tick
+                    }
+                } else {
+                    setInputs(0f, 0f, false)
+                    if (tick - p.jumpTick >= 3) {
+                        if (player.health >= 9.0 && mine.mineBlock() != null) useAbility("wool_mine", hint, false)
+                        next(5)
+                    }
+                }
+            }
+            // Ride it home: the rocket on the way up, then the double jump toward the ledge.
+            else -> {
+                lastSafe = p.home
+                if (nms.onGround() && age > 6) { endPerch("back on the ground"); return false }
+                if (age > 160) { endPerch("the way back took too long"); return false }
+                recoveryGoal = p.home.clone()
+                recoveryScanTick = tick
+                // The rocket goes straight up and cancels the sideways throw: a tick of the blast, then up.
+                if (!p.rocketed && age >= 1 && holdUntilTick < 0 && isReady("wooly_rocket") && player.location.y < p.home.y + 1.0) {
+                    useAbility("wooly_rocket", AbilityHints.of("wooly_rocket"), false)
+                    p.rocketed = true
+                } else if (!nms.onGround()) recover(map, true)
+            }
+        }
         return true
     }
 
@@ -1765,7 +1990,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         if (!needed || !decide || rng.nextDouble() > d.recoverySkill) return
         if (canDoubleJump() && tick - lastDoubleJumpTick > 6) {
             aimedDoubleJump(goal, "recovery")
-        } else if (holdUntilTick < 0) {
+        } else if (holdUntilTick < 0 && perch?.stage != 2) {
+            // (Dropping onto its own Wool Mine, a Sheep keeps the rocket for the way back.)
             if (tryRecoveryAbility() || webLaunch(goal)) dbg("used a movement ability to recover")
         }
     }

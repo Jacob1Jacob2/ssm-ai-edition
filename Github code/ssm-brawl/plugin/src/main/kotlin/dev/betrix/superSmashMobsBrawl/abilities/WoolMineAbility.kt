@@ -73,6 +73,11 @@ class WoolMineAbility(player: Player) : BrawlAbility("wool_mine", player) {
         launchProjectile()
     }
 
+    // What a bot needs to know to place the mine in the air and stand on it.
+    fun inFlight(): Boolean = projectile != null
+    fun projectileLocation(): org.bukkit.Location? = projectile?.projectileEntity?.takeIf { it.isValid }?.location
+    fun mineBlock(): Block? = woolBlock
+
     private fun launchProjectile() {
         activate()
         player.world.playSound(player.location, Sound.ENTITY_SHEEP_AMBIENT, 2f, 1.5f)

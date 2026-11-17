@@ -117,7 +117,7 @@ object AbilityHints {
             "harvest_rush" to AbilityHint(3.0, 10.0, damage = 4.0, moves = 8.0),
             "gliding_gallop" to AbilityHint(6.0, 16.0, recovery = true, damage = 0.0, moves = 10.0),
             // Sheep
-            "static_laser" to AbilityHint(4.0, 25.0, holdTicks = 15..28, damage = 7.0, knockback = 3.0),
+            "static_laser" to AbilityHint(4.0, 38.0, holdTicks = 15..28, damage = 7.0, knockback = 3.0),
             "wool_mine" to AbilityHint(0.0, 6.0, damage = 14.0, knockback = 2.0),
             "wooly_rocket" to AbilityHint(4.0, 20.0, recovery = true, damage = 8.0, knockback = 2.5, moves = 12.0),
         )
