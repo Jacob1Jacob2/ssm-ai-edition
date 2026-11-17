@@ -46,6 +46,8 @@ object ScoreboardService : KoinComponent {
     private const val FOOTER = "AI Edition"
     /** Nine fixed lines include the settings, section spacing, and footer. */
     private const val MAX_PLAYER_LINES = 6
+    /** Player lines that fit once the settings block is hidden (heading, two blanks and the footer stay). */
+    private const val MAX_PLAYER_LINES_ALONE = 11
 
     private val boards = HashMap<UUID, Pair<BrawlMinigame, Scoreboard>>()
     private val lobbyBoards = HashMap<UUID, Scoreboard>()
@@ -231,35 +233,39 @@ object ScoreboardService : KoinComponent {
                 }
                 .sortedWith(compareByDescending<Pair<Int?, String>> { it.first ?: 0 }.thenBy { it.second.lowercase() })
 
-        // Too many to fit: show the leaders, always including the viewer, then "+N more".
-        val shown =
-            if (rows.size <= MAX_PLAYER_LINES) rows
-            else {
-                val top = rows.take(MAX_PLAYER_LINES - 1)
-                val me = rows.firstOrNull { it.second == viewer.name }
-                if (me == null || me in top) top else top.take(MAX_PLAYER_LINES - 2) + me
-            }
+        // A sidebar holds fifteen lines and everyone still alive is always listed. A crowded match
+        // first gives up the settings block, then puts two names on a line.
+        val showSettings = rows.size <= MAX_PLAYER_LINES
+        val perLine = if (rows.size <= MAX_PLAYER_LINES_ALONE) 1 else 2
+        val shown = rows.take(MAX_PLAYER_LINES_ALONE * perLine)
 
         val lines = mutableListOf<Component>()
-        lines += ClassicSidebar.spawnSetting("Items", setup.items, setup.itemIntervalSeconds, GameSetupService.ITEM_INTERVALS, false)
-        lines += ClassicSidebar.spawnSetting("Smash", setup.crystals && setup.enabledCrystalTiers.isNotEmpty(),
-            setup.crystalIntervalSeconds, GameSetupService.CRYSTAL_INTERVALS, true)
-        lines += text("Difficulty: ", NamedTextColor.WHITE).append(text(setup.difficultyName, if(setup.botsIdle)NamedTextColor.GRAY else difficultyColor(setup.difficulty)))
-        lines += text("Mode: ", NamedTextColor.WHITE).append(
-            if (setup.allBotsVsPlayer || everyone.size == 2) text("${everyone.size - 1}", NamedTextColor.RED)
-                .append(text("v", NamedTextColor.WHITE)).append(text("1", NamedTextColor.GREEN))
-            else text("FFA", NamedTextColor.GREEN))
-        lines += text(ClassicSidebar.DIVIDER, NamedTextColor.GREEN).let {
-            if (ResourcePackService.hasPack(viewer)) it.append(Component.text("\uEFFF"))
-                .font(ResourcePackService.SIDEBAR_DIVIDER_FONT) else it
+        if (showSettings) {
+            lines += ClassicSidebar.spawnSetting("Items", setup.items, setup.itemIntervalSeconds, GameSetupService.ITEM_INTERVALS, false)
+            lines += ClassicSidebar.spawnSetting("Smash", setup.crystals && setup.enabledCrystalTiers.isNotEmpty(),
+                setup.crystalIntervalSeconds, GameSetupService.CRYSTAL_INTERVALS, true)
+            lines += text("Difficulty: ", NamedTextColor.WHITE).append(text(setup.difficultyName, if(setup.botsIdle)NamedTextColor.GRAY else difficultyColor(setup.difficulty)))
+            lines += text("Mode: ", NamedTextColor.WHITE).append(
+                if (setup.allBotsVsPlayer || everyone.size == 2) text("${everyone.size - 1}", NamedTextColor.RED)
+                    .append(text("v", NamedTextColor.WHITE)).append(text("1", NamedTextColor.GREEN))
+                else text("FFA", NamedTextColor.GREEN))
+            lines += text(ClassicSidebar.DIVIDER, NamedTextColor.GREEN).let {
+                if (ResourcePackService.hasPack(viewer)) it.append(Component.text("\uEFFF"))
+                    .font(ResourcePackService.SIDEBAR_DIVIDER_FONT) else it
+            }
         }
         lines += text("Players", NamedTextColor.YELLOW, bold = true).let {
             if (ResourcePackService.hasPack(viewer)) it.font(ResourcePackService.SIDEBAR_HEADING_FONT) else it
         }
         lines += Component.empty()
-        shown.forEach { (lives, name) ->
+        fun cell(lives: Int?, name: String): Component {
             val label = Bukkit.getPlayerExact(name)?.let { BotManager.displayNameOf(it) } ?: name
-            val row = if (lives == null) text(label, NamedTextColor.WHITE) else livesRow("$lives $label", lives)
+            return if (lives == null) text(label, NamedTextColor.WHITE) else livesRow("$lives $label", lives)
+        }
+        shown.chunked(perLine).forEach { pair ->
+            var row = cell(pair[0].first, pair[0].second)
+            if (pair.size > 1) row = Component.empty().append(row).append(text("   ", NamedTextColor.WHITE))
+                .append(cell(pair[1].first, pair[1].second))
             lines += if (ResourcePackService.hasPack(viewer)) row.font(ResourcePackService.SIDEBAR_PLAYER_FONT) else row
         }
         if (shown.size < rows.size) lines += text("+${rows.size - shown.size} more", NamedTextColor.GRAY).let {

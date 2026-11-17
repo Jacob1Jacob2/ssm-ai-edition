@@ -59,7 +59,9 @@ class MatchIntroManager(private val game:BrawlMinigame):Manageable() {
     fun messages(includeKitPrompt:Boolean=true):List<Component> {
         val world=game.worldManager.getWorld()
         val map=world?.data
-        val respawns=((game.minigameDef as? TeamBasedStocksMinigameDef)?.stocks ?: 4)-1
+        // Super Smash Mobs starts with the lives picked in Game Settings, not the minigame's default.
+        val respawns=(if(game.minigameDef.id=="super_smash_mobs")game.settings.lives.coerceIn(1,8)
+            else (game.minigameDef as? TeamBasedStocksMinigameDef)?.stocks ?: 4)-1
         val separator=Component.text("═".repeat(30),GREEN)
         val credit=Component.text("Map - ",GREEN)
             .append(Component.text(map?.displayName ?: map?.id ?: "Unknown",WHITE,BOLD))
@@ -71,7 +73,7 @@ class MatchIntroManager(private val game:BrawlMinigame):Manageable() {
             add(separator)
             add(Component.text("Game - ",GREEN).append(Component.text("Super Smash Mobs",YELLOW,BOLD)))
             add(Component.empty())
-            add(Component.text("  Each player has $respawns respawns",WHITE))
+            add(Component.text("  Each player has $respawns ${if(respawns==1)"respawn" else "respawns"}",WHITE))
             if(game.isPassiveValid("hunger"))add(Component.text("  Attack to restore hunger!",WHITE))
             add(Component.text(if(game.settings.allBotsVsPlayer)"  Defeat the opposing team!" else "  Last player alive wins!",WHITE))
             add(Component.empty());add(credited);add(separator)
