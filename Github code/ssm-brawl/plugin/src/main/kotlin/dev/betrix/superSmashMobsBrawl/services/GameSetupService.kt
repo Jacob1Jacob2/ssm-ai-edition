@@ -278,10 +278,14 @@ object GameSetupService : KoinComponent {
                 player.playSound(player.location, Sound.UI_BUTTON_CLICK, 0.6f, 1.2f)
                 openMenu(player)
             }
-            set(47, menuItem(Material.COPPER_SWORD, if (s.allBotsVsPlayer) "${s.bots}v1 — All Bots vs You" else "FFA — Free for All", NamedTextColor.AQUA,
-                listOf("Click to switch match mode", "Every fighter has ${s.lives} ${if (s.lives == 1) "life" else "lives"}"),selected="Mode" in chosen)) {
-                s.allBotsVsPlayer = !s.allBotsVsPlayer
-                changed(player)
+            // One opponent is a duel whichever mode is saved, so it is never called a free-for-all.
+            val duel = s.bots == 1
+            set(47, menuItem(Material.COPPER_SWORD, if (duel) "1v1 — You vs 1 Bot" else if (s.allBotsVsPlayer) "${s.bots}v1 — All Bots vs You" else "FFA — Free for All", NamedTextColor.AQUA,
+                listOf(if (duel) "With one opponent the match is always 1v1" else "Click to switch match mode", "Every fighter has ${s.lives} ${if (s.lives == 1) "life" else "lives"}"),selected="Mode" in chosen)) {
+                if (!duel) {
+                    s.allBotsVsPlayer = !s.allBotsVsPlayer
+                    changed(player)
+                }
             }
             set(45, menuItem(Material.EMERALD_BLOCK, "Play", NamedTextColor.GREEN, listOf(
                 "You vs ${s.bots} ${s.difficultyName} bots", "Start with your selected kit and map"))) {

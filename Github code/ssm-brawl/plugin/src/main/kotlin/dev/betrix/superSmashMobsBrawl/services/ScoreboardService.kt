@@ -167,7 +167,7 @@ object ScoreboardService : KoinComponent {
             val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
             buildString { repeat(8) { append(alphabet.random()) } }
         }
-        val mode = if (setup.allBotsVsPlayer) text("${setup.bots}", NamedTextColor.RED)
+        val mode = if (setup.allBotsVsPlayer || setup.bots == 1) text("${setup.bots}", NamedTextColor.RED)
             .append(text("v", NamedTextColor.WHITE)).append(text("1", NamedTextColor.GREEN))
             else text("FFA", NamedTextColor.GREEN)
         val lines = listOf(
@@ -246,7 +246,7 @@ object ScoreboardService : KoinComponent {
             setup.crystalIntervalSeconds, GameSetupService.CRYSTAL_INTERVALS, true)
         lines += text("Difficulty: ", NamedTextColor.WHITE).append(text(setup.difficultyName, if(setup.botsIdle)NamedTextColor.GRAY else difficultyColor(setup.difficulty)))
         lines += text("Mode: ", NamedTextColor.WHITE).append(
-            if (setup.allBotsVsPlayer) text("${everyone.size - 1}", NamedTextColor.RED)
+            if (setup.allBotsVsPlayer || everyone.size == 2) text("${everyone.size - 1}", NamedTextColor.RED)
                 .append(text("v", NamedTextColor.WHITE)).append(text("1", NamedTextColor.GREEN))
             else text("FFA", NamedTextColor.GREEN))
         lines += text(ClassicSidebar.DIVIDER, NamedTextColor.GREEN).let {

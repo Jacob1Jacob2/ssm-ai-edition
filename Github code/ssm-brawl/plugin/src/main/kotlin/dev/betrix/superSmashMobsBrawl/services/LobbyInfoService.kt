@@ -50,7 +50,7 @@ object LobbyInfoService {
     fun stateFor(player: Player): List<String> {
         val s = GameSetupService.setupOf(player)
         val opponents = if (s.selectedBotNames.isEmpty()) s.bots else s.selectedBotNames.size
-        val mode = if (s.allBotsVsPlayer) "${opponents}v1" else "FFA"
+        val mode = if (s.allBotsVsPlayer || opponents == 1) "${opponents}v1" else "FFA"
         val items = if (!s.items || s.enabledItems.isEmpty()) "Off"
             else if (s.itemIntervalSeconds < 0) "Random 3-90 sec"
             else "Every ${s.itemIntervalSeconds} sec"
@@ -133,7 +133,7 @@ object LobbyInfoService {
                     "random" -> Material.MAGENTA_CONCRETE; else -> Material.LIGHT_GRAY_CONCRETE
                 })
                 val count = if (s.selectedBotNames.isEmpty()) s.bots else s.selectedBotNames.size
-                if (s.allBotsVsPlayer) { mark("${count}v1", Material.RED_CONCRETE); letters[line.indexOf("${count}v1") + "${count}v".length] = Material.LIME_CONCRETE }
+                if (s.allBotsVsPlayer || count == 1) { mark("${count}v1", Material.RED_CONCRETE); letters[line.indexOf("${count}v1") + "${count}v".length] = Material.LIME_CONCRETE }
                 // Last on the line, so nothing before it can be mistaken for it.
                 val label = livesLabel(s.lives)
                 val from = line.lastIndexOf(label)
