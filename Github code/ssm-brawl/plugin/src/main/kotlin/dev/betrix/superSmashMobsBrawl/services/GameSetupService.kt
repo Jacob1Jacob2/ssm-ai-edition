@@ -44,7 +44,7 @@ object GameSetupService : KoinComponent {
         var players: Int = 4,
         var items: Boolean = false,
         var crystals: Boolean = true,
-        var itemIntervalSeconds: Int = 9,
+        var itemIntervalSeconds: Int = 12,
         var crystalIntervalSeconds: Int = 180,
         var allBotsVsPlayer: Boolean = false,
         var botsIdle: Boolean = false,
@@ -72,7 +72,7 @@ object GameSetupService : KoinComponent {
         val difficultyName: String
             get() = if(botsIdle) "None" else difficulty?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: "Random"
 
-        fun itemDelaySeconds():Int = if(itemIntervalSeconds<0) kotlin.random.Random.nextInt(3,91) else itemIntervalSeconds
+        fun itemDelaySeconds():Int = if(itemIntervalSeconds<0) kotlin.random.Random.nextInt(3,121) else itemIntervalSeconds
         fun crystalDelaySeconds():Int = if(crystalIntervalSeconds<0) kotlin.random.Random.nextInt(60,901) else crystalIntervalSeconds
     }
 
@@ -102,7 +102,7 @@ object GameSetupService : KoinComponent {
                     players = PLAYER_COUNTS.minBy { kotlin.math.abs(it - savedPlayers) },
                     items = parts[2].toBoolean(),
                     crystals = parts[3].toBoolean(),
-                    itemIntervalSeconds = migrateInterval(parts.getOrNull(4)?.toIntOrNull(),listOf(30,60,90,120),ITEM_INTERVALS,parts.size<10),
+                    itemIntervalSeconds = migrateInterval(parts.getOrNull(4)?.toIntOrNull()?.let { if(parts.size<10) it else when(it) { 9 -> 12; 90 -> 120; else -> it } },listOf(30,60,90,120),ITEM_INTERVALS,parts.size<10),
                     crystalIntervalSeconds = migrateInterval(parts.getOrNull(5)?.toIntOrNull()?.let { when(it) { 540 -> 420; 1200 -> 900; else -> it } },listOf(60,90,120,180),CRYSTAL_INTERVALS,parts.size<10),
                     allBotsVsPlayer = parts.getOrNull(6)?.toBoolean() ?: false,
                     botsIdle = parts.getOrNull(7)?.toBoolean() ?: false,
@@ -147,7 +147,7 @@ object GameSetupService : KoinComponent {
 
     // ------------------------------------------------------------------ menu
 
-    val ITEM_INTERVALS = listOf(3, 9, 30, 90)
+    val ITEM_INTERVALS = listOf(3, 12, 30, 120)
     val CRYSTAL_INTERVALS = listOf(60, 180, 420, 900)
     private fun migrateInterval(saved:Int?,old:List<Int>,current:List<Int>,legacy:Boolean):Int {
         if(saved==-1)return -1
@@ -228,7 +228,7 @@ object GameSetupService : KoinComponent {
             (ITEM_INTERVALS + -1).forEachIndexed { i, seconds ->
                 val name = if (seconds < 0) "Random" else "$seconds seconds"
                 set(18 + CHOICE_COLUMNS[i], menuItem(CANDLES[i], name, CHOICE_COLORS[i], listOf(
-                    if (seconds < 0) "Any interval from 3 to 90 seconds" else "Item spawn interval: $seconds seconds",
+                    if (seconds < 0) "Any interval from 3 to 120 seconds" else "Item spawn interval: $seconds seconds",
                     "A fresh interval is rolled after each spawn"), "Items" in chosen && s.items && s.itemIntervalSeconds == seconds)) {
                     s.items = true
                     s.itemIntervalSeconds = seconds

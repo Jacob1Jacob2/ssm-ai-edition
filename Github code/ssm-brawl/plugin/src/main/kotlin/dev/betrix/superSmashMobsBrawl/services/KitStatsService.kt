@@ -49,6 +49,10 @@ object KitStatsService : KoinComponent {
     private val file: File get() = File(plugin.dataFolder, "kit-stats.properties")
 
     fun setup() {
+        // The Back button lives in the player's own inventory while the menu is open; never leave it there.
+        gg.flyte.twilight.event.event<org.bukkit.event.inventory.InventoryCloseEvent> { (player as? Player)?.let(::takeBack) }
+        gg.flyte.twilight.event.event<org.bukkit.event.player.PlayerJoinEvent> { takeBack(player) }
+        gg.flyte.twilight.event.event<org.bukkit.event.player.PlayerQuitEvent> { takeBack(player) }
         if (!file.exists()) return
         val props = Properties()
         file.inputStream().use { props.load(it) }
@@ -178,6 +182,23 @@ object KitStatsService : KoinComponent {
     private fun number(value: Double): String =
         if (value == Math.rint(value)) value.toLong().toString() else ((value * 100).roundToLong() / 100.0).toString()
 
+    /** Top right of the player's own inventory: the menu itself has no free slot. */
+    private const val BACK_SLOT = 17
+    private val BACK_KEY = org.bukkit.NamespacedKey("ssm", "kit_stats_back")
+    private fun isBack(item: ItemStack?) = item?.itemMeta?.persistentDataContainer?.has(BACK_KEY) == true
+    private fun takeBack(player: Player) {
+        if (isBack(player.inventory.getItem(BACK_SLOT))) player.inventory.setItem(BACK_SLOT, null)
+    }
+    private fun giveBack(player: Player) {
+        val there = player.inventory.getItem(BACK_SLOT)
+        if (there != null && !there.type.isAir && !isBack(there)) return
+        player.inventory.setItem(BACK_SLOT, MenuIcons.navigation(false).apply { editMeta {
+            it.displayName(plain("Back", NamedTextColor.RED))
+            it.lore(listOf(plain("Return to Game Settings", NamedTextColor.GRAY)))
+            it.persistentDataContainer.set(BACK_KEY, org.bukkit.persistence.PersistentDataType.BYTE, 1)
+        } })
+    }
+
     private const val REGEN_STEP = 0.1
     private const val COOLDOWN_STEP = 2.0
 
@@ -202,7 +223,13 @@ object KitStatsService : KoinComponent {
 
         val title = lang.t("kits.${kit.id}.name").append(Component.text(" Stats" + if (verdict == KitVerdict.NORMAL) "" else " [${verdict.label}]"))
         val gui = brawlGui(title, 54, selectionEffects = true) {
-            onClick { isCancelled = true }
+            onClick {
+                isCancelled = true
+                if (clickedInventory == player.inventory && isBack(currentItem)) {
+                    player.playSound(player.location, Sound.UI_BUTTON_CLICK, 0.6f, 1f)
+                    GameSetupService.openMenu(player)
+                }
+            }
             for (slot in 0 until 54) set(slot, item(Material.GRAY_STAINED_GLASS_PANE, "", NamedTextColor.GRAY))
 
             /**
@@ -268,5 +295,7 @@ object KitStatsService : KoinComponent {
             }
         }
         player.openInventory(gui)
+        // After opening: closing the previous menu just took the button away.
+        giveBack(player)
     }
 }

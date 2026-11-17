@@ -32,8 +32,8 @@ object MenuIcons {
         null->Material.NETHERITE_SPEAR
     }
     fun items(enabled:Boolean,seconds:Int)=if(!enabled)Material.BARRIER else when(seconds) {
-        3->Material.COPPER_CHEST;9->Material.EXPOSED_COPPER_CHEST
-        30->Material.WEATHERED_COPPER_CHEST;90->Material.OXIDIZED_COPPER_CHEST
+        3->Material.COPPER_CHEST;12->Material.EXPOSED_COPPER_CHEST
+        30->Material.WEATHERED_COPPER_CHEST;120->Material.OXIDIZED_COPPER_CHEST
         else->Material.ENDER_CHEST
     }
     fun crystals(enabled:Boolean,seconds:Int)=if(!enabled)Material.BARRIER else when(seconds) {

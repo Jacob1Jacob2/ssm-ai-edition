@@ -18,6 +18,7 @@ class ItemEffects(private val arena: ItemArena) {
     private val world get() = arena.world
     private val channeling = mutableSetOf<UUID>()
     private val raining = mutableSetOf<UUID>()
+    private val rainSoundAt = mutableMapOf<UUID, Int>()
     private fun maxHealth(p: Player) = p.getAttribute(Attribute.MAX_HEALTH)?.value ?: 20.0
     private fun heal(p: Player, amount: Double) { p.health = (p.health + amount).coerceAtMost(maxHealth(p)) }
     private fun potion(p: Player, type: PotionEffectType, ticks: Int, amplifier: Int = 0) {
@@ -405,6 +406,13 @@ class ItemEffects(private val arena: ItemArena) {
             }
         }
         world.playSound(p.location,Sound.BLOCK_AMETHYST_BLOCK_CHIME,.6f,.8f+kotlin.random.Random.nextFloat()*.4f)
+        // Rain where it falls, and for the caster. A volley lands every two ticks; the sample is longer than that.
+        val now=org.bukkit.Bukkit.getCurrentTick()
+        if(now-(rainSoundAt[p.uniqueId] ?: -100)>=10) {
+            rainSoundAt[p.uniqueId]=now
+            world.playSound(target,Sound.WEATHER_RAIN,SoundCategory.PLAYERS,2.2f,1f)
+            p.playSound(p.location,Sound.WEATHER_RAIN_ABOVE,SoundCategory.PLAYERS,.7f,1f)
+        }
     }
     fun shotbow(p: Player, force: Double) {
         // The ordinary wood-hit event includes six samples. Restrict this item to the requested first four.

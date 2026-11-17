@@ -52,7 +52,7 @@ object LobbyInfoService {
         val opponents = if (s.selectedBotNames.isEmpty()) s.bots else s.selectedBotNames.size
         val mode = if (s.allBotsVsPlayer || opponents == 1) "${opponents}v1" else "FFA"
         val items = if (!s.items || s.enabledItems.isEmpty()) "Off"
-            else if (s.itemIntervalSeconds < 0) "Random 3-90 sec"
+            else if (s.itemIntervalSeconds < 0) "Random 3-120 sec"
             else "Every ${s.itemIntervalSeconds} sec"
         val crystals = if (!s.crystals || s.enabledCrystalTiers.isEmpty()) "Off"
             else if (s.crystalIntervalSeconds < 0) "Random 1-15 min"
