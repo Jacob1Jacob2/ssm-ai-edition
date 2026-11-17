@@ -340,11 +340,11 @@ object KitService : KoinComponent, Manageable() {
                                     )
                                 }
 
-                                val loreList = statLines(kit) + listOf(
+                                val loreList = statsLore(kit) + listOf(
                                     Component.empty(),
                                     if (isKitSelected && botName == null) Component.text("You already have this kit selected.", net.kyori.adventure.text.format.NamedTextColor.RED)
                                     else Component.text("Left-click to select", net.kyori.adventure.text.format.NamedTextColor.YELLOW),
-                                    Component.text("Right-click for stats", net.kyori.adventure.text.format.NamedTextColor.GRAY)
+                                    Component.text("Right-click for more stats", net.kyori.adventure.text.format.NamedTextColor.GRAY)
                                 ).map { it.decoration(net.kyori.adventure.text.format.TextDecoration.ITALIC, false) }
 
                                 meta.lore(loreList)
@@ -433,6 +433,7 @@ object KitService : KoinComponent, Manageable() {
         // Back / kit icon / Select along the bottom.
         player.openInventory(brawlGui(lang.t("kits.${kit.id}.name").append(Component.text(" Stats")), 27) {
             onClick { isCancelled = true }
+            for(slot in 0..26) set(slot, display(Material.GRAY_STAINED_GLASS_PANE, Component.empty()))
             set(22, MenuIcons.kit(kit.id, kit.displayItem ?: Material.BOOK).apply {
                 editMeta { it.displayName(lang.t("kits.${kit.id}.name").color(color).decoration(net.kyori.adventure.text.format.TextDecoration.ITALIC, false)); it.lore(statsLore(kit)) }
             })
@@ -476,11 +477,13 @@ object KitService : KoinComponent, Manageable() {
                 .append(left).append(Component.text(gap, white)).append(right)
         val regen = kit.passives.firstOrNull { it.id == "regeneration" }
             ?.overrides?.metadata?.get("healAmount")?.content?.toDoubleOrNull() ?: 0.25
+        fun line(label: String, value: String, color: net.kyori.adventure.text.format.NamedTextColor) =
+            row(stat(label, value, color), "", Component.empty())
         val lines = arrayListOf(
-            row(stat("Damage", "${kit.meleeDamage}", net.kyori.adventure.text.format.NamedTextColor.RED), "    ",
-                stat("Knockback Taken", "${(kit.knockbackMultiplier * 100).toInt()}%", net.kyori.adventure.text.format.NamedTextColor.YELLOW)),
-            row(stat("Armor", "${kit.armor}", net.kyori.adventure.text.format.NamedTextColor.AQUA), "      ",
-                stat("Health Regeneration", "$regen per Second", net.kyori.adventure.text.format.NamedTextColor.GREEN)),
+            line("Damage", "${kit.meleeDamage}", net.kyori.adventure.text.format.NamedTextColor.RED),
+            line("Armor", "${kit.armor}", net.kyori.adventure.text.format.NamedTextColor.AQUA),
+            line("Knockback Taken", "${(kit.knockbackMultiplier * 100).toInt()}%", net.kyori.adventure.text.format.NamedTextColor.YELLOW),
+            line("Health Regeneration", "$regen per Second", net.kyori.adventure.text.format.NamedTextColor.GREEN),
         )
         fun extra(label: String, value: String) = lines.add(row(
             stat(label, value, net.kyori.adventure.text.format.NamedTextColor.GOLD), "", Component.empty()))
@@ -500,23 +503,22 @@ object KitService : KoinComponent, Manageable() {
     loreList.add(Component.empty())
     loreList.add(lang.t("gui.kitSelection.abilityList.title"))
 
-    val abilityList =
-        kit.abilities.map {
-            lang.t("gui.kitSelection.abilityList.entry") {
-                "abilityId" to it.id
-            }
-        }
-    loreList.addAll(abilityList)
+    // Skills and passives wear the kit's colour; each skill shows its recharge.
+    val color = lang.kitColor(kit.id)
+    fun entry(name: Component, suffix: String = ""): Component =
+        Component.text("  ", color).decoration(net.kyori.adventure.text.format.TextDecoration.ITALIC, false)
+            .append(name.color(color)).append(Component.text(suffix, color))
+    kit.abilities.forEach {
+        val seconds = dataService.getAbility(it.id)?.cooldown
+        val shown = seconds?.let { s -> if (s % 1.0 == 0.0) "${s.toInt()}" else "$s" }
+        loreList.add(entry(lang.t("abilities.${it.id}.name"), if (shown == null) "" else " (${shown}s)"))
+    }
 
     loreList.add(lang.t("gui.kitSelection.passiveList.title"))
 
-    val passiveList =
-        kit.passives.filter { dataService.getPassive(it.id)?.userFacing == true }.map {
-            lang.t("gui.kitSelection.passiveList.entry") {
-                "abilityId" to it.id
-            }
-        }
-    loreList.addAll(passiveList)
+    val passives = kit.passives.filter { dataService.getPassive(it.id)?.userFacing == true }
+    passives.forEach { loreList.add(entry(lang.t("passives.${it.id}.name"))) }
+    if (passives.isEmpty()) loreList.add(entry(Component.text("None")))
 
         return loreList
     }
