@@ -34,10 +34,15 @@ object HubService : KoinComponent {
     private val playersInHub = mutableSetOf<Player>()
     private val playerHubKits = mutableMapOf<Player, BrawlKit>()
     private var lobbyTask: org.bukkit.scheduler.BukkitTask? = null
+    private var voidTask: org.bukkit.scheduler.BukkitTask? = null
+    /** How far below the lobby spawn a player may fall before being put back on it. */
+    private const val VOID_DROP = 40.0
 
     fun teardown() {
         lobbyTask?.cancel()
         lobbyTask = null
+        voidTask?.cancel()
+        voidTask = null
         LobbyInfoService.teardown()
         LobbyLeaderboardService.teardown()
         LobbyNpcPresentation.teardown()
@@ -77,6 +82,19 @@ object HubService : KoinComponent {
                 }
                 LobbyInfoService.refresh()
             }, 1L, 20L)
+            // Lobby damage is cancelled, so the void never kills: put fallers back on the spawn.
+            voidTask = plugin.server.scheduler.runTaskTimer(plugin, Runnable {
+                LobbyService.allHubs().forEach { hub ->
+                    val spawn = hub.data.spawnPoints.firstOrNull() ?: return@forEach
+                    val floor = maxOf(spawn.y - VOID_DROP, hub.world.minHeight.toDouble())
+                    hub.world.players.filter { it.location.y < floor }.forEach { player ->
+                        player.fallDistance = 0f
+                        player.velocity = org.bukkit.util.Vector(0, 0, 0)
+                        player.teleport(createLocation(hub.world, spawn))
+                        player.fallDistance = 0f
+                    }
+                }
+            }, 2L, 2L)
             registerEvents()
             plugin.server.onlinePlayers.forEach { player ->
                 LobbyService.arrive(player)
