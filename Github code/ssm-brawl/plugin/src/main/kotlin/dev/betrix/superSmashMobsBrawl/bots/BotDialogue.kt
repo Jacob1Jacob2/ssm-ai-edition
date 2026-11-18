@@ -170,7 +170,9 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
         val speaker = when (request.kind) {
             "burst", "trap" -> involved ?: return null
             "retreat" -> bots.find { it.id == actor?.id } ?: return null
-            "hold" -> involved ?: relevant ?: bots.random(random)
+            // Telling someone to come out and fight is for a bot that is still in the match.
+            "hold" -> (involved ?: relevant)?.takeIf { it.lives > 0 }
+                ?: bots.filter { it.lives > 0 && it.id != actor?.id }.randomOrNull(random) ?: return null
             else -> mentioned ?: relevant ?: deathSpeaker ?: bots.random(random)
         }
         val say = lines.speaker(speaker, fighters, personalityOf(speaker.id))

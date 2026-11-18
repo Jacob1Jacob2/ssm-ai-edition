@@ -6,6 +6,7 @@ import dev.betrix.superSmashMobsBrawl.items.ArenaItem
 import io.kotest.core.spec.style.StringSpec
 import io.kotest.matchers.doubles.shouldBeLessThan
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldNotContain
 import java.util.UUID
@@ -141,6 +142,28 @@ class CombatFrameworkTest : StringSpec({
         val friendly = Match()
         friendly.bus.publish(TrapLearned(bot.id, bot.id, 1, 1000))
         friendly.say(5000) shouldBe null
+    }
+    "a bot that is out of the match does not tell a camper to come and fight" {
+        for (seed in 0..20) {
+            val bus = CombatEventBus()
+            val d = BotDialogue(Random(seed), LineMemory(), 1.0).also { it.mode = BotPersonality.CHILL }
+            CombatChatBridge(bus, d) { it == bot.id || it == other.id }
+            var t = 0L
+            while (t <= 19_000) { bus.publish(FighterSample(human.id, 0.0, 70.0, 0.0, 20.0, 20.0, t)); t += 250 }
+            bus.publish(TargetUnreachable(other.id, human.id, 19_500))
+            t = 20_000
+            while (t <= 21_000) { bus.publish(FighterSample(human.id, 0.0, 70.0, 0.0, 20.0, 20.0, t)); t += 250 }
+            // The bot that could not get to them has since lost its last life.
+            val out = other.copy(lives = 0, fighting = false)
+            d.poll(25_000, listOf(human, bot, out)) { a, b -> a != b }?.speaker shouldNotBe other.id
+        }
+    }
+    "a bots chase ends with its life: from the respawn screen it is not hunting anyone" {
+        val m = Match()
+        m.bus.publish(BotTargetChanged(other.id, null, human.id, 0))
+        m.bus.publish(FighterDied(other.id, human.id, "Attack", 5_000))
+        m.stand(human.id, 70.0, 0, 30_000)
+        m.say(31_000) shouldBe null
     }
     "a bot says ez after its own kill" {
         val lines = (0..40).mapNotNull { seed ->

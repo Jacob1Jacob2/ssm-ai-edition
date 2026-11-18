@@ -157,7 +157,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     fun resetNavigation() {
         route.clear();routeSearch=null;routeGoal=null;nextRouteTick=0
         blockedSteps.clear();blockedEdges.clear();failedClimbs.clear();unreachableUntil.clear();unreachableAt.clear();withdrawUntil=0;stuckRef=null;gapJump=null;climb=null
-        bridge=null;crossing=null;reachable=emptySet()
+        bridge=null;crossing=null;leap=null;explored.clear();exploredSet=null;failedLeaps.clear();reachable=emptySet()
         lastSafe=null;recovering=false;recoveryGoal=null;comboQueue.clear();shot=null
         fleeGoal=null;fleeFailedUntil=0;itemGoal=null
         forgetDeaths()
@@ -548,7 +548,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     private fun fellAlone() {
         val way = wayNow()
         val t = target
-        if (way != "walk" && t != null) {
+        if (way != "walk" && way != "leap" && t != null) {
             memory.fellTrying(way, t.location.point())
             plugin.logger.info("[bots] ${player.name} lesson: fell trying a $way to ${t.name} at ${spot(t.location.point())}; not trying that there again")
         }
@@ -558,14 +558,21 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             "${hop.second.x},${"%.1f".format(hop.second.y)},${hop.second.z}; leaving it alone ${if (count >= 2) "for the rest of the match" else "for a minute"}")
     }
 
-    /** The trap [t] is sitting in right now, if this bot has died in it often enough to have learned. */
-    private fun trapOf(t: Player): DeathMemory.Trap? = if (memory.traps.isEmpty()) null else memory.trapOf(t.uniqueId, t.location.point())
+    /**
+     * Down to three hunger bars. Only hurting somebody fills them, and an empty bar kills: a
+     * bot this hungry stops keeping its distance from a trap. Going in may cost a life; staying
+     * out certainly will.
+     */
+    private fun hungry() = player.foodLevel <= dev.betrix.superSmashMobsBrawl.utils.HungerRules.HUNGRY
+
+    /** The trap [t] is sitting in right now, if this bot has died in it often enough to have learned (and can afford to care). */
+    private fun trapOf(t: Player): DeathMemory.Trap? = if (memory.traps.isEmpty() || hungry()) null else memory.trapOf(t.uniqueId, t.location.point())
 
     /** The trap [t] is sitting in, while this bot has given up going in to them. */
     private fun standingOff(t: Player): DeathMemory.Trap? = trapOf(t)?.takeIf { tick < it.standoffUntil }
 
     /** Has this way of getting in to [t] (a "jump", a "cross:DROP", a "bridge") already cost a life where they are now? */
-    private fun wayBarred(t: Player, way: String): Boolean = memory.wayBarred(t.uniqueId, t.location.point(), way, tick)
+    private fun wayBarred(t: Player, way: String): Boolean = !hungry() && memory.wayBarred(t.uniqueId, t.location.point(), way, tick)
 
     /** Ground not to walk on: [r] blocks around a point, within [h] of its height, and only what is [seen] from there if that is given. */
     private class Zone(val x: Double, val y: Double, val z: Double, val r: Double, val h: Double, val seen: ((RouteNode) -> Boolean)? = null) {
@@ -605,7 +612,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
      * for the walk to a crossing: a way in it has not died on is worth its one try.)
      */
     private fun dangerZones(keepOut: Boolean): List<Zone> {
-        if (memory.traps.isEmpty()) return emptyList()
+        if (memory.traps.isEmpty() || hungry()) return emptyList()
         val zones = ArrayList<Zone>()
         for (trap in memory.traps) {
             if (!memory.learned(trap)) continue
@@ -733,7 +740,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             route.clear();routeSearch=null;nextRouteTick=0
             blockedSteps.clear();blockedEdges.clear();stuckRef=null
             comboQueue.clear();bowReleaseTick=0;player.isSneaking=false
-            shot=null;carried=null;channelUntil=0;perch=null;bridge=null;crossing=null
+            shot=null;carried=null;channelUntil=0;perch=null;bridge=null;crossing=null;leap=null
             enterState(CombatState.IDLE)
             opponents=emptyList();healthLosses.clear();lastHealth=0.0
             itemGoal=null;ignoredItems.clear();fleeFailedUntil=0;trackedId=null
@@ -880,7 +887,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         val t = target?.takeIf { it.isOnline && it.world == player.world }
         if (decide || states.state == CombatState.IDLE || states.state == CombatState.RECOVER) updateState(t)
         when (states.state) {
-            CombatState.FLEE -> if (t != null) flee(t, decide, map) else wander(map)
+            // Starving, running away only finishes the job: the one cure is to hit somebody.
+            CombatState.FLEE -> if (t == null) wander(map) else if (player.foodLevel > 0) flee(t, decide, map) else fight(t, decide, map)
             CombatState.GET_ITEM -> itemGoal?.let { collect(it, map) } ?: wander(map)
             CombatState.GET_CRYSTAL -> crystalGoal?.let { claimCrystal(it, t, map) } ?: wander(map)
             else -> if (t == null) wander(map) else fight(t, decide, map)
@@ -1561,8 +1569,12 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         // or whatever the item in their hand makes possible.
         if (decide && sieging && bridge == null && crossing == null) startCrossing(t, map)
         crossing?.let { if (it.stage == 0 && approachCrossing(it, t, map)) return }
+        // Or the long jump onto ground the routes do not go to.
+        if (decide && sieging && bridge == null && crossing == null && leap == null) startLeap(t, map)
+        leap?.let { if (tickLeap(it, t, map)) return }
         if (sieging && d.smartTargeting) {
-            if (tick >= withdrawUntil && healthLosses.isNotEmpty() && !canHarmAt(dist)) {
+            // (Hurt by them, that is: going hungry is no reason to walk away from the only meal.)
+            if (tick >= withdrawUntil && blows.any { it.by == t.uniqueId && tick - it.tick <= 40 } && !canHarmAt(dist)) {
                 withdrawUntil = tick + 160
                 dbg("cannot reach or hit ${t.name}; backing out of their range")
             }
@@ -3201,6 +3213,162 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         return true
     }
 
+    // ------------------------------------------------------------------ leaps onto ground no route leads to
+
+    /**
+     * A jump the route planner does not promise. Its routes only cross gaps a jump is sure to
+     * make, which on a map of islands with wide gaps between them can leave a bot with nowhere
+     * to go but the island it spawned on. A player in that spot takes the long jump: a running
+     * jump with the air jump at the top of it, onto the nearest ground they have not been on.
+     */
+    private class Leap(val targetId: java.util.UUID, val from: Location, val to: Location, val fromNode: RouteNode, val toNode: RouteNode, var since: Long) {
+        var jumped = false
+    }
+    private var leap: Leap? = null
+    private var nextLeapTick = 0L
+    /** Everywhere the bot has been able to walk since it lost the way to this opponent: ground a leap does not go back to. */
+    private val explored = HashSet<RouteNode>()
+    private var exploredFor: java.util.UUID? = null
+    private var exploredSet: Set<RouteNode>? = null
+    /** Leaps that did not come off, and until when each is left alone. */
+    private val failedLeaps = HashMap<Pair<RouteNode, RouteNode>, Long>()
+
+    /**
+     * Can a running jump from [a], with this kit's air jump at the top of it, come down on [b]?
+     * Flown the way the game would, pushing forward all the way, and with a block in hand.
+     */
+    private fun leapReaches(a: Location, b: Location): Boolean {
+        val r = hypot(b.x - a.x, b.z - a.z)
+        // The jump off the ground, from a standing start, to the top of it.
+        var along = 0.0
+        var y = a.y
+        var vy = 0.42
+        var vh = 0.30
+        repeat(6) { y += vy; along += vh; vy = (vy - 0.08) * 0.98; vh = vh * 0.91 + 0.02 }
+        var pitch = 10.0
+        while (pitch >= -80.0) {
+            var (h, v) = jumpLaunch(pitch)
+            var d = along
+            var yy = y
+            for (t in 1..70) {
+                yy += v; d += h
+                v = (v - 0.08) * 0.98; h = h * 0.91 + 0.02
+                if (v < 0 && yy <= b.y) { if (d >= r + LEAP_MARGIN) return true; break }
+            }
+            pitch -= 10.0
+        }
+        return false
+    }
+
+    /** Is there room to go up from [from] and then across onto [landing]? */
+    private fun hopClear(from: Location, landing: Location, map: GameMapDef): Boolean {
+        val nav = ArenaNav.of(player.world, map.voidLevel.toInt(), mobility())
+        val top = maxOf(from.y, landing.y) + 1.2
+        var y = from.y + 0.2
+        while (y <= top) {
+            if (!nav.clear(from.x, y, from.z)) return false
+            y += 0.25
+        }
+        val steps = (hypot(landing.x - from.x, landing.z - from.z) * 3).toInt().coerceAtLeast(2)
+        for (i in 1..steps) {
+            val part = i.toDouble() / steps
+            if (!nav.clear(from.x + (landing.x - from.x) * part, top, from.z + (landing.z - from.z) * part)) return false
+        }
+        return true
+    }
+
+    /** Looks for a leap off the ground the bot can walk on, onto ground it has not been able to get to. */
+    private fun startLeap(t: Player, map: GameMapDef): Boolean {
+        if (tick < nextLeapTick || !d.smartTargeting) return false
+        if (holdUntilTick >= 0 || shot != null || gapJump != null || climb != null || perch != null || !nms.onGround()) return false
+        nextLeapTick = tick + 40
+        if (!canDoubleJump() || reachable.isEmpty() || tick - reachableTick > 1500 || standingOff(t) != null) return false
+        if (exploredFor != t.uniqueId) { explored.clear(); exploredFor = t.uniqueId; exploredSet = null }
+        if (exploredSet !== reachable) { explored += reachable; exploredSet = reachable }
+        failedLeaps.entries.removeIf { it.value <= tick }
+        val world = player.world
+        val nav = ArenaNav.of(world, map.voidLevel.toInt(), mobility())
+        val index = reachableByColumn()
+        val at = t.location
+        val here = player.location
+        // Only from the rim of what it can walk on: a block with open air on some side of it.
+        fun rim(n: RouteNode): Boolean {
+            for (dx in -1..1) for (dz in -1..1) {
+                if (dx == 0 && dz == 0) continue
+                if (index[columnKey(n.x + dx, n.z + dz)]?.any { abs(it.y - n.y) <= 1.3 } != true) return true
+            }
+            return false
+        }
+        val ledges = reachable.filter(::rim).let { if (it.size > LEAP_LEDGES) it.shuffled(java.util.Random(tick)).take(LEAP_LEDGES) else it }
+        // Worth it only onto ground about as near to them as the bot can already walk, or
+        // nearer: not onto some block on the far side of the map because it is new.
+        val nearest = reachable.minOf { hypot(it.x + .5 - at.x, it.z + .5 - at.z) + abs(it.y - at.y) }
+        var best: Leap? = null
+        var bestScore = Double.MAX_VALUE
+        val began = System.nanoTime()
+        for (a in ledges) {
+            if (System.nanoTime() - began > 3_000_000L) break
+            val from = Location(world, a.x + .5, a.y, a.z + .5)
+            for (i in 0 until 16) {
+                val angle = i * Math.PI / 8
+                for (r in LEAP_RADII) {
+                    val bx = kotlin.math.floor(from.x + cos(angle) * r).toInt()
+                    val bz = kotlin.math.floor(from.z + sin(angle) * r).toInt()
+                    val b = nav.surface(bx, bz, a.y + 4.2, 0.0, 16.0) ?: continue
+                    if (b in explored || (a to b) in failedLeaps || memory.hopBarred(a, b, tick)) continue
+                    val to = Location(world, b.x + .5, b.y, b.z + .5)
+                    val away = hypot(to.x - at.x, to.z - at.z) + abs(to.y - at.y)
+                    if (away > nearest + LEAP_DETOUR) continue
+                    val score = away + 0.15 * (hypot(from.x - here.x, from.z - here.z) + abs(from.y - here.y))
+                    if (score >= bestScore || !leapReaches(from, to) || !hopClear(from, to, map)) continue
+                    best = Leap(t.uniqueId, from, to, a, b, tick)
+                    bestScore = score
+                }
+            }
+        }
+        val found = best ?: return false
+        leap = found
+        prowlGoal = null
+        route.clear(); routeSearch = null; nextRouteTick = tick
+        comboQueue.clear()
+        dbg("no way to ${t.name}: going to ${"%.1f %.1f %.1f".format(found.from.x, found.from.y, found.from.z)} for a leap of " +
+            "${"%.1f".format(hypot(found.to.x - found.from.x, found.to.z - found.from.z))} blocks onto ${"%.1f %.1f %.1f".format(found.to.x, found.to.y, found.to.z)}")
+        return true
+    }
+
+    /** Walks to where the leap starts and takes it. False once it is over and the fight should carry on. */
+    private fun tickLeap(l: Leap, t: Player, map: GameMapDef): Boolean {
+        val here = player.location
+        fun over(reason: String, rest: Long = 60): Boolean { dbg("leap over: $reason"); leap = null; nextLeapTick = tick + rest; return false }
+        if (l.jumped) {
+            // The jump has finished, one way or the other.
+            val made = nms.onGround() && hypot(here.x - l.to.x, here.z - l.to.z) < 2.0 && abs(here.y - l.to.y) < 1.5
+            val elsewhere = nms.onGround() && ArenaNav.of(player.world, map.voidLevel.toInt(), mobility()).nearest(here, 2.0)?.let { it !in explored } == true
+            if (made || elsewhere) {
+                // New ground: look for the way from here.
+                route.clear(); routeSearch = null; nextRouteTick = tick
+                unreachableUntil.remove(t.uniqueId)
+                return over("across", 20)
+            }
+            failedLeaps[l.fromNode to l.toNode] = tick + 1200
+            return over(if (nms.onGround()) "came down where it started" else "fell short")
+        }
+        if (t.uniqueId != l.targetId || t.world != here.world || !besieging(t)) return over("they have moved", 20)
+        if (tick - l.since > 500) { failedLeaps[l.fromNode to l.toNode] = tick + 600; return over("did not get to where it starts") }
+        unreachableUntil[t.uniqueId] = maxOf(unreachableUntil[t.uniqueId] ?: 0L, tick + 100)
+        if (nms.onGround() && hypot(l.from.x - here.x, l.from.z - here.z) < 0.4 && abs(l.from.y - here.y) < 1.0) {
+            if (!canDoubleJump()) { setInputs(0f, 0f, false); return true }
+            l.jumped = true
+            lastHop = l.fromNode to l.toNode; lastHopTick = tick
+            lastWay = "leap"; lastWayTick = tick
+            dbg("leaping ${"%.1f".format(hypot(l.to.x - here.x, l.to.z - here.z))} blocks")
+            startGapJump(Gap(hypot(l.to.x - here.x, l.to.z - here.z), l.to))
+            return true
+        }
+        travel(l.from, map) { failedLeaps[l.fromNode to l.toNode] = tick + 600; leap = null; nextLeapTick = tick + 40 }
+        return true
+    }
+
     // ------------------------------------------------------------------ somewhere to shoot from
 
     /** How far this bot can do anything to someone it can see: its kit's attacks and what it is carrying. 0 for nothing worth standing off for. */
@@ -3803,6 +3971,13 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         /** An opponent who has kept within this many blocks of one spot for [CAMP_TICKS] is holding it. */
         const val CAMP_RADIUS = 5.0
         const val CAMP_TICKS = 160L
+        /** How much further than the middle of the landing a leap must be able to go before it is tried. */
+        const val LEAP_MARGIN = 0.8
+        /** How much further from the opponent than the bot can already walk a leap may land. */
+        const val LEAP_DETOUR = 4.0
+        /** How many blocks on the rim of its ground a bot looks for a leap from at a time. */
+        const val LEAP_LEDGES = 160
+        val LEAP_RADII = doubleArrayOf(3.5, 5.0, 6.5, 8.0, 9.5, 11.0)
         /** Blocks a flap is counted on for when a flight is planned (it goes further in open air, less under a low roof). */
         const val FLAP_STRIDE = 3.5
         /** What a block of flying counts for against a block of walking when choosing where to take off. */

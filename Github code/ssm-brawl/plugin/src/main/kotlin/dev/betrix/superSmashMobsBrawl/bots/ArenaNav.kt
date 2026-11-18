@@ -60,6 +60,9 @@ class ArenaNav private constructor(private val world: World, private val voidY: 
     /** Is there room for a body with its feet at this point? Answered from the columns the graph has already read. */
     fun clear(x: Double, y: Double, z: Double): Boolean = terrain().clear(x, y, z)
 
+    /** The place to stand in column [x],[z] nearest below [y] (within [down]) or just over it (within [up]), if there is one. */
+    fun surface(x: Int, z: Int, y: Double, up: Double, down: Double): RouteNode? = terrain().surface(x, z, y, up, down)
+
     /** Forgets what was worked out around a block that turned out to be missing or in the way. */
     fun invalidate(x: Int, z: Int, radius: Int = 7) {
         edges.keys.removeIf { abs(it.x - x) <= radius && abs(it.z - z) <= radius }

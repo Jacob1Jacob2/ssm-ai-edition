@@ -389,6 +389,19 @@ class BotsCommand : KoinComponent {
         plugin.logger.info("[blocks] done")
     }
 
+    @Execute(name = "vitals")
+    @Description("Debug: sets every match bot's health and food, then logs health, food and saturation once a second for the given time")
+    fun vitals(@Context sender: CommandSender, @Arg health: Double, @Arg food: Int, @Arg seconds: Int) {
+        if (!allowed(sender)) return
+        fun bots() = BotManager.onlineBots().filter { it.world.key.value().startsWith("ssmbworld") && it.gameMode == org.bukkit.GameMode.SURVIVAL }
+        bots().forEach { it.health = health.coerceIn(1.0, it.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH)?.value ?: 20.0); it.foodLevel = food.coerceIn(0, 20) }
+        var left = seconds.coerceIn(1, 300)
+        org.bukkit.Bukkit.getScheduler().runTaskTimer(plugin, { task: org.bukkit.scheduler.BukkitTask ->
+            plugin.logger.info("[vitals] " + bots().joinToString("  ") { "${it.name} hp=${"%.2f".format(it.health)} food=${it.foodLevel} sat=${"%.1f".format(it.saturation)}" })
+            if (--left <= 0) task.cancel()
+        }, 0L, 20L)
+    }
+
     @Execute(name = "ambush")
     @Description("Debug: one bot goes for an opponent that holds a spot and fights back from it, for the whole time; counts how often it dies there")
     fun ambush(

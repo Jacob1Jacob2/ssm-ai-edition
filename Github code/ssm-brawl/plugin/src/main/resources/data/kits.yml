@@ -74,6 +74,7 @@ kits:
   selectionSound: entity.spider.ambient
   displayItem: spider_eye
   passives:
+  - id: hunger
   - id: wall_climb
   - id: spider_leap
   - id: regeneration
@@ -97,6 +98,7 @@ kits:
   selectionSound: entity.slime.squish
   displayItem: slime_ball
   passives:
+  - id: hunger
   - id: double_jump
     overrides:
       metadata:
@@ -246,6 +248,7 @@ kits:
   selectionSound: entity.snow_golem.ambient
   displayItem: snowball
   passives:
+  - id: hunger
   - id: double_jump
   - id: arctic_aura
   - id: regeneration
@@ -412,6 +415,7 @@ kits:
   selectionSound: entity.chicken.ambient
   displayItem: egg
   passives:
+  - id: hunger
   - id: flap
   - id: regeneration
     overrides:

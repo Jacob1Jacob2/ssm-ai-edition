@@ -33,6 +33,9 @@ class CombatChatBridge(bus: CombatEventBus, private val dialogue: BotDialogue, p
         bus.on<FighterDied> {
             dialogue.death(it.victim, it.killer, it.source, it.time)
             holds.remove(it.victim); blows.remove(it.victim)
+            // Its chase ended with its life. (It picks someone again when it is back, if it is
+            // coming back: a bot that is out of the match is not hunting anybody.)
+            pursuits.remove(it.victim)
         }
         bus.on<FighterSample>(::sample)
         bus.on<BotTargetChanged> {
