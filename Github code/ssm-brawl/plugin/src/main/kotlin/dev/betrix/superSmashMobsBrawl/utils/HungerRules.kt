@@ -4,8 +4,13 @@ package dev.betrix.superSmashMobsBrawl.utils
 object HungerRules {
     /** Seconds for one point (half a bar) to go. */
     const val DRAIN_SECONDS = 6.25
-    /** Seconds between hits of starvation on an empty bar: a tenth of the time a point lasts. */
-    const val STARVE_SECONDS = 0.625
+    /** Seconds between hits of starvation on an empty bar. */
+    const val STARVE_SECONDS = 1.0
+    /**
+     * The game client ends a sprint at this many points or fewer, unless the player may fly (which
+     * here means: has the double jump in hand).
+     */
+    const val SPRINT_FLOOR = 6
     /** Damage dealt to another player for one point back. */
     const val DAMAGE_PER_POINT = 2.0
     /** Points at or under which a bot counts as hungry enough to stop being careful (three bars: sprinting stops here too). */

@@ -22,8 +22,8 @@ import org.koin.core.component.inject
  *
  * While a match is on, half a hunger bar goes every [drainTicks] (6.25 seconds), so a full bar
  * lasts about two minutes. On an empty bar the fighter starves: [starveDamage] every
- * [starveTicks]. The only way to fill it is to hurt somebody: every 2 damage dealt to another
- * player gives half a bar back (a Chicken Missile's 8 damage is two bars).
+ * [starveTicks] (a second). The only way to fill it is to hurt somebody: every 2 damage dealt to
+ * another player gives half a bar back (a Chicken Missile's 8 damage is two bars).
  *
  * Minecraft's own hunger (running wears it down, a full bar heals) is switched off for these
  * fighters: how fast a kit heals is the kit's regeneration, not how recently it hit someone.
@@ -41,6 +41,9 @@ class HungerPassive(player: Player) : BrawlPassive("hunger", player), KoinCompon
     private var starveDue = 0.0
     private var lastRestoreMs = 0L
     private var lastWarnMs = 0L
+    /** True while the client is being shown more hunger than there is (see [keepSprint]). */
+    private var masked = false
+    private val human = !dev.betrix.superSmashMobsBrawl.bots.BotManager.isBot(player)
 
     override fun setup() {
         // After the combat manager has decided the hit counts: only damage that landed feeds.
@@ -61,8 +64,46 @@ class HungerPassive(player: Player) : BrawlPassive("hunger", player), KoinCompon
                 if (entity == this@HungerPassive.player && regainReason == EntityRegainHealthEvent.RegainReason.SATIATED) isCancelled = true
             }
         )
+        // Before the double jump itself is handled (and the jump is taken out of the player's
+        // hand): see [keepSprint].
+        listeners.add(
+            event<org.bukkit.event.player.PlayerToggleFlightEvent>(priority = EventPriority.LOWEST) {
+                if (player == this@HungerPassive.player && human && player.gameMode == GameMode.SURVIVAL &&
+                    player.foodLevel <= HungerRules.SPRINT_FLOOR) mask()
+            }
+        )
+        // And as the last thing in every tick, after the server has sent the player whatever
+        // really changed (a point of health back, say): the last word the client hears is this.
+        listeners.add(
+            event<com.destroystokyo.paper.event.server.ServerTickEndEvent> {
+                if (human && this@HungerPassive.player.gameMode == GameMode.SURVIVAL && live()) keepSprint()
+            }
+        )
         runnables.add(repeatingTask(1) { tick() })
         super.setup()
+    }
+
+    private fun live() = minigameService.getMinigameForPlayer(player)?.getState() == MinigameState.IN_PROGRESS
+
+    private fun mask() {
+        player.sendHealthUpdate(player.health, HungerRules.SPRINT_FLOOR + 1, 0f)
+        masked = true
+    }
+
+    /**
+     * Being hungry is not meant to stop anybody running. The game client ends a sprint at three
+     * hunger bars or fewer unless the player "may fly", and here that permission is the double
+     * jump: in hand on the ground, gone the moment it is used. So below three bars every double
+     * jump ended the sprint in mid-air. While the jump is out of the player's hand their client
+     * is told there are three and a half bars, which is enough to keep running; the real number
+     * does not change and is back on the screen as soon as the jump is.
+     */
+    private fun keepSprint() {
+        if (player.foodLevel <= HungerRules.SPRINT_FLOOR && !player.allowFlight) mask()
+        else if (masked) {
+            masked = false
+            player.sendHealthUpdate()
+        }
     }
 
     private fun reset() {
@@ -74,7 +115,7 @@ class HungerPassive(player: Player) : BrawlPassive("hunger", player), KoinCompon
 
     private fun tick() {
         if (player.gameMode != GameMode.SURVIVAL) return
-        if (minigameService.getMinigameForPlayer(player)?.getState() != MinigameState.IN_PROGRESS) return
+        if (!live()) return
         // Running and jumping cost nothing: the bar only moves by the clock and by hits.
         player.saturation = 0f
         player.exhaustion = 0f
@@ -107,6 +148,7 @@ class HungerPassive(player: Player) : BrawlPassive("hunger", player), KoinCompon
     }
 
     override fun teardown() {
+        masked = false
         player.feed()
         super.teardown()
     }

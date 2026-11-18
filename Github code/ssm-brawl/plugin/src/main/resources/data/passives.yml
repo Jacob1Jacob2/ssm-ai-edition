@@ -9,9 +9,9 @@ passives:
   userFacing: false
   metadata:
     hungerRestoreDelayMs: 250
-    # Half a hunger bar goes every 6.25 seconds; on an empty bar, 1 damage every 0.625 seconds.
+    # Half a hunger bar goes every 6.25 seconds; on an empty bar, 1 damage every second.
     drainSeconds: 6.25
-    starveSeconds: 0.625
+    starveSeconds: 1.0
     starveDamage: 1.0
     # Every 2 damage dealt to another player gives half a bar back.
     damagePerHunger: 2.0

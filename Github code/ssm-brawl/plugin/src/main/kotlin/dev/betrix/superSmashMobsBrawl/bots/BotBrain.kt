@@ -3277,9 +3277,14 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         return true
     }
 
-    /** Looks for a leap off the ground the bot can walk on, onto ground it has not been able to get to. */
+    /**
+     * Looks for a leap off the ground the bot can walk on, onto ground it has not been able to
+     * get to. For every difficulty: this is getting about the map, not playing it well, and a
+     * Normal bot left standing on the island it spawned on is not an easier opponent, just a
+     * broken one.
+     */
     private fun startLeap(t: Player, map: GameMapDef): Boolean {
-        if (tick < nextLeapTick || !d.smartTargeting) return false
+        if (tick < nextLeapTick) return false
         if (holdUntilTick >= 0 || shot != null || gapJump != null || climb != null || perch != null || !nms.onGround()) return false
         nextLeapTick = tick + 40
         if (!canDoubleJump() || reachable.isEmpty() || tick - reachableTick > 1500 || standingOff(t) != null) return false
@@ -3353,9 +3358,15 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             failedLeaps[l.fromNode to l.toNode] = tick + 1200
             return over(if (nms.onGround()) "came down where it started" else "fell short")
         }
-        if (t.uniqueId != l.targetId || t.world != here.world || !besieging(t)) return over("they have moved", 20)
+        if (t.world != here.world) return over("nobody to go after", 20)
+        // They may wander about over there as much as they like, and in a free-for-all the bot
+        // may change its mind about who it is after: the leap is off this ground, not onto
+        // theirs. It is only off if whoever it wants now has come to where the bot can walk.
+        if (canWalkTo(t.location)) { unreachableUntil.remove(t.uniqueId); return over("they have come within reach", 20) }
         if (tick - l.since > 500) { failedLeaps[l.fromNode to l.toNode] = tick + 600; return over("did not get to where it starts") }
+        // Still no way to them, wherever they have got to: no new search for one on the way to the jump.
         unreachableUntil[t.uniqueId] = maxOf(unreachableUntil[t.uniqueId] ?: 0L, tick + 100)
+        unreachableAt[t.uniqueId] = t.location.clone()
         if (nms.onGround() && hypot(l.from.x - here.x, l.from.z - here.z) < 0.4 && abs(l.from.y - here.y) < 1.0) {
             if (!canDoubleJump()) { setInputs(0f, 0f, false); return true }
             l.jumped = true
