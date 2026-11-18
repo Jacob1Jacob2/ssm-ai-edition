@@ -3051,6 +3051,10 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         var bestErr = Double.MAX_VALUE
         var highest = -Double.MAX_VALUE
         var highestPitch = -85.0
+        // Is there floor to run on past the landing, the way the jump is going?
+        val runOut = r > 0.5 && (1..2).all {
+            hasSolidBelow(Location(here.world, p.x + (p.x - here.x) / r * it, p.y + 0.3, p.z + (p.z - here.z) / r * it), 1)
+        }
         var p2 = 20.0
         while (p2 >= -88.0) {
             val (horizontal, vertical) = jumpLaunch(p2)
@@ -3059,9 +3063,23 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             // the way up a tower the bot wants to stay beside it, not be thrown against it.
             if (peak >= highest - 0.02) { highest = maxOf(highest, peak); highestPitch = p2 }
             if (peak >= p.y + 0.3) {
-                val dist = coastDistance(horizontal, ticksUntilBelow(p.y, vertical, here.y))
+                val ticks = ticksUntilBelow(p.y, vertical, here.y)
+                val dist = coastDistance(horizontal, ticks)
                 // Slightly prefer overshooting by a bit to falling short.
                 var err = if (dist >= r) dist - r else (r - dist) * 1.5
+                // A jump that goes where the fighter looks (a wolf's, a spider's) can be thrown
+                // flat and fast, most of a block a tick. The game looks for a floor under the
+                // feet where they are at the start of the tick, before that tick's move across:
+                // one that is still short of the landing's edge as it comes down to its height
+                // drops past the lip and runs into the side of the block. So such a jump has to
+                // be over the block a tick early, and comes down a little past the middle of
+                // it, which is fine where the floor goes on and no good on a single block.
+                val before = coastDistance(horizontal, ticks - 1)
+                if (dist - before > FAST_ARC) err = when {
+                    before < r - LIP_REACH -> 2.0 + (r - LIP_REACH - before)
+                    dist <= r -> (r - dist) * 0.3
+                    else -> (dist - r) * (if (runOut && dist - r <= 1.0) 0.35 else 2.5)
+                }
                 // The perfect arc is no use if there is a roof in it. One that comes down a
                 // little long, with the brakes on, beats one that stops against an overhang.
                 if (err < bestErr && !arcClear(p, horizontal, vertical)) err += 5.0
@@ -3372,6 +3390,14 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         const val DASH_DELAY = 4L
         /** An Ice Path runs 14 blocks ahead of whoever lays it; the last of it is not counted on. */
         const val BRIDGE_AHEAD = 13.0
+        /** An air jump still covering this much a tick as it comes down is a flat, fast one (see [aimedDoubleJump]). */
+        const val FAST_ARC = 0.45
+        /**
+         * How far short of the middle of its landing block a fighter may be at the start of the
+         * tick it comes down in: the block's edge is half a block before the middle, the fighter
+         * is 0.3 either side of its own, and a tenth is kept in hand.
+         */
+        const val LIP_REACH = 0.7
         val DASH_SHOULDERS = doubleArrayOf(-0.3, 0.3)
         val CARDINALS = listOf(1.0 to 0.0, -1.0 to 0.0, 0.0 to 1.0, 0.0 to -1.0)
     }
