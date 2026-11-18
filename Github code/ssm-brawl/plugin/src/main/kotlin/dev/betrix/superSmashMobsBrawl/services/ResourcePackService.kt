@@ -71,6 +71,11 @@ object ResourcePackService : KoinComponent {
     private const val TEXTURE_HEIGHT = 480
     private const val TILE_ROWS = 2
     private const val TILE_SIZE = 240
+    private val DECLINED_MESSAGE: Component = Component.text("This server needs its resource pack.", NamedTextColor.RED)
+        .append(Component.newline())
+        .append(Component.text("Join again and choose Proceed when it asks.", NamedTextColor.YELLOW))
+        .append(Component.newline())
+        .append(Component.text("No question? Edit the server in your list and set Server Resource Packs to Enabled.", NamedTextColor.GRAY))
 
     private val packId: UUID = UUID.nameUUIDFromBytes("ssm-ai-edition-pack".toByteArray())
 
@@ -128,7 +133,16 @@ object ResourcePackService : KoinComponent {
             plugin.logger.info("Resource pack for ${player.name}: $status")
             when (status) {
                 PlayerResourcePackStatusEvent.Status.SUCCESSFULLY_LOADED -> loadedPlayers.add(player.uniqueId)
-                PlayerResourcePackStatusEvent.Status.DECLINED,
+                // The pack is required. An ordinary client leaves by itself when its player says no;
+                // this is for the clients that say no and stay. A download that failed is not the
+                // player's choice, so that one may keep playing without the pictures.
+                PlayerResourcePackStatusEvent.Status.DECLINED -> {
+                    loadedPlayers.remove(player.uniqueId)
+                    val declined = player
+                    Bukkit.getScheduler().runTask(plugin, Runnable {
+                        if (declined.isOnline) declined.kick(DECLINED_MESSAGE)
+                    })
+                }
                 PlayerResourcePackStatusEvent.Status.FAILED_DOWNLOAD,
                 PlayerResourcePackStatusEvent.Status.FAILED_RELOAD,
                 PlayerResourcePackStatusEvent.Status.INVALID_URL,
@@ -172,9 +186,9 @@ object ResourcePackService : KoinComponent {
         player.sendResourcePacks(
             ResourcePackRequest.resourcePackRequest()
                 .packs(info)
-                .required(false)
+                .required(true)
                 .replace(true)
-                .prompt(Component.text("Shows map pictures, menu icons, and classic scoreboard spacing.", NamedTextColor.GOLD))
+                .prompt(Component.text("Needed to play here: map pictures, menu icons, and classic scoreboard spacing.", NamedTextColor.GOLD))
                 .build()
         )
     }
