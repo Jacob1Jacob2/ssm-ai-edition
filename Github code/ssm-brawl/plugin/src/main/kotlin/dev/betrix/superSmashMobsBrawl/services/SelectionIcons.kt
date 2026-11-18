@@ -27,11 +27,12 @@ object SelectionIcons {
         files["assets/ssm/models/item/selection_lighting.json"] =
             """{"gui_light":"front","elements":[]}""".toByteArray()
         val lighting=Json.parseToJsonElement("""{"type":"minecraft:model","model":"ssm:item/selection_lighting"}""")
-        for (name in listOf("tnt", "ice", "skeleton_skull", "oak_pressure_plate", "slime_block")) {
-            val path="assets/ssm/items/selected_minecraft_$name.json"
-            val root=Json.parseToJsonElement(requireNotNull(files[path]).decodeToString()).jsonObject
-            val composite=root.getValue("model").jsonObject
-            val layers=composite.getValue("models").jsonArray
+        // Every selected vanilla icon, not a chosen few: the map menu's icons are blocks of all
+        // kinds, and each one without this layer showed its selection overlay darkened.
+        for (path in files.keys.filter { it.startsWith("assets/ssm/items/selected_minecraft_") && it.endsWith(".json") }) {
+            val root=Json.parseToJsonElement(requireNotNull(files[path]).decodeToString()) as? JsonObject ?: continue
+            val composite=root["model"] as? JsonObject ?: continue
+            val layers=composite["models"] as? JsonArray ?: continue
             files[path]=JsonObject(root + ("model" to JsonObject(composite +
                 ("models" to JsonArray(listOf(lighting) + layers))))).toString().toByteArray()
         }
