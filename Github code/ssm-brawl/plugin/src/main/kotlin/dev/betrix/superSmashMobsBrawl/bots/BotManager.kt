@@ -63,6 +63,8 @@ object BotManager : KoinComponent {
     @Volatile var debug = false
     /** Debug: Sheep bots try their Wool Mine perch on any opponent well below them, reachable or not. */
     @Volatile var forcePerch = false
+    /** Debug: bots forget how they died, the way they played before they learned from it. */
+    @Volatile var noLearning = false
     private var roster: List<BotProfile> = emptyList()
     private var rankStyles: Map<String, String> = emptyMap()
 
@@ -100,6 +102,8 @@ object BotManager : KoinComponent {
                     "${reason::class.simpleName}${(reason as? dev.betrix.superSmashMobsBrawl.events.DeathReason.Hazard)?.type?.let { " $it" } ?: ""}" +
                     " at ${"%.1f %.1f %.1f".format(player.location.x, player.location.y, player.location.z)}, lives before=$lives"
             )
+            // What the bot makes of it: not to die the same way to the same opponent twice.
+            if (game != null) brainOf(player)?.died(reason is dev.betrix.superSmashMobsBrawl.events.DeathReason.Hazard)
         }
         gg.flyte.twilight.event.event<dev.betrix.superSmashMobsBrawl.events.MinigameEndAnalyticsEvent> {
             plugin.logger.info(

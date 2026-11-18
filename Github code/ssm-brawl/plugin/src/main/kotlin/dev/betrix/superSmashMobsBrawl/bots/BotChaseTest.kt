@@ -54,6 +54,8 @@ object BotChaseTest : KoinComponent {
         var done = false
         var start: Location? = null
         var lastGround: Location? = null
+        var firstReach: Int? = null
+        val deathTicks = ArrayList<Int>()
         val results = ArrayList<Result>()
     }
 
@@ -67,16 +69,19 @@ object BotChaseTest : KoinComponent {
     private var label = ""
     private var kitId = ""
     private var waited = 0
+    /** The hider holds its spot and fights back, and the spot runs its full time: how often does the chaser die there? */
+    private var ambush = false
 
     val running: Boolean get() = task != null
 
     private fun log(message: String) = plugin.logger.info("[chase] $message")
 
     fun start(mapId: String, kit: String, difficulty: BotDifficulty, pairCount: Int, samples: Int, seconds: Int,
-              seed: Int, spot: Triple<Double, Double, Double>? = null): String {
+              seed: Int, spot: Triple<Double, Double, Double>? = null, hiderKit: String = "skeleton", ambush: Boolean = false): String {
         if (running) return "A chase test is already running."
         val def = dataService.getMinigame("super_smash_mobs") ?: return "Minigame super_smash_mobs is missing."
         if (dataService.getKit(kit) == null) return "Unknown kit '$kit'."
+        if (dataService.getKit(hiderKit) == null) return "Unknown kit '$hiderKit'."
         val scale = when (mapId.substringAfter('@', "").lowercase()) {
             "big", "2x" -> dev.betrix.superSmashMobsBrawl.services.MapScale.BIG
             "small" -> dev.betrix.superSmashMobsBrawl.services.MapScale.SMALL
@@ -87,15 +92,16 @@ object BotChaseTest : KoinComponent {
         val setup = dev.betrix.superSmashMobsBrawl.services.GameSetupService.Setup(difficulty = difficulty, players = 2,
             items = false, crystals = false, mapScale = scale)
         val started = LobbyRouting.ids.take(pairCount.coerceIn(1, 5)).mapNotNull { lobby ->
-            val bots = BotManager.startBotGame(def, 2, difficulty, map, listOf(kit, "skeleton"), lobby, setup.copy())
+            val bots = BotManager.startBotGame(def, 2, difficulty, map, listOf(kit, hiderKit), lobby, setup.copy())
             if (bots.size < 2) { bots.forEach(BotManager::despawn); null }
-            else Chase(bots[0], bots[1]).also { BotManager.brainOf(bots[1])?.passive = true }
+            else Chase(bots[0], bots[1]).also { BotManager.brainOf(bots[1])?.let { hider -> if (ambush) hider.rooted = true else hider.passive = true } }
         }
         if (started.isEmpty()) return "Could not spawn any bot pairs."
         pairs = started
         plan = null
         explicit = spot?.let { listOf(Spot(it.first, it.second, it.third, "explicit")) }
-        limitTicks = seconds.coerceIn(5, 120) * 20
+        this.ambush = ambush
+        limitTicks = seconds.coerceIn(5, if (ambush) 900 else 120) * 20
         perPair = if (spot != null) 1 else samples.coerceIn(1, 200)
         this.seed = seed
         kitId = kit
@@ -144,24 +150,33 @@ object BotChaseTest : KoinComponent {
         val maxHealth = dummy.getAttribute(Attribute.MAX_HEALTH)?.value ?: 20.0
         if (dummy.health < maxHealth - 0.01 && pair.hitTick == null) pair.hitTick = pair.ticks
         if (!dummy.isDead) dummy.health = maxHealth
-        if (dummy.location.distanceSquared(at) > 0.01) { dummy.teleport(at); dummy.velocity = org.bukkit.util.Vector() }
+        if (dummy.location.distanceSquared(at) > 0.01) {
+            // Put back facing the way it was facing: a hider that fights back keeps its aim.
+            dummy.teleport(at.clone().also { it.yaw = dummy.location.yaw; it.pitch = dummy.location.pitch })
+            dummy.velocity = org.bukkit.util.Vector()
+        }
         val respawning = game.respawnManager.isRespawning(chaser)
         if (respawning && !pair.wasRespawning) {
             pair.deaths++
+            pair.deathTicks += pair.ticks
             log("DEATH chaser ${chaser.name} going for ${fmt(spot.x, spot.y, spot.z)} after ${pair.ticks} ticks, last on ground at " +
                 "${pair.lastGround?.let { fmt(it.x, it.y, it.z) }}")
         }
         pair.wasRespawning = respawning
         if (chaser.isOnGround && !respawning) pair.lastGround = chaser.location
         pair.ticks++
-        val reached = !respawning && chaser.world == at.world && chaser.location.distance(at) <= 3.3 && chaser.hasLineOfSight(dummy)
+        val close = !respawning && chaser.world == at.world && chaser.location.distance(at) <= 3.3 && chaser.hasLineOfSight(dummy)
+        if (close && pair.firstReach == null) pair.firstReach = pair.ticks
+        // An ambush runs its full time: the question is how often the chaser dies, not how soon it arrives.
+        val reached = close && !ambush
         if (!reached && pair.ticks < limitTicks) return
         val here = chaser.location
         val detail = if (reached) "" else
             "end=${fmt(here.x, here.y, here.z)} dist=${"%.1f".format(here.distance(at))} ${BotManager.brainOf(chaser)?.debugSummary()}"
         pair.results += Result(spot, pair.ticks.takeIf { reached }, pair.hitTick, pair.deaths, detail)
         log("RESULT kind=${spot.kind} spot=${fmt(spot.x, spot.y, spot.z)} start=${pair.start?.let { fmt(it.x, it.y, it.z) }} " +
-            "ok=$reached ticks=${pair.ticks} hit=${pair.hitTick} deaths=${pair.deaths} $detail")
+            "ok=$reached ticks=${pair.ticks} hit=${pair.hitTick} deaths=${pair.deaths} " +
+            (if (ambush) "diedAt=${pair.deathTicks.joinToString(",")} firstReach=${pair.firstReach} " else "") + detail)
         next(pair, game)
     }
 
@@ -181,7 +196,7 @@ object BotChaseTest : KoinComponent {
         // (Every pair plays in its own copy of the arena: the same coordinates, in this pair's world.)
         val start = spot.start?.let { Location(world.world, it.x, it.y, it.z) }
             ?: world.data.spawnPoints.map { Location(world.world, it.x, it.y, it.z) }.maxByOrNull { it.distanceSquared(at) } ?: at
-        game.teams.forEach { it.metadata["stocks"] = 4 }
+        game.teams.forEach { it.metadata["stocks"] = if (ambush) 50 else 4 }
         pair.dummy.teleport(at)
         pair.chaser.teleport(start)
         pair.chaser.velocity = org.bukkit.util.Vector()
@@ -191,6 +206,8 @@ object BotChaseTest : KoinComponent {
         pair.ticks = 0
         pair.hitTick = null
         pair.deaths = 0
+        pair.deathTicks.clear()
+        pair.firstReach = null
         pair.wasRespawning = false
     }
 

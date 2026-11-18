@@ -252,6 +252,23 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
                     "omg $n", "what am i supposed to do there", "i couldnt move / $hits hits in a sec"))
         }
 
+        /** This bot has been killed [times] times by [camper] sitting in one spot, and has had enough of walking into it. */
+        fun trapped(camper: BotDialogue.Fighter, times: Int): String? {
+            val n = ref(camper)
+            return if (times <= 1) say("trap.1",
+                listOf("ok not going that way again", "nah im not walking into that twice", "ok i see the setup $n", "not falling for that again $lol",
+                    "u can keep that spot $n", "ok $n u got ur one", "yeah im not coming back in there", "cool spot $n im going around"),
+                listOf("ok not going that way again $lol", "good spot ngl", "noted $n $lol", "ok that way is a no", "nice setup $n im going around"),
+                listOf("im not going in there again", "ofc theres no safe way in", "i cant even get near $n", "every way in is a death trap",
+                    "ok so i just cant go that way great"))
+            else say("trap.2",
+                listOf("ok im done going in there", "nah im staying out $n", "come out if u want the kill $n", "im not feeding u anymore $n",
+                    "sit there all game idc", "u want me u come here $n", "not doing that a third time $lol"),
+                listOf("ok im staying out of there $lol", "ur spot wins $n ill wait", "not walking into that a third time $lol", "ill be out here $n"),
+                listOf("im done going in there", "i die every time i go near $n", "whats the point of going in", "im just gonna stand here then",
+                    "i give up on that spot"))
+        }
+
         fun retreat(threat: BotDialogue.Fighter?): String? {
             val t = threat?.let(::ref) ?: return say("retreat.alone", listOf("im low", "one sec", "im one hit"), listOf("im low one sec", "need a sec"),
                 listOf("im always low", "im one hit again", "i cant get one second to heal"))

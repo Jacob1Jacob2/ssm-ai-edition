@@ -75,6 +75,9 @@ object CombatLogService : KoinComponent {
                         BrawlDamageType.MeleeAttack -> "Attack"
                     }
         append(victim, Hit(attacker.uniqueId, BotManager.displayNameOf(attacker), amount, label, now))
+        // A bot remembers who hit it where, and what it did back: how it tells a trap from a fight when it dies.
+        BotManager.brainOf(victim)?.struck(attacker)
+        BotManager.brainOf(attacker)?.dealt(victim, amount)
         BotConversationService.damage(victim, attacker, amount, label)
     }
 
@@ -89,6 +92,7 @@ object CombatLogService : KoinComponent {
     fun recordKnockback(victim: Player, attacker: Player, sourceName: String) {
         if(attacker==victim)return
         append(victim, Hit(attacker.uniqueId, BotManager.displayNameOf(attacker), 0.0, sourceName, System.currentTimeMillis(), true))
+        BotManager.brainOf(victim)?.struck(attacker)
     }
 
     private fun append(victim: Player, hit: Hit) {

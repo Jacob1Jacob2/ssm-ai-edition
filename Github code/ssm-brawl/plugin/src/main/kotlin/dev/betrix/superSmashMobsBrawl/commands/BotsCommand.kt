@@ -358,6 +358,47 @@ class BotsCommand : KoinComponent {
         sender.sendMessage(dev.betrix.superSmashMobsBrawl.bots.BotChaseTest.start(map, kit, BotDifficulty.parse(difficulty), 1, 1, seconds, 1, Triple(x, y, z)))
     }
 
+    @Execute(name = "area")
+    @Description("Debug: where one can stand in every column of a rectangle of the running match's arena (height^room above)")
+    fun area(@Context sender: CommandSender, @Arg x1: Int, @Arg z1: Int, @Arg x2: Int, @Arg z2: Int) {
+        if (!allowed(sender)) return
+        val world = BotManager.onlineBots().firstOrNull { it.world.key.value().startsWith("ssmbworld") }?.world
+            ?: run { plugin.logger.info("[area] no match world"); return }
+        val terrain = dev.betrix.superSmashMobsBrawl.bots.ArenaTerrain(world, world.minHeight, dev.betrix.superSmashMobsBrawl.bots.Mobility.JUMPER, loadChunks = true)
+        for (x in minOf(x1, x2)..maxOf(x1, x2)) for (z in minOf(z1, z2)..maxOf(z1, z2)) {
+            val stand = terrain.describe(x, z)
+            if (stand.isNotEmpty()) plugin.logger.info("[area] $x,$z: $stand")
+        }
+        plugin.logger.info("[area] done")
+    }
+
+    @Execute(name = "ambush")
+    @Description("Debug: one bot goes for an opponent that holds a spot and fights back from it, for the whole time; counts how often it dies there")
+    fun ambush(
+        @Context sender: CommandSender,
+        @Arg map: String,
+        @Arg kit: String,
+        @Arg difficulty: String,
+        @Arg x: Double,
+        @Arg y: Double,
+        @Arg z: Double,
+        @Arg seconds: Int,
+        @Arg hiderKit: String,
+    ) {
+        if (!allowed(sender)) return
+        BotManager.debug = true
+        sender.sendMessage(dev.betrix.superSmashMobsBrawl.bots.BotChaseTest.start(map, kit, BotDifficulty.parse(difficulty), 1, 1, seconds, 1,
+            Triple(x, y, z), hiderKit, ambush = true))
+    }
+
+    @Execute(name = "nolearn")
+    @Description("Debug: toggles whether bots remember how they died (off = the way they played before they learned from it)")
+    fun noLearn(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        BotManager.noLearning = !BotManager.noLearning
+        plugin.logger.info("[bots] learning from deaths: ${if (BotManager.noLearning) "off" else "on"}")
+    }
+
     private fun startGame(
         sender: CommandSender,
         minigame: String,

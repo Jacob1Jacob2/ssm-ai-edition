@@ -52,6 +52,9 @@ data class BotTargetChanged(val bot: UUID, val from: UUID?, val to: UUID?, overr
 /** A bot's pathfinding could not find any way to reach its opponent. */
 data class TargetUnreachable(val bot: UUID, val target: UUID, override val time: Long) : CombatEvent
 
+/** A bot has died to [camper] holding one spot often enough ([deaths]) to stop walking into it. */
+data class TrapLearned(val bot: UUID, val camper: UUID, val deaths: Int, override val time: Long) : CombatEvent
+
 /** Per-match publish/subscribe. Used on the server thread only. */
 class CombatEventBus(private val onError: (CombatEvent, Throwable) -> Unit = { _, _ -> }) {
     private val listeners = HashMap<KClass<out CombatEvent>, MutableList<(CombatEvent) -> Unit>>()

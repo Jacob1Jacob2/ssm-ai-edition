@@ -39,6 +39,7 @@ class CombatChatBridge(bus: CombatEventBus, private val dialogue: BotDialogue, p
             if (it.to == null) pursuits.remove(it.bot) else pursuits[it.bot] = Pursuit(it.to, it.time)
         }
         bus.on<TargetUnreachable> { unreachable[it.target] = it.bot to it.time }
+        bus.on<TrapLearned> { dialogue.trapped(it.bot, it.camper, it.deaths, it.time) }
         bus.on<BotStateChanged> {
             if (it.to == CombatState.FLEE) dialogue.retreat(it.bot, pursuits[it.bot]?.target, it.time)
         }

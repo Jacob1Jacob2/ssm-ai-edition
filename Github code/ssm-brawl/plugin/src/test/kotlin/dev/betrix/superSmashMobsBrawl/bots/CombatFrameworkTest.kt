@@ -126,6 +126,22 @@ class CombatFrameworkTest : StringSpec({
         m.stand(human.id, 70.0, 20_000, 21_000)
         m.say(25_000)!!.speaker shouldBe other.id
     }
+    "a bot that has learned a campers trap says so itself, in chat style, and more firmly the second time" {
+        for (mode in listOf(BotPersonality.TOXIC, BotPersonality.CHILL, BotPersonality.SALTY)) {
+            val m = Match(mode)
+            m.bus.publish(TrapLearned(bot.id, human.id, 1, 1000))
+            val first = m.say(5000)!!
+            first.speaker shouldBe bot.id
+            first.text shouldBe first.text.lowercase()
+            listOf(",", ".", "'").forEach { first.text.shouldNotContain(it) }
+            m.bus.publish(TrapLearned(bot.id, human.id, 2, 60_000))
+            m.say(64_000)!!.speaker shouldBe bot.id
+        }
+        // Somebody on the bots own team did not set it a trap.
+        val friendly = Match()
+        friendly.bus.publish(TrapLearned(bot.id, bot.id, 1, 1000))
+        friendly.say(5000) shouldBe null
+    }
     "a bot says ez after its own kill" {
         val lines = (0..40).mapNotNull { seed ->
             val bus = CombatEventBus(); val d = BotDialogue(Random(seed), LineMemory(), 1.0).also { it.mode = BotPersonality.TOXIC }

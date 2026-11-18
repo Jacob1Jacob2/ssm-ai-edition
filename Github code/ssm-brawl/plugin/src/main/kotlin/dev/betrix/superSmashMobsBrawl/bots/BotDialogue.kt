@@ -107,6 +107,8 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
      * [height] is 1 when they are above the hunter, -1 when below, 0 when level. */
     fun holding(player: UUID, hunter: UUID, seconds: Int, height: Int, now: Long) =
         now >= (quietUntil[player] ?: 0L) && offer("hold", player, height.toString(), now, 1, hunter, seconds)
+    /** The bot [bot] has died to [camper] sitting in one spot [deaths] times and is not walking into it again. */
+    fun trapped(bot: UUID, camper: UUID, deaths: Int, now: Long) = offer("trap", camper, "", now, 2, bot, deaths)
     /** The bot [bot] is backing off at low health, chased by [threat] if anyone. */
     fun retreat(bot: UUID, threat: UUID?, now: Long) = voiced(0.75) && offer("retreat", bot, "", now, 0, threat)
     fun clear() {
@@ -166,7 +168,7 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
         // Combat reactions belong to the bot they happened to; nobody else speaks for it.
         val involved = bots.find { it.id == request.other }
         val speaker = when (request.kind) {
-            "burst" -> involved ?: return null
+            "burst", "trap" -> involved ?: return null
             "retreat" -> bots.find { it.id == actor?.id } ?: return null
             "hold" -> involved ?: relevant ?: bots.random(random)
             else -> mentioned ?: relevant ?: deathSpeaker ?: bots.random(random)
@@ -203,6 +205,7 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
                 say.hold(actor, request.count, request.detail.toIntOrNull() ?: 0, level, repeated(actor.id)?.first)
             } else null
             "burst" -> if (enemies(speaker.id, actor!!.id)) say.burst(actor, request.count).also { about = "burst"; who = actor } else null
+            "trap" -> if (enemies(speaker.id, actor!!.id)) say.trapped(actor, request.count) else null
             "retreat" -> if (speaker.fighting) {
                 val threat = fighters.find { it.id == request.other && it.fighting }
                 about = "retreat"; who = threat

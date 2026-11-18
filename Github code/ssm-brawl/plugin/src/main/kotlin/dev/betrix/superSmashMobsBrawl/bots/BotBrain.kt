@@ -141,6 +141,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     /** A passive bot stands where it is put and never acts: the stand-in for a hiding player in tests. */
     @Volatile var passive = false
 
+    /** A rooted bot fights from where it stands and never takes a step: the stand-in for a camping player in tests. */
+    @Volatile var rooted = false
+
     /** Counts of navigation events since the last reset, read by the chase test. */
     class NavStats {
         var searches = 0; var unreachable = 0; var gapJumps = 0; var gapFails = 0
@@ -157,6 +160,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         bridge=null;crossing=null;reachable=emptySet()
         lastSafe=null;recovering=false;recoveryGoal=null;comboQueue.clear();shot=null
         fleeGoal=null;fleeFailedUntil=0;itemGoal=null
+        forgetDeaths()
         navStats.reset()
     }
 
@@ -199,6 +203,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     /** The blocks the last search that found no way could get to, and when that was. */
     private var reachable: Set<RouteNode> = emptySet()
     private var reachableTick = -100000L
+    /** Did the search in progress turn away from ground this bot has been killed on? */
+    private var searchBarred: () -> Boolean = { false }
 
     private fun routeToward(to: Location, map: GameMapDef,
                             unreachable: () -> Unit = { target?.let(::markUnreachable) }): RouteStep? {
@@ -219,13 +225,20 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             val goal = nav.nearest(to, 12.0)
             if(start != null && goal != null) {
                 navStats.searches++
+                // Ground it was killed on by somebody still sitting there is not ground to walk on.
+                // (Standing on some of it already, the bot may move off it, not further in.)
+                val zones = dangerZones(crossing == null).map { it to minOf(it.r, it.gap(start) - 1.0) }
+                var barred = false
                 routeSearch = ArenaRoute(start, goal, { n ->
                     nav.neighbours(n).filter {
                         it.node !in blockedSteps && (blockedEdges.isEmpty() || (n to it.node) !in blockedEdges) &&
                             (!it.climb || failedClimbs.none { (foot, _) -> abs(foot.x-n.x)<=3 && abs(foot.z-n.z)<=3 && abs(foot.y-n.y)<3.0 }) &&
-                            abs(it.node.x-start.x)<=72 && abs(it.node.z-start.z)<=72
+                            abs(it.node.x-start.x)<=72 && abs(it.node.z-start.z)<=72 &&
+                            (!memory.anyHops || !memory.hopBarred(n, it.node, tick)) &&
+                            (zones.isEmpty() || zones.none { (zone, r) -> zone.bars(it.node, r) }.also { open -> if (!open) barred = true })
                     }
                 }, ROUTE_LIMIT)
+                searchBarred = { barred }
                 routeGoal = to.clone()
                 nextRouteTick = tick + if(d.smartTargeting) 30 else 50
             } else {
@@ -254,7 +267,13 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                 nextRouteTick=tick+5
                 // No way through, and the bot already stands where the best attempt ends.
                 val atEnd=result.isEmpty() || result.last().node.let { hypot(it.x+.5-here.x,it.z+.5-here.z)<1.5 && abs(it.y-here.y)<1.0 }
-                if(!search.reached && atEnd) unreachable()
+                if(!search.reached && searchBarred()) {
+                    // The way there goes over ground it has been killed on. Walking as far as
+                    // the edge of that ground is walking back into range: stay where it is.
+                    route.clear()
+                    dbg("no way there that keeps off the ground it was killed on")
+                    unreachable()
+                } else if(!search.reached && atEnd) unreachable()
                 dbg("route ${route.size} steps, ${search.expanded} expansions, reached=${search.reached}")
             }
         }
@@ -425,6 +444,189 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         travel(goal, map) { withdrawUntil = 0 }
     }
 
+    // ------------------------------------------------------------------ learning from deaths
+
+    /** A hit this bot took: who from, where it stood, and whether it was on the ground. */
+    private class Blow(val tick: Long, val by: java.util.UUID, val at: Location, val grounded: Boolean)
+    private val blows = ArrayDeque<Blow>()
+    /** Damage this bot has done to each opponent since it last spawned. */
+    private val dealtThisLife = HashMap<java.util.UUID, Double>()
+    /** Where each opponent has been staying put, and since when. */
+    private class Stay(val at: Location, val since: Long)
+    private val stays = HashMap<java.util.UUID, Stay>()
+    private var lastGroundAt: Location? = null
+    private var lastGroundTick = 0L
+    /** How the bot was last trying to get in to somebody other than on foot ("jump", "cross:DROP"...), and when. */
+    private var lastWay = "walk"
+    private var lastWayTick = -1000L
+    /** The jump the bot last set off on (from a block, to a block), and when. */
+    private var lastHop: Pair<RouteNode, RouteNode>? = null
+    private var lastHopTick = -1000L
+
+    /**
+     * What dying has taught this bot, kept for the whole match, through its respawns: the traps
+     * it has walked into (an opponent who stays put and kills it from there), the ways in that
+     * cost it a life, and the jumps it fell to its death on. See [DeathMemory] for the rules.
+     * Deaths in the same trap before the lesson takes hold: the better the player, the sooner.
+     */
+    private val memory = DeathMemory(when (d) { BotDifficulty.NORMAL -> 3; BotDifficulty.HARD -> 2; else -> 1 })
+
+    private fun Location.point() = DeathMemory.Point(x, y, z)
+    private fun DeathMemory.Point.distance(l: Location) = distance(l.point())
+
+    private fun forgetDeaths() {
+        memory.clear(); stays.clear(); blows.clear(); dealtThisLife.clear()
+        lastHop = null; lastHopTick = -1000; lastWayTick = -1000
+    }
+
+    /** Called for every hit this bot takes from somebody else. */
+    fun struck(attacker: Player) {
+        if (attacker.uniqueId == player.uniqueId) return
+        blows.addLast(Blow(tick, attacker.uniqueId, player.location.clone(), nms.onGround()))
+        while (blows.size > 48 || tick - blows.first().tick > 400) blows.removeFirst()
+        // Shot at by somebody it is keeping its distance from, and down to half health: the
+        // distance it is keeping is not enough. Further back.
+        if (memory.traps.isNotEmpty() && player.health <= maxHealth(player) * 0.5) {
+            val here = player.location.point()
+            val trap = memory.trapOf(attacker.uniqueId, attacker.location.point())
+            if (trap != null && memory.hitFrom(trap, here)) {
+                prowlGoal = null; holdSince = -1; prowlRestUntil = 0
+                dbg("hit by ${attacker.name} from their spot at ${"%.0f".format(trap.camp.distance(here))} blocks: keeping ${"%.0f".format(trap.keepOut)} away now")
+            }
+        }
+    }
+
+    /** Called for damage this bot does to somebody else. */
+    fun dealt(victim: Player, amount: Double) { dealtThisLife.merge(victim.uniqueId, amount, Double::plus) }
+
+    /** Called as this bot dies: was that something it should not walk into a second time? [fell] is a death by the void or water. */
+    fun died(fell: Boolean) {
+        val last = blows.lastOrNull()
+        // A fall is somebody's doing if they hit the bot shortly before it last stood on anything, or after.
+        val killerId = last?.takeIf { if (fell) it.tick >= lastGroundTick - 60 else tick - it.tick <= 200 }?.by
+        val killer = killerId?.let { Bukkit.getPlayer(it) }?.takeIf { it.isOnline && it.world == player.world }
+        try {
+            if (BotManager.noLearning || passive || rooted) return
+            if (killer != null) trapped(killer, fell) else if (fell) fellAlone()
+        } finally {
+            blows.clear(); dealtThisLife.clear()
+            lastHopTick = -1000; lastWayTick = -1000
+        }
+    }
+
+    private fun wayNow(): String =
+        crossing?.let { "cross:${it.kind}" } ?: (if (bridge != null) "bridge" else null) ?: lastWay.takeIf { tick - lastWayTick <= 160 } ?: "walk"
+
+    private fun spot(p: DeathMemory.Point) = "%.1f,%.1f,%.1f".format(p.x, p.y, p.z)
+
+    private fun trapped(killer: Player, fell: Boolean) {
+        val id = killer.uniqueId
+        val at = killer.location
+        // Only somebody holding a spot: a fight that moves about the map leaves nothing to stay away from next time.
+        val holding = stays[id]?.let { it.at.world == at.world && tick - it.since >= CAMP_TICKS && it.at.distanceSquared(at) <= CAMP_RADIUS * CAMP_RADIUS } == true
+        val mine = blows.filter { it.by == id && tick - it.tick <= 240 }
+        val standing = mine.filter { it.grounded || hasSolidBelow(it.at, 3) }.map { it.at.point() } +
+            listOfNotNull(lastGroundAt?.takeIf { tick - lastGroundTick <= 240 }?.point())
+        val way = wayNow()
+        val trap = memory.killedBy(id, at.point(), holding, fell, exchanged = (dealtThisLife[id] ?: 0.0) >= maxHealth(killer) * 0.25,
+            hitAt = mine.map { it.at.point() }, standing = standing, way = way, now = tick) ?: return
+        val quiet = ((trap.keepOutUntil - tick) / 20).toInt()
+        if (memory.learned(trap)) {
+            // Said out loud as well: the next thing this bot does is not walk back in.
+            val bot = player.uniqueId
+            val times = trap.deaths
+            publish { TrapLearned(bot, id, times, it) }
+        }
+        plugin.logger.info("[bots] ${player.name} lesson: killed ${trap.deaths}x by ${killer.name} holding ${spot(trap.camp)} " +
+            "(going in by $way, hit at ${standing.map { "${it.x.toInt()},${it.y.toInt()},${it.z.toInt()}" }.distinct().take(5).joinToString(" ")}); " +
+            (if (!memory.learned(trap)) "not learned yet"
+            else "keeps off that ground, and for ${quiet}s out of their sight within ${"%.0f".format(trap.keepOut)} blocks; " +
+                (if (tick < trap.standoffUntil) "no going in at all for that long" else "ways in not to try again: ${trap.ways.joinToString(",")}")))
+    }
+
+    /** Fell to its death with nobody's help: whatever jump it was on is one to leave alone. */
+    private fun fellAlone() {
+        val way = wayNow()
+        val t = target
+        if (way != "walk" && t != null) {
+            memory.fellTrying(way, t.location.point())
+            plugin.logger.info("[bots] ${player.name} lesson: fell trying a $way to ${t.name} at ${spot(t.location.point())}; not trying that there again")
+        }
+        val hop = lastHop?.takeIf { lastGroundTick <= lastHopTick + 40 && tick - lastHopTick <= 400 } ?: return
+        val count = memory.fellOn(hop, tick)
+        plugin.logger.info("[bots] ${player.name} lesson: fell on the jump from ${hop.first.x},${"%.1f".format(hop.first.y)},${hop.first.z} to " +
+            "${hop.second.x},${"%.1f".format(hop.second.y)},${hop.second.z}; leaving it alone ${if (count >= 2) "for the rest of the match" else "for a minute"}")
+    }
+
+    /** The trap [t] is sitting in right now, if this bot has died in it often enough to have learned. */
+    private fun trapOf(t: Player): DeathMemory.Trap? = if (memory.traps.isEmpty()) null else memory.trapOf(t.uniqueId, t.location.point())
+
+    /** The trap [t] is sitting in, while this bot has given up going in to them. */
+    private fun standingOff(t: Player): DeathMemory.Trap? = trapOf(t)?.takeIf { tick < it.standoffUntil }
+
+    /** Has this way of getting in to [t] (a "jump", a "cross:DROP", a "bridge") already cost a life where they are now? */
+    private fun wayBarred(t: Player, way: String): Boolean = memory.wayBarred(t.uniqueId, t.location.point(), way, tick)
+
+    /** Ground not to walk on: [r] blocks around a point, within [h] of its height, and only what is [seen] from there if that is given. */
+    private class Zone(val x: Double, val y: Double, val z: Double, val r: Double, val h: Double, val seen: ((RouteNode) -> Boolean)? = null) {
+        /** How far [n] is from the middle of this zone, if it is at its height at all. */
+        fun gap(n: RouteNode) = if (abs(n.y - y) < h) hypot(n.x + .5 - x, n.z + .5 - z) else Double.MAX_VALUE
+        /** Is [n] ground to keep off, taking this zone to reach [within] blocks? */
+        fun bars(n: RouteNode, within: Double = r) = gap(n) < within && (seen == null || seen.invoke(n))
+    }
+
+    /** Which blocks the camper of a trap can see from where they sit: worked out once a block, kept while they stay put. */
+    private val exposure = HashMap<RouteNode, Boolean>()
+    private var exposureFrom: Triple<Int, Int, Int>? = null
+    private var exposureOf: java.util.UUID? = null
+
+    /** Could [k] see (and so shoot) a fighter standing on [n] from where they are now? */
+    private fun exposedTo(k: Player, n: RouteNode): Boolean {
+        val at = k.location
+        val from = Triple(at.blockX, at.blockY, at.blockZ)
+        if (exposureOf != k.uniqueId || exposureFrom != from || exposure.size > 30000) {
+            exposure.clear(); exposureOf = k.uniqueId; exposureFrom = from
+        }
+        return exposure.getOrPut(n) {
+            val eye = k.eyeLocation
+            // The head or the legs showing is enough to be shot at.
+            doubleArrayOf(1.5, 0.5).any { up ->
+                val gap = Vector(n.x + .5 - eye.x, n.y + up - eye.y, n.z + .5 - eye.z)
+                val length = gap.length()
+                length < 1.0 || eye.world.rayTraceBlocks(eye, gap.multiply(1.0 / length), length, org.bukkit.FluidCollisionMode.NEVER, true) == null
+            }
+        }
+    }
+
+    /**
+     * The ground this bot was killed on by somebody who is still sitting where they killed it
+     * from. With [keepOut], also all the ground they can see from there, out to a little beyond
+     * where they hit it from: walking anywhere, the bot stays out of their line of fire. (Without,
+     * for the walk to a crossing: a way in it has not died on is worth its one try.)
+     */
+    private fun dangerZones(keepOut: Boolean): List<Zone> {
+        if (memory.traps.isEmpty()) return emptyList()
+        val zones = ArrayList<Zone>()
+        for (trap in memory.traps) {
+            if (!memory.learned(trap)) continue
+            val k = Bukkit.getPlayer(trap.killer) ?: continue
+            if (!k.isOnline || k.world != player.world || k.gameMode != GameMode.SURVIVAL || trap.camp.distance(k.location) >= DeathMemory.CAMP) continue
+            trap.spots.forEach { zones += Zone(it.x, it.y, it.z, TRAP_RADIUS, 4.0) }
+            if (keepOut && tick < trap.keepOutUntil) zones += Zone(trap.camp.x, trap.camp.y, trap.camp.z, trap.keepOut, 30.0) { n -> exposedTo(k, n) }
+        }
+        return zones
+    }
+
+    /** Notes where every opponent is holding still, so a death can be told from a trap. */
+    private fun trackStays() {
+        if (tick % 10 != 0L) return
+        for (o in opponents) {
+            val at = o.location
+            val stay = stays[o.uniqueId]
+            if (stay == null || stay.at.world != at.world || stay.at.distanceSquared(at) > CAMP_RADIUS * CAMP_RADIUS) stays[o.uniqueId] = Stay(at.clone(), tick)
+        }
+    }
+
     private fun markUnreachable(t: Player) {
         unreachableUntil[t.uniqueId] = tick + 300
         unreachableAt[t.uniqueId] = t.location.clone()
@@ -514,6 +716,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             // While the match counts down, work out how the arena can be walked, so the first
             // route of the fight is ready the moment it is needed.
             game?.worldManager?.getWorld()?.takeIf { it.world == player.world }?.let { warmNav(it.world, it.data) }
+            // What it learned by dying lasts the match: through its respawns, not into the next game.
+            if (game == null || game.getState() != MinigameState.IN_PROGRESS) forgetDeaths()
             target = null
             lastSafe = null
             gapJump = null
@@ -539,7 +743,16 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         // the lip of one, with the middle of the body over the drop, is not such a place; a
         // recovery aimed at that exact point comes down past the block.
         if (onGround && hasSolidBelow(player.location.clone().add(0.0, -0.05, 0.0), 1)) lastSafe = player.location.clone()
+        // What a death is later read from: where it last stood, the jump it set off on, how it was going in.
+        if (onGround) { lastGroundAt = player.location.clone(); lastGroundTick = tick }
+        crossing?.let { lastWay = "cross:${it.kind}"; lastWayTick = tick }
+        if (bridge != null) { lastWay = "bridge"; lastWayTick = tick }
+        trackStays()
         if (wasOnGround && !onGround) {
+            val from = routeAt
+            val to = route.firstOrNull()?.node
+            // Only a jump of its own: pushed or blown off a block, the step it was on is not to blame.
+            if (from != null && to != null && from != to && tick - jumpReasonTick <= 2) { lastHop = from to to; lastHopTick = tick }
             val v = nms.deltaMovement
             dbg(
                 if (tick - jumpReasonTick <= 2) "left ground: jumped ($jumpReason)"
@@ -1302,7 +1515,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         opponents = alive
         // Prefer someone the bot can get to; with nobody else left, an unreachable opponent is
         // still the one to deal with.
-        val candidates = alive.filter { !besieging(it) }.ifEmpty { alive }
+        val candidates = alive.filter { !besieging(it) && standingOff(it) == null }.ifEmpty { alive }
         // Only the smarter selector reads edges and attackers, so only it pays for them.
         val attackers = if (d.smartTargeting) CombatLogService.recentAttackers(player, 4000) else emptySet()
         // Whoever this bot told the lobby it is going after ("lets team on him").
@@ -1380,7 +1593,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             if(step!=null) {
                 val (f,s,j)=stepInputs(step) ?: return
                 forward=f;strafe=s;jump=j
-            } else if(dist>reach-.4 && sees) {
+            } else if(dist>reach-.4 && sees && (dist<=reach+1.5 || trapOf(t)==null)) {
+                // (Not at somebody sitting where they have killed this bot before: seeing them
+                // from across their own ground is no reason to walk onto it.)
                 val input=inputToward(t.location);forward=input.first;strafe=input.second
             } else if(d.strafes && dist<reach+1) {
                 if(tick>=nextStrafeFlip){strafeDir=if(rng.nextBoolean())1f else -1f;nextStrafeFlip=tick+20}
@@ -1428,21 +1643,28 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         // Mid-shot the bot keeps its aim rather than walking it off.
         if (holdUntilTick >= 0 || bowReleaseTick > 0L || shot != null || gapJump != null) return false
         val here = player.location
+        // Somebody sitting where they have killed this bot before is watched from outside their reach.
+        val trap = trapOf(t)
+        val zones = if (trap != null) dangerZones(true) else emptyList()
+        fun clearOf(at: Location) = zones.isEmpty() ||
+            RouteNode(at.blockX, (at.y * 16).roundToInt(), at.blockZ).let { n -> zones.none { it.bars(n) } }
         var goal = prowlGoal
         if (goal != null && (tick >= prowlUntil || goal.world != here.world ||
                 (hypot(goal.x - here.x, goal.z - here.z) < 1.2 && abs(goal.y - here.y) < 1.5))) {
             // Arrived (or it is taking too long): have a look from here before moving on.
             prowlGoal = null; goal = null
-            prowlRestUntil = tick + rng.nextInt(8, 26)
+            // Watching somebody who will not come out is mostly standing and waiting.
+            prowlRestUntil = tick + if (trap != null) rng.nextInt(60, 180) else rng.nextInt(8, 26)
             route.clear(); routeSearch = null; nextRouteTick = tick
         }
         if (goal == null) {
-            if (tick < prowlRestUntil) return false
+            // (No standing about where somebody who has killed it from their spot can see it.)
+            if (tick < prowlRestUntil && clearOf(here)) return false
             // With something that reaches them (a ranged attack, an item to throw), the place to
             // be is one that sees them: go there and shoot for a while, then take a look round
             // for a way across (a jump from a new angle) before coming back.
             val range = if (d.smartTargeting && tick >= lookRoundUntil) sightRange() else 0.0
-            if (range > 0.0 && sees && dist <= range) {
+            if (range > 0.0 && sees && dist <= range && clearOf(here)) {
                 if (holdSince < 0) holdSince = tick
                 if (tick - holdSince < 120) { prowlRestUntil = tick + 10; return false }
                 // Long enough in one place: a look round for a way across, then back to shooting.
@@ -1450,8 +1672,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                 lookRoundUntil = tick + 200
             } else if (range > 0.0) {
                 holdSince = -1
-                val spot = vantage(t, range)
+                val spot = vantage(t, range, trap?.takeIf { tick < it.keepOutUntil })
                     ?: standOff(t).takeIf { carriedSlot()?.let { ItemService.kind(player.inventory.getItem(it)) } == ArenaItem.MISSILE_BATTERY }
+                        ?.takeIf(::clearOf)
                 if (spot != null && (hypot(spot.x - here.x, spot.z - here.z) > 1.5 || abs(spot.y - here.y) > 1.5)) {
                     prowlGoal = spot
                     prowlUntil = tick + 300
@@ -1463,16 +1686,19 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         }
         if (goal == null) {
             val nav = ArenaNav.of(player.world, map.voidLevel.toInt(), mobility())
-            val at = t.location
+            // Around them, as close as the ground comes; around a trap, out of their sight or out of their reach.
+            val at = trap?.camp?.let { Location(here.world, it.x, it.y, it.z) } ?: t.location
+            val reach = trap?.let { it.keepOut + 4.0 } ?: 8.0
             for (attempt in 1..8) {
                 val angle = rng.nextDouble() * Math.PI * 2
-                val radius = 2.5 + rng.nextDouble() * 8.0
+                val radius = 2.5 + rng.nextDouble() * reach
                 // Ground around their height first, else whatever is underneath.
                 val probe = Location(at.world, at.x + cos(angle) * radius, at.y + rng.nextInt(-1, 4), at.z + sin(angle) * radius)
                 val node = nav.nearest(probe, 14.0, 3.0) ?: continue
                 val spot = Location(at.world, node.x + .5, node.y, node.z + .5)
                 // Somewhere new, not the block the bot is already on.
                 if (hypot(spot.x - here.x, spot.z - here.z) < 3.0 && abs(spot.y - here.y) < 2.0) continue
+                if (zones.any { it.bars(node) }) continue
                 goal = spot
                 break
             }
@@ -1515,7 +1741,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         // Never over open void: if it falls short there must be something to land on.
         val middle = here.clone().add((landing.x - here.x) / 2, 0.0, (landing.z - here.z) / 2)
         if (across > 4.5 && !hasSolidBelow(middle, 12)) return false
+        if (wayBarred(t, "jump")) return false
         nextSiegeJumpTick = tick + 70
+        lastWay = "jump"; lastWayTick = tick
         dbg("no route to ${t.name}; jumping straight at them")
         startGapJump(Gap(dist, landing))
         return true
@@ -2206,7 +2434,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         // In the middle of a shot or a jump: look again at the next decision, not in two seconds.
         if (holdUntilTick >= 0 || shot != null || gapJump != null || climb != null || !nms.onGround()) return false
         nextBridgeTick = tick + 40
-        if (!isReady("ice_path") || !canDoubleJump() || tick - reachableTick > 1500) return false
+        if (!isReady("ice_path") || !canDoubleJump() || tick - reachableTick > 1500 || wayBarred(t, "bridge")) return false
         val world = player.world
         // Where they are standing, as the walking graph sees it.
         val node = ArenaNav.of(world, map.voidLevel.toInt(), true).nearest(t.location, 3.0) ?: return false
@@ -2381,6 +2609,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             CrossKind.DROP,
         )
         for (kind in kinds) {
+            // A way in that has already cost a life against them here is not tried a second time.
+            if (wayBarred(t, "cross:$kind")) continue
             val (launch, air) = when (kind) {
                 CrossKind.FLIGHT -> flightFrom(landing, map)?.let { it to landing }
                 CrossKind.TRAMPOLINE -> padFor(landing, map)?.let { it to landing }
@@ -2807,14 +3037,16 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
      * they cannot get to someone but have something to throw. A sample of the places the last
      * failed route search got to, the nearest to the opponent that sees them.
      */
-    private fun vantage(t: Player, range: Double): Location? {
+    private fun vantage(t: Player, range: Double, trap: DeathMemory.Trap? = null): Location? {
         if (reachable.isEmpty() || tick - reachableTick > 1500) return null
         val world = player.world
         val aim = aimPointOf(t)
         val here = player.location
         val near = reachable.filter {
             abs(it.x + .5 - aim.x) <= range && abs(it.z + .5 - aim.z) <= range &&
-                Location(world, it.x + .5, it.y + 1.62, it.z + .5).distanceSquared(aim).let { d2 -> d2 >= 9.0 && d2 <= range * range }
+                Location(world, it.x + .5, it.y + 1.62, it.z + .5).distanceSquared(aim).let { d2 -> d2 >= 9.0 && d2 <= range * range } &&
+                // Not from inside the reach of somebody who has killed this bot from where they sit.
+                (trap == null || trap.camp.distance(Location(world, it.x + .5, it.y, it.z + .5)) >= trap.keepOut)
         }
         if (near.isEmpty()) return null
         var best: Location? = null
@@ -3137,6 +3369,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         // The block the bot is standing on, if it is the one the route says it jumps from.
         val from = routeAt?.takeIf { abs(it.y - here.y) < .6 && hypot(it.x + .5 - here.x, it.z + .5 - here.z) < 1.0 }
         val jump = GapJump(landing, tick, here.clone(), from)
+        if (from != null) { lastHop = from to RouteNode(landing.blockX, (landing.y * 16).roundToInt(), landing.blockZ); lastHopTick = tick }
         if (liquidOnTheWay(landing, jump.high)) {
             // Water has got into the way since the route was planned (it flows). Stand still, not
             // on over the edge, leave this jump alone for a while and look at the arena again.
@@ -3220,7 +3453,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     private var lastMap: GameMapDef? = null
 
     private fun doubleJump(reason: String) {
-        if (!canDoubleJump()) return
+        if (!canDoubleJump() || rooted) return
         lastDoubleJumpTick = tick
         navStats.doubleJumps++
         dbg("double jump ($reason)")
@@ -3243,6 +3476,10 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     }
 
     private fun setInputs(forward: Float, strafe: Float, jump: Boolean) {
+        if (rooted) {
+            nms.forwardInput = 0f; nms.strafeInput = 0f; nms.jumpInput = false; nms.isSprinting = false
+            return
+        }
         nms.forwardInput = forward
         nms.strafeInput = strafe
         nms.jumpInput = jump
@@ -3381,6 +3618,11 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     private companion object {
         /** Enough to search a whole arena; the cached graph makes each step cheap. */
         const val ROUTE_LIMIT = 20000
+        /** An opponent who has kept within this many blocks of one spot for [CAMP_TICKS] is holding it. */
+        const val CAMP_RADIUS = 5.0
+        const val CAMP_TICKS = 160L
+        /** How far around the ground it was killed on a bot keeps off. */
+        const val TRAP_RADIUS = 4.0
         /** Wall climbing drains a full bar in 200 ticks at 0.4 blocks a tick: this much per block. */
         const val CLIMB_ENERGY_PER_BLOCK = 0.0125
         /** Route steps a dash must have ahead of it, all level, and how long the lane must be. */
