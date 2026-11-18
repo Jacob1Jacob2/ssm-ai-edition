@@ -36,6 +36,11 @@ data class CombatSituation(
     val crystalDistance: Double? = null,
     /** Ticks until that crystal can be taken; 0 once it has landed. */
     val crystalLandsIn: Int = 0,
+    /**
+     * That pickup is the way forward: the opponent sits where nothing walks, and this is something
+     * to get to them or hit them with. Worth the walk however far it is.
+     */
+    val itemNeeded: Boolean = false,
 )
 
 /**
@@ -91,6 +96,7 @@ object NormalPolicy : CombatPolicy {
         } else if (s.health < FLEE_BELOW && threatened && current == CombatState.ATTACK && ticksInState > 60) {
             return CombatState.FLEE
         }
+        if (s.itemDistance != null && s.itemNeeded) return CombatState.GET_ITEM
         if (s.itemDistance != null && s.itemDistance < ITEM_RANGE &&
             (s.targetDistance == null || s.targetDistance > 5 || current == CombatState.GET_ITEM)) return CombatState.GET_ITEM
         return if (s.targetDistance == null) CombatState.ROAM else CombatState.ATTACK
@@ -116,6 +122,8 @@ object ExpertPolicy : CombatPolicy {
                 (current == CombatState.FLEE || ticksInState > 40)) return CombatState.FLEE
         }
         val item = s.itemDistance
+        // Nothing else gets the bot to this opponent: the item comes before standing and staring.
+        if (item != null && s.itemNeeded) return CombatState.GET_ITEM
         if (item != null && !finishing) {
             val winsRace = s.itemEnemyDistance == null || item + 1.5 < s.itemEnemyDistance
             val cheapDetour = distance == null || item < distance * 0.75 || item < 5

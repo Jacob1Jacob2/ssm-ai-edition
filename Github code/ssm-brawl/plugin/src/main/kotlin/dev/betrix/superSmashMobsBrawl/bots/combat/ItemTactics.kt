@@ -71,6 +71,8 @@ object ItemTactics {
         fun within(range: ClosedFloatingPointRange<Double>) = seen && dist!! in range
         // Nobody keeps an item for ever: past this, any reasonable chance is taken.
         val impatient = s.heldSeconds > 20 + (40 * skill).toInt()
+        // Sitting where no route leads: the moment to use it is whenever there is a shot at all.
+        val camped = s.targetUnreachable
         fun at(aim: ItemAim, condition: Boolean) = if (condition) aim else null
 
         return when (item) {
@@ -106,27 +108,31 @@ object ItemTactics {
             HOMING_SNOWBALL -> at(ItemAim.TARGET, within(3.0..30.0))
             FIRE_FLOWER, MISSILE_BATTERY, RAIN_STAFF -> at(ItemAim.TARGET, within(3.0..24.0))
             // One rocket: careful bots want a slow or close target, and never their own feet.
-            ROCKET_LAUNCHER -> at(ItemAim.TARGET, within(8.0..28.0) && (!careful || still || dist!! < 14 || impatient))
+            ROCKET_LAUNCHER -> at(ItemAim.TARGET, within(8.0..28.0) && (!careful || still || dist!! < 14 || impatient || camped))
             SHOTBOW -> at(ItemAim.TARGET, within(0.0..9.0))
 
             // --- finishers: worth most when the opponent is at an edge or already hurt
             KNOCKBACK_ROD -> when {
                 within(0.0..3.6) && (!careful || s.targetNearEdge || s.targetHealth < 0.4 || impatient) -> ItemAim.CONTACT
-                within(3.6..12.0) && s.targetNearEdge -> ItemAim.TARGET
+                // Someone sitting on a perch nothing walks to is on an edge by definition: knock them off it.
+                within(3.6..12.0) && (s.targetNearEdge || camped) -> ItemAim.TARGET
                 else -> null
             }
-            // Throws the opponent far behind the bot, so it wants the drop at its back.
-            PLAYER_GRAPPLE -> at(ItemAim.CONTACT, within(0.0..14.0) && (!careful || s.voidBehind || impatient))
-            SMASHER -> at(ItemAim.CONTACT, within(0.0..7.0))
+            // Throws the opponent far behind the bot, so it wants the drop at its back. It also
+            // fetches a camper out of their hiding place, wherever they land.
+            PLAYER_GRAPPLE -> at(ItemAim.CONTACT, within(0.0..14.0) && (!careful || s.voidBehind || impatient || camped))
+            // The blast goes through floors and walls: no need to see someone hiding under the bot.
+            SMASHER -> if (camped && !seen && dist != null && dist <= SMASHER_THROUGH) ItemAim.NONE else at(ItemAim.CONTACT, within(0.0..7.0))
 
             // --- three-second fuses: careful bots save them for someone who is not moving
-            AIR_STRIKE -> at(ItemAim.LOBBED, within(8.0..22.0) && (!careful || still || impatient))
+            //     (a camper is not going anywhere)
+            AIR_STRIKE -> at(ItemAim.LOBBED, within(8.0..22.0) && (!careful || still || impatient || camped))
             // The mist stays for five seconds, so it also works on someone who is merely near.
-            POISON_MIST -> at(ItemAim.LOBBED, within(5.0..16.0) && (!careful || still || s.targetSpeed < 0.2 || impatient))
-            ICE_CUBE -> at(ItemAim.LOBBED, within(6.0..16.0) && (!careful || still || s.targetNearEdge || impatient))
-            SINGULARITY_GRENADE -> at(ItemAim.LOBBED, within(6.0..16.0) && (!careful || still || impatient))
-            SINGULARITY_NUKE -> at(ItemAim.LOBBED, within(9.0..18.0) && (!careful || still || impatient))
-            CLUSTER_GRENADE -> at(ItemAim.LOBBED, within(6.0..16.0) && (!careful || still || impatient))
+            POISON_MIST -> at(ItemAim.LOBBED, within(5.0..16.0) && (!careful || still || s.targetSpeed < 0.2 || impatient || camped))
+            ICE_CUBE -> at(ItemAim.LOBBED, within(6.0..16.0) && (!careful || still || s.targetNearEdge || impatient || camped))
+            SINGULARITY_GRENADE -> at(ItemAim.LOBBED, within(6.0..16.0) && (!careful || still || impatient || camped))
+            SINGULARITY_NUKE -> at(ItemAim.LOBBED, within(9.0..18.0) && (!careful || still || impatient || camped))
+            CLUSTER_GRENADE -> at(ItemAim.LOBBED, within(6.0..16.0) && (!careful || still || impatient || camped))
             FRAG_GRENADE -> at(ItemAim.LOBBED, within(4.0..14.0))
             CRAFTY_BOMB -> at(ItemAim.CONTACT, within(0.0..6.0) && (!careful || still || impatient))
             // A mine goes where the opponent is about to walk: at a chaser, or between the two.
@@ -137,4 +143,37 @@ object ItemTactics {
 
     /** Items a bot cannot spend should not block it from picking up others. */
     fun shouldDiscard(failedUses: Int) = failedUses >= 4
+
+    /** The Smasher's blast reaches 11 blocks; this close it still takes off a good part of a health bar. */
+    const val SMASHER_THROUGH = 8.5
+
+    /**
+     * What an item is worth against an opponent sitting where no route leads:
+     * 3 gets the bot to them, 2 hurts or moves them from where the bot can stand, 0 is no help.
+     */
+    fun siegeValue(item: ArenaItem): Int = when (item) {
+        INSTANT_TELEPORTER, JETPACK, CLOUD_IN_A_BOTTLE, POCKET_TRAMPOLINE -> 3
+        ROCKET_LAUNCHER, MISSILE_BATTERY, SMASHER, AIR_STRIKE, HOMING_SNOWBALL, FIRE_FLOWER, RAIN_STAFF,
+        PLAYER_GRAPPLE, KNOCKBACK_ROD, SINGULARITY_NUKE, SINGULARITY_GRENADE, CLUSTER_GRENADE, FRAG_GRENADE,
+        POISON_MIST, ICE_CUBE, MONSTER_EGG -> 2
+        else -> 0
+    }
+
+    /** How far away an item still does something to an opponent the bot can see, for choosing where to stand. */
+    fun reach(item: ArenaItem): Double = when (item) {
+        HOMING_SNOWBALL -> 30.0
+        ROCKET_LAUNCHER -> 28.0
+        FIRE_FLOWER, MISSILE_BATTERY, RAIN_STAFF -> 24.0
+        AIR_STRIKE -> 22.0
+        INSTANT_TELEPORTER, MONSTER_EGG -> 20.0
+        SINGULARITY_NUKE -> 18.0
+        POISON_MIST, ICE_CUBE, SINGULARITY_GRENADE, CLUSTER_GRENADE -> 16.0
+        FRAG_GRENADE, PLAYER_GRAPPLE -> 14.0
+        KNOCKBACK_ROD -> 12.0
+        else -> 0.0
+    }
+
+    /** Things that cost nothing to use up on the spot, when the hand is wanted for something else. */
+    fun usedUpFreely(item: ArenaItem): Boolean =
+        item in setOf(FOOD, FIRST_AID_KIT, AWESOME_SOUP, GILDED_APPLE, REGENERATE, SPEED, SHADOW_WALK)
 }

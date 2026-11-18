@@ -362,6 +362,31 @@ class CombatFrameworkTest : StringSpec({
         plan(ArenaItem.INSTANT_TELEPORTER, fight.copy(targetDistance = 15.0, targetUnreachable = true)) shouldBe ItemAim.TARGET
         plan(ArenaItem.INSTANT_TELEPORTER, fight.copy(targetDistance = 15.0), BotDifficulty.NORMAL) shouldBe ItemAim.TARGET
     }
+    "against a camper nothing walks to, items are fetched from across the map and used without waiting" {
+        val camper = fight.copy(targetUnreachable = true)
+        // Fused explosives and the big rocket do not wait for a camper to stand still.
+        plan(ArenaItem.AIR_STRIKE, camper) shouldBe ItemAim.LOBBED
+        plan(ArenaItem.ROCKET_LAUNCHER, camper.copy(targetDistance = 20.0)) shouldBe ItemAim.TARGET
+        // The Smasher goes through the floor: no sight needed, only range.
+        plan(ArenaItem.SMASHER, camper.copy(targetVisible = false, targetDistance = 8.0)) shouldBe ItemAim.NONE
+        plan(ArenaItem.SMASHER, camper.copy(targetVisible = false, targetDistance = 12.0)) shouldBe null
+        plan(ArenaItem.SMASHER, fight.copy(targetVisible = false, targetDistance = 8.0)) shouldBe null
+        // A rod shot knocks them off their perch; a grapple fetches them out of it.
+        plan(ArenaItem.KNOCKBACK_ROD, camper) shouldBe ItemAim.TARGET
+        plan(ArenaItem.PLAYER_GRAPPLE, camper) shouldBe ItemAim.CONTACT
+        plan(ArenaItem.PLAYER_GRAPPLE, fight) shouldBe null
+        // What is worth walking the map for: a way across first, something to hit them with second.
+        ItemTactics.siegeValue(ArenaItem.JETPACK) shouldBe 3
+        ItemTactics.siegeValue(ArenaItem.CLOUD_IN_A_BOTTLE) shouldBe 3
+        ItemTactics.siegeValue(ArenaItem.ROCKET_LAUNCHER) shouldBe 2
+        ItemTactics.siegeValue(ArenaItem.FOOD) shouldBe 0
+        ItemTactics.usedUpFreely(ArenaItem.FOOD) shouldBe true
+        ItemTactics.usedUpFreely(ArenaItem.EXTRA_LIFE) shouldBe false
+        // A needed item is fetched however far away it is; an ordinary one that far is left lying.
+        val far = situation(distance = 12.0, item = 40.0, itemEnemy = 60.0)
+        ExpertPolicy.decide(far, CombatState.ATTACK, 0) shouldBe CombatState.ATTACK
+        ExpertPolicy.decide(far.copy(itemNeeded = true), CombatState.ATTACK, 0) shouldBe CombatState.GET_ITEM
+    }
     "fused explosives are saved for someone standing still" {
         for (item in listOf(ArenaItem.AIR_STRIKE, ArenaItem.CLUSTER_GRENADE, ArenaItem.SINGULARITY_GRENADE)) {
             plan(item, fight) shouldBe null

@@ -98,6 +98,31 @@ class BotsCommand : KoinComponent {
         plugin.logger.info("[platform] 3x3 stone at $bx,$by,$bz in ${world.key.value()}")
     }
 
+    @Execute(name = "giveitem")
+    @Description("Debug: hands an arena item to every bot in a running match that is not a passive stand-in")
+    fun giveItem(@Context sender: CommandSender, @Arg item: String) {
+        if (!allowed(sender)) return
+        val kind = dev.betrix.superSmashMobsBrawl.items.ArenaItem.parse(item)
+            ?: run { plugin.logger.info("[giveitem] no such item: $item"); return }
+        val bots = BotManager.onlineBots().filter {
+            it.world.key.value().startsWith("ssmbworld") && it.gameMode == org.bukkit.GameMode.SURVIVAL && BotManager.brainOf(it)?.passive != true
+        }
+        if (bots.isEmpty()) plugin.logger.info("[giveitem] no bots in a match")
+        bots.forEach { plugin.logger.info("[giveitem] ${kind.label} -> ${it.name}: ${dev.betrix.superSmashMobsBrawl.items.ItemService.give(it, kind)}") }
+    }
+
+    @Execute(name = "dropitem")
+    @Description("Debug: puts an arena item pickup at x y z in the running bots match")
+    fun dropItem(@Context sender: CommandSender, @Arg item: String, @Arg x: Double, @Arg y: Double, @Arg z: Double) {
+        if (!allowed(sender)) return
+        val kind = dev.betrix.superSmashMobsBrawl.items.ArenaItem.parse(item)
+            ?: run { plugin.logger.info("[dropitem] no such item: $item"); return }
+        val bot = BotManager.onlineBots().firstOrNull { it.world.key.value().startsWith("ssmbworld") && it.gameMode == org.bukkit.GameMode.SURVIVAL }
+            ?: run { plugin.logger.info("[dropitem] no match world"); return }
+        val placed = dev.betrix.superSmashMobsBrawl.items.ItemService.spawnAt(bot, kind, org.bukkit.Location(bot.world, x, y, z))
+        plugin.logger.info("[dropitem] ${kind.label} at $x $y $z: $placed")
+    }
+
     @Execute(name = "snowcount")
     @Description("Debug: counts snow layers in the running bots match that are nowhere near a Snowman (left-over snow)")
     fun snowCount(@Context sender: CommandSender) {

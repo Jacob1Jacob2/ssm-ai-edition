@@ -4,6 +4,7 @@ import dev.betrix.superSmashMobsBrawl.SuperSmashMobsBrawl
 import dev.betrix.superSmashMobsBrawl.bots.combat.*
 import dev.betrix.superSmashMobsBrawl.bots.nms.BotPlayer
 import dev.betrix.superSmashMobsBrawl.extensions.disguise
+import dev.betrix.superSmashMobsBrawl.items.ArenaItem
 import dev.betrix.superSmashMobsBrawl.items.ItemService
 import dev.betrix.superSmashMobsBrawl.services.BotConversationService
 import dev.betrix.superSmashMobsBrawl.services.CombatLogService
@@ -153,7 +154,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     fun resetNavigation() {
         route.clear();routeSearch=null;routeGoal=null;nextRouteTick=0
         blockedSteps.clear();blockedEdges.clear();failedClimbs.clear();unreachableUntil.clear();unreachableAt.clear();withdrawUntil=0;stuckRef=null;gapJump=null;climb=null
-        bridge=null;reachable=emptySet()
+        bridge=null;crossing=null;reachable=emptySet()
         lastSafe=null;recovering=false;recoveryGoal=null;comboQueue.clear();shot=null
         fleeGoal=null;fleeFailedUntil=0;itemGoal=null
         navStats.reset()
@@ -520,7 +521,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             route.clear();routeSearch=null;nextRouteTick=0
             blockedSteps.clear();blockedEdges.clear();stuckRef=null
             comboQueue.clear();bowReleaseTick=0;player.isSneaking=false
-            shot=null;carried=null;channelUntil=0;perch=null;bridge=null
+            shot=null;carried=null;channelUntil=0;perch=null;bridge=null;crossing=null
             enterState(CombatState.IDLE)
             opponents=emptyList();healthLosses.clear();lastHealth=0.0
             itemGoal=null;ignoredItems.clear();fleeFailedUntil=0;trackedId=null
@@ -640,6 +641,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         if (gapJump != null && continueGapJump(map)) return
         perch?.let { if (tickPerch(it, map)) return }
         bridge?.let { if (it.stage > 0 && tickBridge(it, map)) return }
+        crossing?.let { if (it.stage > 0 && tickCrossing(it, map)) return }
 
         // A hop across a small gap passes over the drop for a few ticks. That is the route
         // working, not a fall: recovering from it (a double jump back the way it came) used to
@@ -688,7 +690,12 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     private fun updateState(t: Player?) {
         val here = player.location
         val max = maxHealth(player)
-        val item = nearestItem()
+        // Stuck on someone no route leads to: what is lying about the map may be the way to them.
+        val needed = if (t != null && d.smartTargeting && besieging(t) && crossing == null && bridge == null && perch == null)
+            siegePickup(t) else null
+        if (needed != null && t != null) unreachableUntil[t.uniqueId] = maxOf(unreachableUntil[t.uniqueId] ?: 0L, tick + 100)
+        itemWanted = needed != null
+        val item = needed ?: nearestItem()
         itemGoal = item
         val crystal = if (tick < crystalIgnoredUntil) null
             else dev.betrix.superSmashMobsBrawl.smash.SmashService.crystalFor(player)?.takeIf { it.first.world == here.world }
@@ -704,21 +711,98 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             itemEnemyDistance = item?.let { i -> opponents.filter { it.world == i.world }.minOfOrNull { it.location.distance(i) } },
             recentDamage = healthLosses.sumOf { it.second } / max,
             attacksReady = kitAbilityIds().count { AbilityHints.of(it).attack && isReady(it) },
+            itemNeeded = needed != null,
         )
         states.update(situation, tick)?.let(::stateChanged)
     }
 
     private fun itemKey(at: Location) = Triple(at.blockX, at.blockY, at.blockZ)
 
+    /** The hotbar slot of the pickup this bot is carrying, if it has one. */
+    private fun carriedSlot(): Int? = (0..8).firstOrNull { ItemService.kind(player.inventory.getItem(it)) != null }
+
     private fun nearestItem(): Location? {
         ignoredItems.entries.removeIf { it.value <= tick }
         // A Mystery Ability's copper tool is an item in hand: nothing else can be picked up with it.
         if ((0..8).any { dev.betrix.superSmashMobsBrawl.abilities.MysteryAbility.isBorrowed(player.inventory.getItem(it)) }) return null
         val here = player.location
-        return ItemService.pickupLocations(player)
-            .filter { it.world == here.world && itemKey(it) !in ignoredItems && abs(it.y - here.y) < 12 }
+        // With one in hand already, only the things that go straight onto the fighter can be taken.
+        val full = carriedSlot() != null
+        return ItemService.pickups(player)
+            .filter { (kind, at) -> at.world == here.world && itemKey(at) !in ignoredItems && abs(at.y - here.y) < 12 &&
+                (!full || kind.tool || kind == dev.betrix.superSmashMobsBrawl.items.ArenaItem.DIAMOND_HELMET) }
+            .map { it.second }
             .minByOrNull { it.distanceSquared(here) }
             ?.takeIf { it.distanceSquared(here) < 900 }
+    }
+
+    /** The places the last failed route search got to, by column. */
+    private var reachableIndex = HashMap<Long, MutableList<RouteNode>>()
+    private var reachableIndexed: Set<RouteNode>? = null
+    private fun columnKey(x: Int, z: Int) = (x.toLong() shl 32) xor (z.toLong() and 0xffffffffL)
+    private fun reachableByColumn(): Map<Long, List<RouteNode>> {
+        if (reachableIndexed !== reachable) {
+            val index = HashMap<Long, MutableList<RouteNode>>()
+            for (n in reachable) index.getOrPut(columnKey(n.x, n.z)) { ArrayList(2) }.add(n)
+            reachableIndex = index
+            reachableIndexed = reachable
+        }
+        return reachableIndex
+    }
+
+    /** Can the bot walk to within arm's length of [at]? As good as the last search that found no way to someone. */
+    private fun canWalkTo(at: Location): Boolean {
+        val index = reachableByColumn()
+        for (dx in -1..1) for (dz in -1..1) {
+            if (index[columnKey(at.blockX + dx, at.blockZ + dz)]?.any { abs(it.y - at.y) < 2.0 } == true) return true
+        }
+        return false
+    }
+
+    /** The pickup being fetched is one the bot needs against an opponent it cannot get to. */
+    private var itemWanted = false
+    private var wantedKey: Triple<Int, Int, Int>? = null
+
+    /**
+     * The opponent sits where no route leads. A player in that spot looks at what is lying about:
+     * something to get across with (a jetpack, a cloud, a teleporter), failing that something to
+     * hit them with from here. This is the best such pickup the bot can walk to, if it beats what
+     * it is carrying; whatever is in the hand and no use here is used up or let go to make room.
+     */
+    private fun siegePickup(t: Player): Location? {
+        if (reachable.isEmpty() || tick - reachableTick > 1500) return null
+        if ((0..8).any { dev.betrix.superSmashMobsBrawl.abilities.MysteryAbility.isBorrowed(player.inventory.getItem(it)) }) return null
+        ignoredItems.entries.removeIf { it.value <= tick }
+        val here = player.location
+        fun worth(kind: dev.betrix.superSmashMobsBrawl.items.ArenaItem): Int =
+            // A trampoline only goes up.
+            if (kind == dev.betrix.superSmashMobsBrawl.items.ArenaItem.POCKET_TRAMPOLINE && t.y < here.y + 2.0) 0 else ItemTactics.siegeValue(kind)
+        val slot = carriedSlot()
+        val have = slot?.let { ItemService.kind(player.inventory.getItem(it)) }
+        // Something that has not found its moment in forty seconds counts for less than a fresh idea.
+        val haveWorth = when {
+            have == null -> 0
+            tick - carriedSince > 800 -> 1
+            else -> maxOf(1, worth(have))
+        }
+        val best = ItemService.pickups(player)
+            .filter { (kind, at) -> at.world == here.world && kind != have && itemKey(at) !in ignoredItems &&
+                worth(kind) > maxOf(1, haveWorth) && canWalkTo(at) }
+            .maxWithOrNull(compareBy<Pair<dev.betrix.superSmashMobsBrawl.items.ArenaItem, Location>>({ worth(it.first) }, { -it.second.distanceSquared(here) }))
+            ?: return null
+        if (slot != null && have != null) {
+            if (ItemTactics.usedUpFreely(have)) spendItem(slot, have, null)
+            if (ItemService.kind(player.inventory.getItem(slot)) != null) {
+                player.inventory.setItem(slot, null)
+                dbg("letting go of ${have.label}: ${best.first.label} is more use against someone it cannot get to")
+            }
+            carried = null
+        }
+        if (wantedKey != itemKey(best.second)) {
+            wantedKey = itemKey(best.second)
+            dbg("no way to ${t.name}: going for the ${best.first.label} at ${best.second.blockX},${best.second.blockY},${best.second.blockZ}")
+        }
+        return best.second
     }
 
     private fun ignoreItem(at: Location, ticks: Long) {
@@ -730,7 +814,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     private fun collect(goal: Location, map: GameMapDef) {
         val near = player.location.distanceSquared(goal) < 4.0
         if (!near) itemNearSince = -1 else if (itemNearSince < 0) itemNearSince = tick
-        if ((near && tick - itemNearSince > 30) || states.ticksInState(tick) > 300) return ignoreItem(goal, 600)
+        // One it needs may be the whole map away.
+        if ((near && tick - itemNearSince > 30) || states.ticksInState(tick) > (if (itemWanted) 700 else 300)) return ignoreItem(goal, 600)
         travel(goal, map) { ignoreItem(goal, 300) }
     }
 
@@ -1251,6 +1336,10 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         // A Snowman with no way over lays one: off to the ledge its ice bridge starts from.
         if (decide && sieging && bridge == null) startBridge(t, map)
         bridge?.let { if (it.stage == 0 && approachBridge(it, t, map)) return }
+        // Anyone else with no way over looks for one of their own: a drop in under an overhang,
+        // or whatever the item in their hand makes possible.
+        if (decide && sieging && bridge == null && crossing == null) startCrossing(t, map)
+        crossing?.let { if (it.stage == 0 && approachCrossing(it, t, map)) return }
         if (sieging && d.smartTargeting) {
             if (tick >= withdrawUntil && healthLosses.isNotEmpty() && !canHarmAt(dist)) {
                 withdrawUntil = tick + 160
@@ -1324,6 +1413,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     private var prowlGoal: Location? = null
     private var prowlUntil = 0L
     private var prowlRestUntil = 0L
+    /** Since when the bot has stood where it can shoot at an opponent it cannot get to, and until when it is off looking for a way across instead. */
+    private var holdSince = -1L
+    private var lookRoundUntil = 0L
 
     /**
      * The opponent is somewhere no route leads (a perch, a ledge, a roof). A player in that spot
@@ -1346,6 +1438,30 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         }
         if (goal == null) {
             if (tick < prowlRestUntil) return false
+            // With something that reaches them (a ranged attack, an item to throw), the place to
+            // be is one that sees them: go there and shoot for a while, then take a look round
+            // for a way across (a jump from a new angle) before coming back.
+            val range = if (d.smartTargeting && tick >= lookRoundUntil) sightRange() else 0.0
+            if (range > 0.0 && sees && dist <= range) {
+                if (holdSince < 0) holdSince = tick
+                if (tick - holdSince < 120) { prowlRestUntil = tick + 10; return false }
+                // Long enough in one place: a look round for a way across, then back to shooting.
+                holdSince = -1
+                lookRoundUntil = tick + 200
+            } else if (range > 0.0) {
+                holdSince = -1
+                val spot = vantage(t, range)
+                    ?: standOff(t).takeIf { carriedSlot()?.let { ItemService.kind(player.inventory.getItem(it)) } == ArenaItem.MISSILE_BATTERY }
+                if (spot != null && (hypot(spot.x - here.x, spot.z - here.z) > 1.5 || abs(spot.y - here.y) > 1.5)) {
+                    prowlGoal = spot
+                    prowlUntil = tick + 300
+                    route.clear(); routeSearch = null; nextRouteTick = tick
+                    dbg("no way to ${t.name}; going to ${spot.blockX},${spot.blockY},${spot.blockZ} for a shot at them")
+                    goal = spot
+                }
+            }
+        }
+        if (goal == null) {
             val nav = ArenaNav.of(player.world, map.voidLevel.toInt(), mobility())
             val at = t.location
             for (attempt in 1..8) {
@@ -1581,7 +1697,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             fleeing = states.state == CombatState.FLEE,
             // Coming down over a gap on the way to a planned landing is not a fall: a jetpack
             // or cloud spent there is wasted. It is a fall once no jump is in progress.
-            falling = gapJump == null && isOverVoid(map) && nms.deltaMovement.y < 0,
+            // (Nor is the drop that is part of a crossing the bot planned: see [Crossing].)
+            falling = gapJump == null && crossing?.takeIf { it.stage > 0 } == null && isOverVoid(map) && nms.deltaMovement.y < 0,
             airJump = canDoubleJump(),
             targetDistance = t?.location?.distance(here),
             targetVisible = t != null && player.hasLineOfSight(t),
@@ -1607,7 +1724,10 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         if (slot == null || kind == null) { carried = null; return }
         if (kind != carried) { carried = kind; carriedSince = tick; carriedFails = 0 }
         if (kind.tool || kind == dev.betrix.superSmashMobsBrawl.items.ArenaItem.DIAMOND_HELMET) return
-        when (val aim = ItemTactics.plan(kind, itemSituation(t, map), d) ?: return) {
+        val situation = itemSituation(t, map)
+        // Against someone no route leads to, a few items are used with more care than a throw in their direction.
+        if (t != null && d.smartTargeting && situation.targetUnreachable && !situation.falling && siegeItem(slot, kind, t, situation)) return
+        when (val aim = ItemTactics.plan(kind, situation, d) ?: return) {
             ItemAim.NONE -> spendItem(slot, kind, null)
             ItemAim.ESCAPE -> {
                 // Nobody fumbles the aim when it is their life: point straight at solid ground.
@@ -1652,6 +1772,95 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             player.inventory.setItem(slot, null)
             carried = null
         }
+    }
+
+    /**
+     * The carried item against an opponent the bot cannot walk to, where the ordinary rule would
+     * waste it. True when this has dealt with it (used, or deliberately kept for now).
+     */
+    private fun siegeItem(slot: Int, kind: dev.betrix.superSmashMobsBrawl.items.ArenaItem, t: Player, s: ItemSituation): Boolean {
+        return when (kind) {
+            // Exactly onto their ledge, or not at all: one that stops against the wall under them is a fall.
+            ArenaItem.INSTANT_TELEPORTER -> {
+                if (crossing?.takeIf { it.stage > 0 } == null && nms.onGround() && teleportTo(t.location, slot)) {
+                    dbg("no way to ${t.name}: teleported to them")
+                    arrivedAt(t.uniqueId, t.location)
+                }
+                true
+            }
+            // Rockets take the rock away: with no sight of them, dig toward them from far enough back.
+            ArenaItem.MISSILE_BATTERY, ArenaItem.ROCKET_LAUNCHER -> if (s.targetVisible) false else { wallShot(t, slot, kind); true }
+            else -> false
+        }
+    }
+
+    /** Where an Instant Teleporter used at [from], looking along [dir], puts its user. The item's own rule. */
+    private fun teleportEnd(from: Location, dir: Vector): Location {
+        val world = from.world ?: return from
+        var destination = from
+        for (i in 1..88) {
+            val at = from.clone().add(dir.clone().multiply(i * .25))
+            if (at.y <= world.minHeight + 1 || at.y >= world.maxHeight - 2 || !at.block.isPassable || !at.clone().add(0.0, 1.0, 0.0).block.isPassable) break
+            destination = at
+        }
+        return destination
+    }
+
+    /**
+     * Would a teleporter used at [from] put its user on the ground at [spot]? The teleport runs
+     * from the feet, along where the eyes look: aimed so the feet end up just over that floor.
+     */
+    private fun teleportLands(from: Location, spot: Location, minDist: Double): Location? {
+        val gap = spot.clone().add(0.0, 0.4, 0.0).toVector().subtract(from.toVector())
+        val dist = gap.length()
+        if (dist < minDist || dist > 21.0) return null
+        val end = teleportEnd(from, gap.clone().normalize())
+        return end.takeIf { hypot(it.x - spot.x, it.z - spot.z) <= 2.0 && abs(it.y - spot.y) <= 1.6 && hasSolidBelow(it, 3) }
+    }
+
+    /** Teleports onto the ground at [spot] if the teleporter in [slot] would really put the bot there. */
+    private fun teleportTo(spot: Location, slot: Int, minDist: Double = 3.0): Boolean {
+        val here = player.location
+        val end = teleportLands(here, spot, minDist) ?: return false
+        val (yaw, pitch) = lookAngles(here, spot.clone().add(0.0, 0.4, 0.0))
+        nms.setYRot(yaw); nms.setYHeadRot(yaw); nms.setXRot(pitch)
+        spendItem(slot, dev.betrix.superSmashMobsBrawl.items.ArenaItem.INSTANT_TELEPORTER, null)
+        return player.location.distanceSquared(end) < 4.0
+    }
+
+    /** The bot has got to an opponent it had no route to: forget that they were out of reach. */
+    private fun arrivedAt(id: java.util.UUID, at: Location) {
+        unreachableUntil.remove(id); unreachableAt.remove(id)
+        route.clear(); routeSearch = null; nextRouteTick = tick
+        prowlGoal = null
+        lastMap?.let { forgetTerrain(at.blockX, at.blockZ, it) }
+    }
+
+    private var wallShotTick = -1000L
+
+    /**
+     * A rocket at an opponent behind rock. A Missile Battery takes a bite out of whatever it hits,
+     * so sixteen of them are a tunnel; the one big rocket reaches ten blocks through anything. Both
+     * hurt whoever fires them into the ground at their own feet, so only from far enough back.
+     */
+    private fun wallShot(t: Player, slot: Int, kind: dev.betrix.superSmashMobsBrawl.items.ArenaItem): Boolean {
+        if (!nms.onGround() || shot != null) return false
+        val big = kind == dev.betrix.superSmashMobsBrawl.items.ArenaItem.ROCKET_LAUNCHER
+        val eye = player.eyeLocation
+        val aim = aimPointOf(t)
+        val gap = aim.toVector().subtract(eye.toVector())
+        val dist = gap.length()
+        if (dist < 4.0 || dist > (if (big) 26.0 else 22.0)) return false
+        val wall = player.world.rayTraceBlocks(eye, gap.clone().normalize(), dist, org.bukkit.FluidCollisionMode.NEVER, true)?.hitPosition ?: return false
+        val fromMe = wall.distance(eye.toVector())
+        val fromThem = wall.distance(aim.toVector())
+        if (if (big) fromMe < 11.0 || fromThem > 7.0 else fromMe < 2.8) return false
+        val (yaw, pitch) = lookAngles(eye, aim)
+        nms.setYRot(yaw); nms.setYHeadRot(yaw); nms.setXRot(pitch)
+        if (tick - wallShotTick > 100) dbg("no sight of ${t.name}: firing ${kind.label} through ${"%.1f".format(fromThem)} blocks of ground")
+        wallShotTick = tick
+        spendItem(slot, kind, null)
+        return true
     }
 
     private fun tryRecoveryAbility(): Boolean {
@@ -2121,6 +2330,517 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             }
         }
         return true
+    }
+
+    // ------------------------------------------------------------------ crossings: a way of its own to someone no route leads to
+
+    private enum class CrossKind {
+        /** Off a ledge, down past their hiding place, and an air jump in under the overhang. */
+        DROP,
+        /** The same drop, and an Instant Teleporter straight onto their ledge from the air beside it. */
+        TELEPORT,
+        /** The same drop, and a Cloud in a Bottle beside their ledge to walk or jump in from. */
+        CLOUD,
+        /** Straight through the air on a Jetpack. */
+        FLIGHT,
+        /** Straight up off a Pocket Trampoline at the foot of their perch. */
+        TRAMPOLINE,
+    }
+
+    /**
+     * What a player does about someone camping where nothing walks: gets there anyway. From
+     * [launch], a ledge the bot can walk to, through [air] (the point beside their hiding place
+     * where the drop turns into the way in; unused by a flight or a trampoline), onto [landing].
+     */
+    private class Crossing(val kind: CrossKind, val targetId: java.util.UUID, val launch: Location, val air: Location, val landing: Location, var since: Long) {
+        /** 0 walking to the ledge, 1 leaving it, 2 in the air on the way to the turn (or flying), 3 on the way in, 4 on its cloud, 5 in the jump off the cloud. */
+        var stage = 0
+        var nextBoost = 0L
+        var boosts = 0
+    }
+    private var crossing: Crossing? = null
+    private var nextCrossingTick = 0L
+
+    /** Looks for a crossing to an opponent no route leads to, with whatever the bot is carrying and without. */
+    private fun startCrossing(t: Player, map: GameMapDef): Boolean {
+        if (tick < nextCrossingTick || !d.smartTargeting) return false
+        // In the middle of a shot or a jump: look again at the next decision.
+        if (holdUntilTick >= 0 || shot != null || gapJump != null || climb != null || perch != null || !nms.onGround()) return false
+        nextCrossingTick = tick + 60
+        if (!canDoubleJump() || reachable.isEmpty() || tick - reachableTick > 1500) return false
+        val world = player.world
+        // Where they are standing, as the walking graph sees it.
+        val node = ArenaNav.of(world, map.voidLevel.toInt(), true).nearest(t.location, 3.0) ?: return false
+        val landing = Location(world, node.x + .5, node.y, node.z + .5)
+        val have = carriedSlot()?.let { ItemService.kind(player.inventory.getItem(it)) }
+        val kinds = listOfNotNull(
+            CrossKind.FLIGHT.takeIf { have == ArenaItem.JETPACK },
+            CrossKind.TELEPORT.takeIf { have == ArenaItem.INSTANT_TELEPORTER },
+            CrossKind.CLOUD.takeIf { have == ArenaItem.CLOUD_IN_A_BOTTLE },
+            CrossKind.TRAMPOLINE.takeIf { have == ArenaItem.POCKET_TRAMPOLINE },
+            CrossKind.DROP,
+        )
+        for (kind in kinds) {
+            val (launch, air) = when (kind) {
+                CrossKind.FLIGHT -> flightFrom(landing, map)?.let { it to landing }
+                CrossKind.TRAMPOLINE -> padFor(landing, map)?.let { it to landing }
+                else -> dropFor(kind, landing, map)
+            } ?: continue
+            crossing = Crossing(kind, t.uniqueId, launch, air, landing, tick)
+            prowlGoal = null
+            route.clear(); routeSearch = null; nextRouteTick = tick
+            comboQueue.clear()
+            dbg("no way to ${t.name}: going to ${"%.1f %.1f %.1f".format(launch.x, launch.y, launch.z)} for a ${kind.name.lowercase()} crossing to " +
+                "${"%.1f %.1f %.1f".format(landing.x, landing.y, landing.z)}" +
+                if (kind == CrossKind.FLIGHT || kind == CrossKind.TRAMPOLINE) "" else " by way of ${"%.1f %.1f".format(air.x, air.z)}")
+            return true
+        }
+        nextCrossingTick = tick + 100
+        return false
+    }
+
+    /**
+     * A drop past their hiding place: a column of open air beside [landing], with a ledge the bot
+     * can walk to right next to its top, from which the last part (an air jump, a teleport, a
+     * cloud) gets in to them. Returns the ledge and the column (at the height of the landing).
+     */
+    private fun dropFor(kind: CrossKind, landing: Location, map: GameMapDef): Pair<Location, Location>? {
+        val world = landing.world ?: return null
+        val nav = ArenaNav.of(world, map.voidLevel.toInt(), mobility())
+        val index = reachableByColumn()
+        val here = player.location
+        val radii = when (kind) {
+            CrossKind.TELEPORT -> doubleArrayOf(3.0, 5.0, 8.0, 12.0, 16.0)
+            CrossKind.CLOUD -> doubleArrayOf(2.5, 3.5, 5.0, 6.5, 8.0)
+            else -> doubleArrayOf(2.0, 3.0, 4.0, 5.0, 6.0)
+        }
+        var best: Pair<Location, Location>? = null
+        var bestScore = Double.MAX_VALUE
+        for (r in radii) for (i in 0 until 16) {
+            val a = i * Math.PI / 8
+            val px = landing.x + cos(a) * r
+            val pz = landing.z + sin(a) * r
+            // Open air from the height of the landing up to wherever the bot steps off.
+            if (!nav.clear(px, landing.y + 0.25, pz)) continue
+            var open = landing.y + 0.25
+            while (open < landing.y + 24.0 && nav.clear(px, open + 0.5, pz)) open += 0.5
+            if (open < landing.y + 1.75) continue
+            // A ledge right beside the top of it: near enough to step off and steer onto the column.
+            var ledge: RouteNode? = null
+            var ledgeScore = bestScore
+            val bx = kotlin.math.floor(px).toInt()
+            val bz = kotlin.math.floor(pz).toInt()
+            for (dx in -3..3) for (dz in -3..3) for (n in index[columnKey(bx + dx, bz + dz)] ?: continue) {
+                val off = hypot(n.x + .5 - px, n.z + .5 - pz)
+                val fall = n.y - landing.y
+                if (fall < 1.5 || n.y > open || off < 0.9 || off > (if (fall >= 3.0) 2.6 else 1.8)) continue
+                val score = r * 2 + off + 0.3 * hypot(n.x + .5 - here.x, n.z + .5 - here.z)
+                if (score >= ledgeScore || !nav.clear((n.x + .5 + px) / 2, n.y + 0.05, (n.z + .5 + pz) / 2)) continue
+                ledge = n
+                ledgeScore = score
+            }
+            val from = ledge ?: continue
+            val air = Location(world, px, landing.y, pz)
+            if (!dropWorks(kind, air, landing, open, map)) continue
+            best = Location(world, from.x + .5, from.y, from.z + .5) to air
+            bestScore = ledgeScore
+        }
+        return best
+    }
+
+    /** Does the last part of a drop get from the column at [air] onto [landing]? */
+    private fun dropWorks(kind: CrossKind, air: Location, landing: Location, open: Double, map: GameMapDef): Boolean = when (kind) {
+        CrossKind.DROP -> {
+            // Two heights running from which the air jump comes down on the spot: the bot is falling, and gets one go.
+            var run = 0
+            var found = false
+            for (h in doubleArrayOf(3.0, 2.25, 1.5, 0.75, 0.0, -0.75)) {
+                run = if (landing.y + h <= open && airJumpPitch(air.clone().add(0.0, h, 0.0), landing, map) != null) run + 1 else 0
+                if (run >= 2) found = true
+            }
+            found
+        }
+        CrossKind.TELEPORT -> doubleArrayOf(1.5, 0.5).all { teleportLands(air.clone().add(0.0, it, 0.0), landing, 1.0) != null }
+        CrossKind.CLOUD -> {
+            val world = air.world
+            // The platform comes out level with their floor, or a step over it.
+            val top = ceil(landing.y - 0.01)
+            val r = hypot(landing.x - air.x, landing.z - air.z)
+            if (world == null || !world.getBlockAt(air.blockX, top.toInt() - 1, air.blockZ).isEmpty) false
+            // It is five blocks square: a ledge this close is a step away.
+            else if (r <= 3.4) true
+            else {
+                // Otherwise a jump off its near edge, with nothing in the way.
+                val edge = Location(world, air.x + (landing.x - air.x) / r * 1.8, top, air.z + (landing.z - air.z) / r * 1.8)
+                val eye = edge.clone().add(0.0, 1.7, 0.0)
+                val gap = landing.clone().add(0.0, 1.7, 0.0).toVector().subtract(eye.toVector())
+                jumpReaches(landing, edge) &&
+                    world.rayTraceBlocks(eye, gap.clone().normalize(), gap.length(), org.bukkit.FluidCollisionMode.NEVER, true) == null
+            }
+        }
+        else -> false
+    }
+
+    /** The pitch for an air jump from [from] (in the air) that comes down on [p] with nothing in the way, or null. */
+    private fun airJumpPitch(from: Location, p: Location, map: GameMapDef): Float? {
+        val r = hypot(p.x - from.x, p.z - from.z)
+        var best: Float? = null
+        var bestErr = Double.MAX_VALUE
+        var pitch = 20.0
+        while (pitch >= -88.0) {
+            val (horizontal, vertical) = jumpLaunch(pitch)
+            if (peakHeight(vertical, from.y) >= p.y + 0.3) {
+                val dist = coastDistance(horizontal, ticksUntilBelow(p.y, vertical, from.y))
+                // Steering in the air makes up a little either way; more than that is a miss.
+                val err = abs(dist - r)
+                if (dist >= r - 0.8 && dist <= r + 2.0 && err < bestErr && arcLands(from, p, horizontal, vertical, map)) {
+                    bestErr = err
+                    best = pitch.toFloat()
+                }
+            }
+            pitch -= 4.0
+        }
+        return best
+    }
+
+    /**
+     * Flies an air jump from [from] at this launch speed toward [p] and says whether it comes
+     * down there. Unlike [arcClear] this is for a jump in under an overhang with the void below:
+     * a wall on the way is the end of it, and landing on anything but the spot is a miss.
+     */
+    private fun arcLands(from: Location, p: Location, horizontal: Double, vertical: Double, map: GameMapDef): Boolean {
+        val r = hypot(p.x - from.x, p.z - from.z)
+        if (r < 0.3) return true
+        val nav = ArenaNav.of(player.world, map.voidLevel.toInt(), mobility())
+        val ux = (p.x - from.x) / r
+        val uz = (p.z - from.z) / r
+        var along = 0.0
+        var y = from.y
+        var vh = horizontal
+        var vy = vertical
+        for (t in 1..60) {
+            if (!nav.clear(from.x + ux * along, y + vy, from.z + uz * along)) return vy <= 0 && along >= r - 1.2 && abs(y - p.y) < 1.3
+            y += vy
+            if (!nav.clear(from.x + ux * (along + vh), y, from.z + uz * (along + vh))) return false
+            along += vh
+            vh = vh * 0.91 + 0.02
+            vy = (vy - 0.08) * 0.98
+            if (along >= r - 0.3) return y >= p.y - 0.2
+            if (vy < 0 && y < p.y - 0.5) return false
+        }
+        return false
+    }
+
+    /** A ledge to take off from with a Jetpack: open air in a straight line to [landing], and fuel for it. */
+    private fun flightFrom(landing: Location, map: GameMapDef): Location? {
+        val world = landing.world ?: return null
+        val fuel = carriedSlot()?.let { ItemService.uses(player.inventory.getItem(it)) } ?: return null
+        val nav = ArenaNav.of(world, map.voidLevel.toInt(), mobility())
+        val here = player.location
+        val ledges = reachable.asSequence()
+            .map { it to hypot(it.x + .5 - landing.x, it.z + .5 - landing.z) }
+            .filter { (n, across) -> across in 4.0..34.0 && landing.y - n.y < 20.0 && n.y - landing.y < 12.0 }
+            .sortedBy { (n, across) -> across + 0.25 * hypot(n.x + .5 - here.x, n.z + .5 - here.z) }
+            .take(60).toList()
+        for ((n, across) in ledges) {
+            val rise = landing.y - n.y
+            // A burst lifts about five blocks and lasts about five across; the jump off the ledge covers the first few.
+            val bursts = ceil((across - 4.0).coerceAtLeast(0.0) / 5.0).toInt() + ceil(rise.coerceAtLeast(0.0) / 4.0).toInt() + (if (rise < -5.0) 1 else 0)
+            if (bursts + 1 > fuel) continue
+            val ux = (landing.x - (n.x + .5)) / across
+            val uz = (landing.z - (n.z + .5)) / across
+            var h = 1.0
+            var open = true
+            while (open && h <= across - 0.8) {
+                val y = n.y + rise * h / across
+                open = nav.clear(n.x + .5 + ux * h, y + 0.6, n.z + .5 + uz * h) && nav.clear(n.x + .5 + ux * h, y + 2.4, n.z + .5 + uz * h)
+                h += 0.5
+            }
+            if (open) return Location(world, n.x + .5, n.y, n.z + .5)
+        }
+        return null
+    }
+
+    /** Somewhere at the foot of their perch to go straight up from on a Pocket Trampoline, and across onto it. */
+    private fun padFor(landing: Location, map: GameMapDef): Location? {
+        val world = landing.world ?: return null
+        val nav = ArenaNav.of(world, map.voidLevel.toInt(), mobility())
+        val index = reachableByColumn()
+        val here = player.location
+        var best: Location? = null
+        var bestScore = Double.MAX_VALUE
+        for (dx in -5..5) for (dz in -5..5) for (n in index[columnKey(landing.blockX + dx, landing.blockZ + dz)] ?: continue) {
+            val off = hypot(n.x + .5 - landing.x, n.z + .5 - landing.z)
+            val rise = landing.y - n.y
+            if (off < 1.2 || off > 5.0 || rise < 2.5 || rise > 12.0) continue
+            val score = off + 0.3 * hypot(n.x + .5 - here.x, n.z + .5 - here.z)
+            if (score >= bestScore) continue
+            var open = true
+            var y = n.y + 0.25
+            while (open && y <= landing.y + 1.5) { open = nav.clear(n.x + .5, y, n.z + .5); y += 0.5 }
+            val steps = (off * 3).toInt().coerceAtLeast(2)
+            for (i in 1..steps) {
+                if (!open) break
+                val part = i.toDouble() / steps
+                open = nav.clear(n.x + .5 + (landing.x - n.x - .5) * part, landing.y + 0.6, n.z + .5 + (landing.z - n.z - .5) * part)
+            }
+            if (!open) continue
+            best = Location(world, n.x + .5, n.y, n.z + .5)
+            bestScore = score
+        }
+        return best
+    }
+
+    private fun endCrossing(reason: String, rest: Long = 200) {
+        dbg("crossing over: $reason")
+        crossing = null
+        nextCrossingTick = tick + rest
+    }
+
+    /** Still carrying what this crossing is made with? */
+    private fun crossingItem(c: Crossing): Boolean {
+        val need = when (c.kind) {
+            CrossKind.FLIGHT -> ArenaItem.JETPACK
+            CrossKind.TELEPORT -> ArenaItem.INSTANT_TELEPORTER
+            CrossKind.CLOUD -> ArenaItem.CLOUD_IN_A_BOTTLE
+            CrossKind.TRAMPOLINE -> ArenaItem.POCKET_TRAMPOLINE
+            CrossKind.DROP -> return true
+        }
+        return carriedSlot()?.let { ItemService.kind(player.inventory.getItem(it)) } == need
+    }
+
+    /** Uses the carried item if it is a [kind]. True if a use of it went. */
+    private fun useCarried(kind: dev.betrix.superSmashMobsBrawl.items.ArenaItem): Boolean {
+        val slot = carriedSlot() ?: return false
+        if (ItemService.kind(player.inventory.getItem(slot)) != kind) return false
+        val before = ItemService.uses(player.inventory.getItem(slot))
+        spendItem(slot, kind, null)
+        return ItemService.kind(player.inventory.getItem(slot)) != kind || ItemService.uses(player.inventory.getItem(slot)) < before
+    }
+
+    /** Walks to the ledge the crossing starts from. False once the plan is off and the fight should carry on. */
+    private fun approachCrossing(c: Crossing, t: Player, map: GameMapDef): Boolean {
+        val here = player.location
+        if (t.uniqueId != c.targetId || t.world != here.world || hypot(t.x - c.landing.x, t.z - c.landing.z) > 3.5 || abs(t.y - c.landing.y) > 3.0) {
+            endCrossing("they are not where it was going", 20); return false
+        }
+        if (tick - c.since > 400 || !crossingItem(c)) { endCrossing("did not get to the ledge with what it takes"); return false }
+        // They have not moved: no need to go looking for a route to them again halfway there.
+        unreachableUntil[t.uniqueId] = maxOf(unreachableUntil[t.uniqueId] ?: 0L, tick + 100)
+        if (nms.onGround() && hypot(c.launch.x - here.x, c.launch.z - here.z) < 0.45 && abs(c.launch.y - here.y) < 1.0) {
+            setInputs(0f, 0f, false)
+            // With the air jump in hand, or not at all.
+            if (canDoubleJump()) { c.stage = 1; c.since = tick }
+            return true
+        }
+        travel(c.launch, map) { endCrossing("no way to the ledge") }
+        return true
+    }
+
+    /** One tick of a crossing under way. False once it is over and the normal brain should carry on. */
+    private fun tickCrossing(c: Crossing, map: GameMapDef): Boolean {
+        val here = player.location
+        val age = tick - c.since
+        val v = nms.deltaMovement
+        val toLanding = hypot(c.landing.x - here.x, c.landing.z - here.z)
+        fun arrived() = nms.onGround() && toLanding < 2.2 && abs(here.y - c.landing.y) < 1.5
+        fun across(): Boolean { arrivedAt(c.targetId, c.landing); endCrossing("across", 60); return false }
+        fun yawTo(p: Location) = lookAngles(player.eyeLocation, Location(here.world, p.x, here.y + 1.6, p.z)).first
+        lastSafe = c.launch
+        when (c.stage) {
+            // Off the ledge.
+            1 -> {
+                if (age > 60) { endCrossing("could not get off the ledge"); return false }
+                when (c.kind) {
+                    CrossKind.TRAMPOLINE -> {
+                        if (!nms.onGround()) return false
+                        setInputs(0f, 0f, false)
+                        turnTowards(yawTo(c.landing), 0f, d.turnSpeed * 2)
+                        if (age >= 3 && hypot(v.x, v.z) < 0.03) {
+                            if (!useCarried(ArenaItem.POCKET_TRAMPOLINE)) { endCrossing("the trampoline would not go off"); return false }
+                            dbg("trampoline: up ${"%.1f".format(c.landing.y - here.y)} blocks to their ledge")
+                            c.stage = 3; c.since = tick
+                        }
+                    }
+                    CrossKind.FLIGHT -> {
+                        if (!nms.onGround()) { c.stage = 2; c.since = tick; return true }
+                        val yaw = yawTo(c.landing)
+                        turnTowards(yaw, 0f, d.turnSpeed * 2)
+                        if (abs(wrapDegrees(yaw - nms.yRot)) < 6f) {
+                            dbg("jetpack: taking off for ${"%.1f".format(toLanding)} blocks of air")
+                            noteJump("flight")
+                            setInputs(1f, 0f, true)
+                        } else setInputs(0f, 0f, false)
+                    }
+                    else -> {
+                        if (!nms.onGround()) {
+                            c.stage = 2; c.since = tick
+                            dbg("off the ledge: ${"%.1f".format(here.y - c.landing.y)} blocks down to the turn")
+                            return true
+                        }
+                        val yaw = yawTo(c.air)
+                        turnTowards(yaw, 0f, d.turnSpeed * 2)
+                        setInputs(if (abs(wrapDegrees(yaw - nms.yRot)) < 12f) 0.6f else 0f, 0f, false)
+                    }
+                }
+            }
+            2 -> if (c.kind == CrossKind.FLIGHT) {
+                if (nms.onGround() && age > 3) { if (arrived()) return across(); endCrossing("came down somewhere else"); return false }
+                if (age > 320 || here.y < minOf(c.launch.y, c.landing.y) - 8.0) { endCrossing("the flight came to nothing"); return false }
+                turnTowards(yawTo(c.landing), 0f, 30f)
+                val (f, s) = if (toLanding < 3.0) steerTo(c.landing) else 1f to 0f
+                setInputs(f, s, false)
+                // Never under the straight line from the ledge to their floor, and over the lip at the end.
+                val total = hypot(c.landing.x - c.launch.x, c.landing.z - c.launch.z).coerceAtLeast(1.0)
+                val line = c.launch.y + (c.landing.y - c.launch.y) * (total - toLanding).coerceIn(0.0, total) / total
+                val low = here.y < maxOf(line, if (toLanding < 6.0) c.landing.y else line) + 0.5
+                val over = toLanding < 1.0 && here.y >= c.landing.y - 0.1
+                if (v.y < -0.05 && low && !over && tick >= c.nextBoost) {
+                    if (useCarried(ArenaItem.JETPACK)) {
+                        c.nextBoost = tick + 9
+                        c.boosts++
+                        dbg("jetpack burst ${c.boosts}, ${"%.1f".format(toLanding)} blocks to go")
+                    } else if (canDoubleJump() && tick - lastDoubleJumpTick > 6) {
+                        aimedDoubleJump(c.landing, "flight, out of fuel")
+                        c.nextBoost = tick + 20
+                    } else if (here.y < c.landing.y - 2.0) { endCrossing("out of fuel"); return false }
+                }
+            } else {
+                // Down the column beside their hiding place, to the height where the way in starts.
+                if (nms.onGround()) { if (arrived()) return across(); endCrossing("came down somewhere else"); return false }
+                if (age > 80) { endCrossing("the drop took too long"); return false }
+                turnTowards(yawTo(c.landing), 0f, 40f)
+                val (f, s) = steerTo(Location(here.world, c.air.x, c.landing.y + 1.0, c.air.z))
+                setInputs(f, s, false)
+                when (c.kind) {
+                    CrossKind.DROP -> if (here.y <= c.landing.y + 3.2) {
+                        val pitch = if (canDoubleJump()) airJumpPitch(here, c.landing, map) else null
+                        if (pitch != null) {
+                            val (yaw, _) = lookAngles(player.eyeLocation, c.landing)
+                            nms.setYRot(yaw); nms.setYHeadRot(yaw); nms.setXRot(pitch)
+                            doubleJump("in under the ledge, ${"%.1f".format(toLanding)} blocks, pitch ${"%.0f".format(pitch)}")
+                            c.stage = 3; c.since = tick
+                        } else if (here.y < c.landing.y - 1.0) {
+                            // Too low for the jump it planned: the best one there is.
+                            if (canDoubleJump()) aimedDoubleJump(c.landing, "in under the ledge, late")
+                            c.stage = 3; c.since = tick
+                        }
+                    }
+                    CrossKind.TELEPORT -> if (here.y <= c.landing.y + 2.2) {
+                        val slot = carriedSlot()
+                        if (slot != null && teleportTo(c.landing, slot, 1.0)) {
+                            dbg("teleported in from beside their ledge")
+                            c.stage = 3; c.since = tick
+                        } else if (here.y < c.landing.y - 1.0) {
+                            if (canDoubleJump()) aimedDoubleJump(c.landing, "in under the ledge, late")
+                            c.stage = 3; c.since = tick
+                        }
+                    }
+                    else -> {
+                        // The cloud forms under the feet: popped in the block over their floor it comes out level with it.
+                        val top = ceil(c.landing.y - 0.01)
+                        if (here.y < top + 1.0 || here.y + v.y < top) {
+                            if (here.y < top - 3.0 || !useCarried(ArenaItem.CLOUD_IN_A_BOTTLE)) { endCrossing("missed the height for the cloud"); return false }
+                            dbg("cloud beside their ledge, ${"%.1f".format(toLanding)} blocks from them")
+                            forgetTerrain(here.blockX, here.blockZ, map)
+                            c.stage = 4; c.since = tick
+                        }
+                    }
+                }
+            }
+            // The last of the way in, steering onto their ledge.
+            3 -> {
+                if (nms.onGround() && age > 2) { if (arrived()) return across(); endCrossing("came down somewhere else"); return false }
+                val floor = if (c.kind == CrossKind.TRAMPOLINE) c.launch.y - 3.0 else c.landing.y - 4.0
+                if (age > 90 || here.y < floor) { endCrossing("fell short"); return false }
+                turnTowards(yawTo(c.landing), 0f, 40f)
+                val (f, s) = steerTo(c.landing)
+                setInputs(f, s, false)
+                // A trampoline that stops short of their floor: the air jump does the rest.
+                if (c.kind == CrossKind.TRAMPOLINE && v.y < 0.15 && here.y < c.landing.y + 0.4 && canDoubleJump() && tick - lastDoubleJumpTick > 6)
+                    aimedDoubleJump(c.landing, "off the trampoline")
+            }
+            // On the cloud: it lasts five seconds.
+            4 -> {
+                if (arrived()) return across()
+                if (age > 70) { endCrossing("ran out of cloud"); return false }
+                if (!nms.onGround()) {
+                    if (age > 12) { endCrossing("fell off the cloud"); return false }
+                    setInputs(0f, 0f, false)
+                    return true
+                }
+                if (toLanding > 1.5 && jumpReaches(c.landing) && clearHop(c.landing, map)) {
+                    c.stage = 5; c.since = tick
+                    startGapJump(Gap(toLanding, c.landing))
+                    return true
+                }
+                val yaw = yawTo(c.landing)
+                turnTowards(yaw, 0f, 60f)
+                val facing = abs(wrapDegrees(yaw - nms.yRot)) < 15f
+                setInputs(if (facing) 0.7f else 0f, 0f, facing && nms.horizontalCollision)
+            }
+            // The jump off the cloud has finished, one way or the other.
+            else -> {
+                if (arrived()) return across()
+                endCrossing(if (nms.onGround()) "came down somewhere else" else "the jump off the cloud fell short")
+                return false
+            }
+        }
+        return true
+    }
+
+    // ------------------------------------------------------------------ somewhere to shoot from
+
+    /** How far this bot can do anything to someone it can see: its kit's attacks and what it is carrying. 0 for nothing worth standing off for. */
+    private fun sightRange(): Double {
+        val bow = KitService.getKitForPlayer(player)?.id.let { it == "skeleton" || it == "zombie" }
+        val kit = maxOf(if (bow) 25.0 else 0.0,
+            kitAbilityIds().maxOfOrNull { AbilityHints.of(it).let { h -> if (h.attack && h.damage > 0) h.maxRange else 0.0 } } ?: 0.0)
+        val item = carriedSlot()?.let { ItemService.kind(player.inventory.getItem(it)) }
+            ?.takeIf { ItemTactics.siegeValue(it) >= 2 }?.let(ItemTactics::reach) ?: 0.0
+        val range = maxOf(kit, item)
+        return if (range >= 8.0) range * 0.9 else 0.0
+    }
+
+    /**
+     * Ground the bot can walk to with a clear line to [t] inside [range]: where a player goes when
+     * they cannot get to someone but have something to throw. A sample of the places the last
+     * failed route search got to, the nearest to the opponent that sees them.
+     */
+    private fun vantage(t: Player, range: Double): Location? {
+        if (reachable.isEmpty() || tick - reachableTick > 1500) return null
+        val world = player.world
+        val aim = aimPointOf(t)
+        val here = player.location
+        val near = reachable.filter {
+            abs(it.x + .5 - aim.x) <= range && abs(it.z + .5 - aim.z) <= range &&
+                Location(world, it.x + .5, it.y + 1.62, it.z + .5).distanceSquared(aim).let { d2 -> d2 >= 9.0 && d2 <= range * range }
+        }
+        if (near.isEmpty()) return null
+        var best: Location? = null
+        var bestScore = Double.MAX_VALUE
+        repeat(minOf(90, near.size)) {
+            val n = near[rng.nextInt(near.size)]
+            val eye = Location(world, n.x + .5, n.y + 1.62, n.z + .5)
+            val gap = aim.toVector().subtract(eye.toVector())
+            val score = gap.length() + 0.5 * (hypot(n.x + .5 - here.x, n.z + .5 - here.z) + abs(n.y - here.y))
+            if (score < bestScore && world.rayTraceBlocks(eye, gap.clone().normalize(), gap.length(), org.bukkit.FluidCollisionMode.NEVER, true) == null) {
+                best = Location(world, n.x + .5, n.y, n.z + .5)
+                bestScore = score
+            }
+        }
+        return best
+    }
+
+    /** With rockets and no sight of them: ground far enough back that the rockets do not land at the bot's own feet. */
+    private fun standOff(t: Player): Location? {
+        if (reachable.isEmpty() || tick - reachableTick > 1500) return null
+        val at = t.location
+        val here = player.location
+        return reachable.asSequence()
+            .filter { hypot(it.x + .5 - at.x, it.z + .5 - at.z) in 11.0..17.0 && abs(it.y - at.y) < 12.0 }
+            .minByOrNull { hypot(it.x + .5 - here.x, it.z + .5 - here.z) + abs(it.y - here.y) }
+            ?.let { Location(player.world, it.x + .5, it.y, it.z + .5) }
     }
 
     private fun abilityIdIn(slot: Int): String? {

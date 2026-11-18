@@ -30,7 +30,6 @@ class ItemArena(val game: BrawlMinigame) {
         }.distinctBy { Triple(it.blockX, it.blockY, it.blockZ) }
     }
     private val entities = mutableSetOf<Entity>()
-    private val heldLabels = mutableMapOf<java.util.UUID, TextDisplay>()
     private var stepping = false
     private var closed = false
     fun players() = game.allPlayers().mapNotNull { it.player }.filter { it.isOnline && it.world == world &&
@@ -45,6 +44,8 @@ class ItemArena(val game: BrawlMinigame) {
     }
     /** Pickups that can be collected right now, for bots deciding whether to fetch one. */
     fun pickupLocations(): List<Location> = drops.filter { !it.expired() && it.age > 10 }.map { it.at }
+    /** The same pickups with what each one is, for a bot that is after something in particular. */
+    fun pickups(): List<Pair<ArenaItem, Location>> = drops.filter { !it.expired() && it.age > 10 }.map { it.kind to it.at }
     fun spawn(kind: ArenaItem, at: Location): Boolean {
         if (at.world != world) return false
         return spawnDrop(kind, at)
@@ -67,7 +68,6 @@ class ItemArena(val game: BrawlMinigame) {
     fun step() {
         if (closed) return
         tick++
-        updateHeldLabels()
         if (tick >= nextDrop) {
             if (game.settings.items) {
                 val kind = ArenaItem.roll(game.settings.enabledItems)
@@ -85,31 +85,12 @@ class ItemArena(val game: BrawlMinigame) {
         stepping = false; active += pending; pending.clear()
         entities.removeIf { !it.isValid }
     }
-    private fun updateHeldLabels() {
-        val holding = players().mapNotNull { player ->
-            if (ItemService.hidden(player) || player.isInvisible) return@mapNotNull null
-            ItemService.carriedItems(player).takeIf { it.isNotEmpty() }?.let { Triple(player, it, player.uniqueId) }
-        }
-        val ids = holding.map { it.third }.toSet()
-        heldLabels.entries.removeIf { (id, label) -> if (id !in ids) { label.remove(); true } else false }
-        holding.forEach { (player, kinds, id) ->
-            val at=player.location.apply { y=(player.disguise?.boundingBox ?: player.boundingBox).maxY+.35; yaw=0f; pitch=0f }
-            val label=heldLabels.getOrPut(id) {
-                world.spawn(at,TextDisplay::class.java) {
-                    it.billboard=Display.Billboard.CENTER; it.teleportDuration=1
-                    it.isShadowed=true; it.backgroundColor=Color.fromARGB(0); it.viewRange=.8f
-                }.also { track(it); player.hideEntity(ItemService.plugin,it) }
-            }
-            label.text(Component.join(net.kyori.adventure.text.JoinConfiguration.newlines(),
-                kinds.map { Component.text(it.label,it.rarity.color) })); label.teleport(at)
-        }
-    }
     fun close() {
         if (closed) return
         closed = true
         (active + pending).forEach { it.close() }; active.clear(); pending.clear()
         drops.forEach { it.close() }; drops.clear()
-        entities.forEach { it.remove() }; entities.clear(); heldLabels.clear()
+        entities.forEach { it.remove() }; entities.clear()
     }
     fun later(ticks: Int, action: () -> Unit) = add(object: SmashEffect {
         var age = 0

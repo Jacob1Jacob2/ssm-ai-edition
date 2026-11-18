@@ -49,26 +49,17 @@ object ItemService : KoinComponent {
     /** Where the pickups in this player's match are lying. Never creates an arena. */
     fun pickupLocations(player: Player): List<Location> =
         games.getMinigameForPlayer(player)?.let { arenas[it] }?.pickupLocations() ?: emptyList()
+    /** The same pickups with what each one is. Never creates an arena. */
+    fun pickups(player: Player): List<Pair<ArenaItem, Location>> =
+        games.getMinigameForPlayer(player)?.let { arenas[it] }?.pickups() ?: emptyList()
+    /** Debug: puts a pickup into the match this player is in. */
+    fun spawnAt(player: Player, kind: ArenaItem, at: Location): Boolean = arena(player)?.spawn(kind, at) == true
     fun kind(item: ItemStack?): ArenaItem? = item?.itemMeta?.persistentDataContainer
         ?.get(KEY, PersistentDataType.STRING)?.let(ArenaItem::parse)
     fun uses(item: ItemStack?) = item?.itemMeta?.persistentDataContainer?.get(USES, PersistentDataType.INTEGER) ?: 0
     fun frozen(player: Player) = (frozen[player.uniqueId] ?: 0) > Bukkit.getCurrentTick()
     fun hidden(player: Player) = (hidden[player.uniqueId] ?: 0) > Bukkit.getCurrentTick()
     fun appleBonus(player: Player) = appleCaps[player.uniqueId] ?: 0.0
-
-    /** Pickups remain advertised while carried, even when the fighter switches to a kit tool. */
-    fun carriedItems(player: Player): List<ArenaItem> {
-        val items = mutableListOf<ArenaItem>()
-        kind(player.inventory.itemInMainHand)?.let(items::add)
-        player.inventory.contents.forEach { held -> kind(held)?.let(items::add) }
-        for (slot in 0..8) {
-            val held = player.inventory.getItem(slot) ?: continue
-            val id = held.itemMeta?.persistentDataContainer?.get(abilityKey, PersistentDataType.STRING) ?: continue
-            if (upgrades.containsKey(player.uniqueId to id))
-                ArenaItem.entries.firstOrNull { it.tool && it.material == held.type }?.let(items::add)
-        }
-        return items.distinct()
-    }
 
     fun stack(kind: ArenaItem, count: Int = kind.uses): ItemStack = ItemStack.of(kind.material).apply {
         editMeta {
