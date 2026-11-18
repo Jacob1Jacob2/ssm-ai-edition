@@ -45,6 +45,9 @@ object WorldService : KoinComponent {
     fun setup() {
         ScaledMapPlants.setup(plugin)
         ScaledMapDetails.setup(plugin)
+        // A thrown egg is a projectile here (Egg Blaster), never a way to get chickens: one in
+        // eight used to hatch a chick that then stood about the arena for the rest of the match.
+        event<com.destroystokyo.paper.event.entity.ThrownEggHatchEvent> { isHatching = false }
         event<EntitiesLoadEvent> {
             if (world.name in gameWorldNames) removeLegacyMarkerLabels(entities)
         }
