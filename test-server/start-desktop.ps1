@@ -36,7 +36,7 @@ try {
     $stamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
     $outputLog = Join-Path $logDirectory "desktop-start-$stamp.log"
     $errorLog = Join-Path $logDirectory "desktop-start-$stamp.error.log"
-    $serverProcess = Start-Process -FilePath $javaPath -ArgumentList @('-Xms1G','-Xmx3G','-jar',$jarName,'--nogui') -WorkingDirectory $serverRoot -WindowStyle Hidden -RedirectStandardOutput $outputLog -RedirectStandardError $errorLog -PassThru
+    $serverProcess = Start-Process -FilePath $javaPath -ArgumentList @('-Xms1G','-Xmx3G','-XX:-UseBASE64Intrinsics','-jar',$jarName,'--nogui') -WorkingDirectory $serverRoot -WindowStyle Hidden -RedirectStandardOutput $outputLog -RedirectStandardError $errorLog -PassThru
     $serverProcess.Id | Set-Content -LiteralPath (Join-Path $serverRoot 'desktop-server.pid')
 
     for ($attempt = 0; $attempt -lt 45; $attempt++) {

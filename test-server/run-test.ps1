@@ -15,7 +15,7 @@ $log = Join-Path $server 'last-run.log'
 
 $psi = New-Object System.Diagnostics.ProcessStartInfo
 $psi.FileName = "$jdk\bin\java.exe"
-$psi.Arguments = '-Xms1G -Xmx3G -jar paper-26.3-245.jar --nogui'
+$psi.Arguments = '-Xms1G -Xmx3G -XX:-UseBASE64Intrinsics -jar paper-26.3-245.jar --nogui'
 $psi.WorkingDirectory = $server
 $psi.UseShellExecute = $false
 $psi.RedirectStandardInput = $true
