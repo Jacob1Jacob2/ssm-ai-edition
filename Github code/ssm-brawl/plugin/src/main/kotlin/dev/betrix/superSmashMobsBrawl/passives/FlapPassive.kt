@@ -57,6 +57,9 @@ class FlapPassive(player: Player) : EnergyDoubleJumpPassive("flap", player) {
         player.exp = if (next >= 1f - 0.00001f) 1f else next
     }
 
+    /** Flaps a full bar pays for. Bots plan a flight by it, and wait on the ground for the bar before taking off. */
+    fun capacity(): Int = ((maxEnergy + 0.0001f) / energyPerFlap).toInt()
+
     /** Flaps the bar still pays for. Bots count them before setting off up a tower. */
     fun flapsLeft(): Int =
         if (dev.betrix.superSmashMobsBrawl.smash.SmashService.has(player,"chicken:0") || dev.betrix.superSmashMobsBrawl.smash.SmashService.has(player,"chicken:1")) 8

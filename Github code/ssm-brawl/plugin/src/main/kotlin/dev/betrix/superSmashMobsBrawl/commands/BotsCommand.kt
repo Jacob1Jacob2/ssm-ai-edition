@@ -331,7 +331,7 @@ class BotsCommand : KoinComponent {
     @Description("Debug: what the route planner sees in one column of the running match's arena, and the blocks themselves")
     fun column(@Context sender: CommandSender, @Arg x: Int, @Arg z: Int, @Arg fromY: Int, @Arg toY: Int) {
         if (!allowed(sender)) return
-        val world = org.bukkit.Bukkit.getWorlds().lastOrNull { it.name.startsWith("ssmbworld") } ?: return sender.sendMessage("No arena is loaded.")
+        val world = org.bukkit.Bukkit.getWorlds().lastOrNull { it.key.value().startsWith("ssmbworld") } ?: return sender.sendMessage("No arena is loaded.")
         val terrain = dev.betrix.superSmashMobsBrawl.bots.ArenaTerrain(world, world.minHeight, dev.betrix.superSmashMobsBrawl.bots.Mobility.JUMPER, loadChunks = true)
         plugin.logger.info("[column] $x,$z in ${world.name}: stand ${terrain.describe(x, z)}")
         for (y in maxOf(fromY, toY) downTo minOf(fromY, toY)) {
@@ -370,6 +370,23 @@ class BotsCommand : KoinComponent {
             if (stand.isNotEmpty()) plugin.logger.info("[area] $x,$z: $stand")
         }
         plugin.logger.info("[area] done")
+    }
+
+    @Execute(name = "blocks")
+    @Description("Debug: draws a box of the running match's arena layer by layer from the top (# solid, . open, ~ liquid), x across and z down")
+    fun blocks(@Context sender: CommandSender, @Arg x1: Int, @Arg y1: Int, @Arg z1: Int, @Arg x2: Int, @Arg y2: Int, @Arg z2: Int) {
+        if (!allowed(sender)) return
+        val world = BotManager.onlineBots().firstOrNull { it.world.key.value().startsWith("ssmbworld") }?.world
+            ?: run { plugin.logger.info("[blocks] no match world"); return }
+        val xs = minOf(x1, x2)..maxOf(x1, x2); val zs = minOf(z1, z2)..maxOf(z1, z2)
+        if (xs.count() * zs.count() * (kotlin.math.abs(y2 - y1) + 1) > 60000) { plugin.logger.info("[blocks] too big a box"); return }
+        for (y in maxOf(y1, y2) downTo minOf(y1, y2)) {
+            plugin.logger.info("[blocks] y=$y x=${xs.first}..${xs.last}")
+            for (z in zs) plugin.logger.info("[blocks] ${"%4d".format(z)} " + xs.joinToString("") { x ->
+                val b = world.getBlockAt(x, y, z)
+                if (b.isLiquid) "~" else if (b.collisionShape.boundingBoxes.isEmpty()) "." else "#" })
+        }
+        plugin.logger.info("[blocks] done")
     }
 
     @Execute(name = "ambush")

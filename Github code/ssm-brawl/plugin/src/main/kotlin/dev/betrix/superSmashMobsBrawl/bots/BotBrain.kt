@@ -627,10 +627,18 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         }
     }
 
+    private var nextNoWayLog = 0L
+
     private fun markUnreachable(t: Player) {
         unreachableUntil[t.uniqueId] = tick + 300
         unreachableAt[t.uniqueId] = t.location.clone()
         navStats.unreachable++
+        // Where a person found to stand that this bot cannot get to: the thing to test against next time.
+        if (!BotManager.isBot(t) && tick >= nextNoWayLog) {
+            nextNoWayLog = tick + 600
+            plugin.logger.info("[bots] ${player.name} (${KitService.getKitForPlayer(player)?.id}) has no way to ${t.name} at " +
+                "${"%.1f %.1f %.1f".format(t.x, t.y, t.z)} on ${lastMap?.id} from ${"%.1f %.1f %.1f".format(player.x, player.y, player.z)}")
+        }
         val bot = player.uniqueId
         val id = t.uniqueId
         publish { TargetUnreachable(bot, id, it) }
@@ -2573,6 +2581,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         FLIGHT,
         /** Straight up off a Pocket Trampoline at the foot of their perch. */
         TRAMPOLINE,
+        /** A kit with several air jumps (a chicken): off a ledge, down past their hiding place, and in under it on the wing. */
+        FLAP,
     }
 
     /**
@@ -2585,6 +2595,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         var stage = 0
         var nextBoost = 0L
         var boosts = 0
+        /** Air jumps a flight on the wing sets off with. */
+        var need = 0
     }
     private var crossing: Crossing? = null
     private var nextCrossingTick = 0L
@@ -2607,16 +2619,19 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             CrossKind.CLOUD.takeIf { have == ArenaItem.CLOUD_IN_A_BOTTLE },
             CrossKind.TRAMPOLINE.takeIf { have == ArenaItem.POCKET_TRAMPOLINE },
             CrossKind.DROP,
+            CrossKind.FLAP.takeIf { KitService.getKitForPlayer(player)?.jumpPassive() is dev.betrix.superSmashMobsBrawl.passives.FlapPassive },
         )
+        var need = 0
         for (kind in kinds) {
             // A way in that has already cost a life against them here is not tried a second time.
             if (wayBarred(t, "cross:$kind")) continue
             val (launch, air) = when (kind) {
                 CrossKind.FLIGHT -> flightFrom(landing, map)?.let { it to landing }
                 CrossKind.TRAMPOLINE -> padFor(landing, map)?.let { it to landing }
+                CrossKind.FLAP -> flapFor(landing, map)?.let { (ledge, turn, flaps) -> need = flaps; ledge to turn }
                 else -> dropFor(kind, landing, map)
             } ?: continue
-            crossing = Crossing(kind, t.uniqueId, launch, air, landing, tick)
+            crossing = Crossing(kind, t.uniqueId, launch, air, landing, tick).also { it.need = need }
             prowlGoal = null
             route.clear(); routeSearch = null; nextRouteTick = tick
             comboQueue.clear()
@@ -2676,6 +2691,127 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             bestScore = ledgeScore
         }
         return best
+    }
+
+    /**
+     * The same drop for a kit that flies: the column of open air may be a long way from their
+     * hiding place, as long as there is room to fly in a straight line from the foot of it to
+     * them, at the height of their floor. Looked for outward from where they stand, so the
+     * nearest way in is found first. Returns the ledge, the column and the flaps to set off with.
+     */
+    private fun flapFor(landing: Location, map: GameMapDef): Triple<Location, Location, Int>? {
+        val flap = KitService.getKitForPlayer(player)?.jumpPassive() as? dev.betrix.superSmashMobsBrawl.passives.FlapPassive ?: return null
+        val world = landing.world ?: return null
+        val nav = ArenaNav.of(world, map.voidLevel.toInt(), mobility())
+        val index = reachableByColumn()
+        val here = player.location
+        val most = flap.capacity()
+        var best: Triple<Location, Location, Int>? = null
+        var bestScore = Double.MAX_VALUE
+        for (i in 0 until 32) {
+            val a = i * Math.PI / 16
+            val ux = cos(a)
+            val uz = sin(a)
+            var half = 2
+            while (true) {
+                val r = half * 0.5
+                // One flap for the turn at the foot of the column, one in hand, and the flying.
+                val flaps = ceil(r / FLAP_STRIDE).toInt() + 2
+                if (flaps > most || r * FLAP_COST >= bestScore) break
+                val px = landing.x + ux * r
+                val pz = landing.z + uz * r
+                // The way in: room for a fighter at the height of their floor, all the way out to here.
+                if (!nav.clear(px, landing.y + 0.2, pz) || !nav.clear(px, landing.y + 0.9, pz)) break
+                half++
+                if (r < 2.5 || half % 2 == 0) continue
+                // Open air from there up to wherever the bot steps off.
+                var open = landing.y + 0.25
+                while (open < landing.y + 30.0 && nav.clear(px, open + 0.5, pz)) open += 0.5
+                if (open < landing.y + 2.0) continue
+                val bx = kotlin.math.floor(px).toInt()
+                val bz = kotlin.math.floor(pz).toInt()
+                for (dx in -3..3) for (dz in -3..3) for (n in index[columnKey(bx + dx, bz + dz)] ?: continue) {
+                    val off = hypot(n.x + .5 - px, n.z + .5 - pz)
+                    val fall = n.y - landing.y
+                    if (fall < 1.5 || n.y > open || off < 0.9 || off > (if (fall >= 3.0) 2.6 else 1.8)) continue
+                    val score = r * FLAP_COST + off + 0.3 * hypot(n.x + .5 - here.x, n.z + .5 - here.z)
+                    if (score >= bestScore || !nav.clear((n.x + .5 + px) / 2, n.y + 0.05, (n.z + .5 + pz) / 2)) continue
+                    best = Triple(Location(world, n.x + .5, n.y, n.z + .5), Location(world, px, landing.y, pz), flaps)
+                    bestScore = score
+                }
+            }
+        }
+        // Or straight across open air to them, from a ledge at about their height or below it:
+        // the gap a single air jump does not cover is a few flaps wide.
+        val ledges = reachable.asSequence()
+            .map { it to hypot(it.x + .5 - landing.x, it.z + .5 - landing.z) }
+            .filter { (n, across) -> across >= 3.0 && across <= FLAP_STRIDE * (most - 2) && landing.y - n.y >= -2.0 && landing.y - n.y <= 12.0 }
+            .sortedBy { (n, across) -> across + 0.25 * hypot(n.x + .5 - here.x, n.z + .5 - here.z) }
+            .take(40).toList()
+        for ((n, across) in ledges) {
+            val rise = landing.y - n.y
+            val flaps = ceil(across / FLAP_STRIDE).toInt() + ceil(rise.coerceAtLeast(0.0) / 3.0).toInt() + 1
+            val score = across * FLAP_COST + rise.coerceAtLeast(0.0) + 0.3 * hypot(n.x + .5 - here.x, n.z + .5 - here.z)
+            if (flaps > most || score >= bestScore) continue
+            val ux = (landing.x - (n.x + .5)) / across
+            val uz = (landing.z - (n.z + .5)) / across
+            var h = 1.0
+            var open = true
+            while (open && h <= across - 0.8) {
+                val y = n.y + rise * h / across
+                open = nav.clear(n.x + .5 + ux * h, y + 0.6, n.z + .5 + uz * h) && nav.clear(n.x + .5 + ux * h, y + 2.4, n.z + .5 + uz * h)
+                h += 0.5
+            }
+            // Off the edge of something, not across a floor: there must be a drop on the way.
+            if (!open || (1..3).all { hasSolidBelow(Location(world, n.x + .5 + ux * it, n.y + 0.5, n.z + .5 + uz * it), 3) }) continue
+            best = Triple(Location(world, n.x + .5, n.y, n.z + .5), landing.clone(), flaps)
+            bestScore = score
+        }
+        return best
+    }
+
+    /** A flap toward [p], looking [pitch] degrees (0 is level: as far as one goes). */
+    private fun flapAt(p: Location, pitch: Double, reason: String) {
+        val (yaw, _) = lookAngles(player.eyeLocation, p)
+        nms.setYRot(yaw)
+        nms.setYHeadRot(yaw)
+        nms.setXRot(pitch.toFloat())
+        doubleJump(reason)
+    }
+
+    /**
+     * Flies a flap from here toward [p], looking [pitch] degrees, the way the game would: up or
+     * down first, then across. Every flap goes up three blocks if it can, so under a low roof
+     * the question is what hangs in the way: a roof overhead only stops the rise, but the side
+     * of a block is the end of the flap. 1 = it comes down on [p]; 0 = it flies free for as long
+     * as a flap lasts; -1 = it runs into something, or comes down somewhere else.
+     */
+    private fun flapOutcome(p: Location, pitch: Double, map: GameMapDef): Int {
+        val here = player.location
+        val r = hypot(p.x - here.x, p.z - here.z)
+        if (r < 0.3) return 1
+        val nav = ArenaNav.of(player.world, map.voidLevel.toInt(), mobility())
+        val ux = (p.x - here.x) / r
+        val uz = (p.z - here.z) / r
+        var (vh, vy) = jumpLaunch(pitch)
+        var along = 0.0
+        var y = here.y
+        for (t in 1..16) {
+            val x = here.x + ux * along
+            val z = here.z + uz * along
+            if (nav.clear(x, y + vy, z)) y += vy
+            else if (vy > 0) vy = 0.0
+            // Down on something: their floor, or not.
+            else return if (r - along < 1.0 && abs(y - p.y) < 1.2) 1 else -1
+            // Against a wall: beside their floor and over it is as good as on it.
+            if (!nav.clear(x + ux * vh, y, z + uz * vh)) return if (r - along < 0.9 && y >= p.y - 0.1 && y < p.y + 2.5) 1 else -1
+            along += vh
+            vh = vh * 0.91 + 0.02
+            vy = (vy - 0.08) * 0.98
+            if (along >= r - 0.3) return if (y < p.y - 0.2) -1 else if (y <= p.y + 2.5) 1 else 0
+        }
+        // Still in the air: free flight, unless it has lost height it did not have to spare.
+        return if (y >= minOf(p.y, here.y) - 2.0) 0 else -1
     }
 
     /** Does the last part of a drop get from the column at [air] onto [landing]? */
@@ -2834,7 +2970,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             CrossKind.TELEPORT -> ArenaItem.INSTANT_TELEPORTER
             CrossKind.CLOUD -> ArenaItem.CLOUD_IN_A_BOTTLE
             CrossKind.TRAMPOLINE -> ArenaItem.POCKET_TRAMPOLINE
-            CrossKind.DROP -> return true
+            CrossKind.DROP, CrossKind.FLAP -> return true
         }
         return carriedSlot()?.let { ItemService.kind(player.inventory.getItem(it)) } == need
     }
@@ -2859,8 +2995,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         unreachableUntil[t.uniqueId] = maxOf(unreachableUntil[t.uniqueId] ?: 0L, tick + 100)
         if (nms.onGround() && hypot(c.launch.x - here.x, c.launch.z - here.z) < 0.45 && abs(c.launch.y - here.y) < 1.0) {
             setInputs(0f, 0f, false)
-            // With the air jump in hand, or not at all.
-            if (canDoubleJump()) { c.stage = 1; c.since = tick }
+            // With the air jump in hand, or not at all. A flight waits here for its flaps to come back.
+            if (canDoubleJump() && (c.kind != CrossKind.FLAP || airJumpsLeft() >= c.need)) { c.stage = 1; c.since = tick }
             return true
         }
         travel(c.launch, map) { endCrossing("no way to the ledge") }
@@ -2903,6 +3039,18 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                         } else setInputs(0f, 0f, false)
                     }
                     else -> {
+                        if (c.kind == CrossKind.FLAP && c.air.distanceSquared(c.landing) < 0.01) {
+                            // Straight across: a running jump at them, and on the wing from the top of it.
+                            if (!nms.onGround()) { c.stage = 6; c.since = tick; return true }
+                            val yaw = yawTo(c.landing)
+                            turnTowards(yaw, 0f, d.turnSpeed * 2)
+                            if (abs(wrapDegrees(yaw - nms.yRot)) < 6f) {
+                                if (age % 20 == 3L) dbg("taking off for ${"%.1f".format(toLanding)} blocks of air on the wing")
+                                noteJump("flight")
+                                setInputs(1f, 0f, true)
+                            } else setInputs(0f, 0f, false)
+                            return true
+                        }
                         if (!nms.onGround()) {
                             c.stage = 2; c.since = tick
                             dbg("off the ledge: ${"%.1f".format(here.y - c.landing.y)} blocks down to the turn")
@@ -2956,6 +3104,12 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                             c.stage = 3; c.since = tick
                         }
                     }
+                    CrossKind.FLAP -> if (here.y + v.y * 2 <= c.landing.y + 3.0) {
+                        // Coming down to the height of their floor: the turn, and the way in on the wing.
+                        if (!canDoubleJump()) { endCrossing("no flap left for the turn"); return false }
+                        dbg("at the turn, ${"%.1f".format(toLanding)} blocks to fly")
+                        c.stage = 6; c.since = tick
+                    }
                     CrossKind.TELEPORT -> if (here.y <= c.landing.y + 2.2) {
                         val slot = carriedSlot()
                         if (slot != null && teleportTo(c.landing, slot, 1.0)) {
@@ -2989,6 +3143,34 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                 // A trampoline that stops short of their floor: the air jump does the rest.
                 if (c.kind == CrossKind.TRAMPOLINE && v.y < 0.15 && here.y < c.landing.y + 0.4 && canDoubleJump() && tick - lastDoubleJumpTick > 6)
                     aimedDoubleJump(c.landing, "off the trampoline")
+            }
+            // On the wing, in under whatever they are hiding beneath: a flap whenever it is about
+            // to sink below their floor short of them, and the last one aimed onto it.
+            6 -> {
+                if (nms.onGround() && age > 2) { if (arrived()) return across(); endCrossing("came down somewhere else"); return false }
+                if (age > 240 || here.y < minOf(c.landing.y, c.launch.y) - 5.0) { endCrossing("fell short"); return false }
+                turnTowards(yawTo(c.landing), 0f, 40f)
+                val (f, s) = if (toLanding < 3.0) steerTo(c.landing) else 1f to 0f
+                setInputs(f, s, false)
+                if (v.y < 0.0 && canDoubleJump() && tick - lastDoubleJumpTick > 6 && here.y + v.y * 2 < c.landing.y + 0.4) {
+                    val glide = coastDistance(hypot(v.x, v.z), ticksUntilBelow(c.landing.y, v.y, here.y))
+                    if (glide < toLanding - 0.4 || here.y < c.landing.y - 0.2) {
+                        // The flap that comes down on their floor if there is one from here, else
+                        // a level one that flies free. With neither, sink a little further: from
+                        // lower down the same flap goes under whatever hangs in the way.
+                        val pitches = if (toLanding <= FLAP_LAST + 2.0) FLAP_PITCHES else FLAP_LEVEL
+                        val tried = pitches.map { it to flapOutcome(c.landing, it, map) }
+                        val pick = tried.firstOrNull { it.second == 1 } ?: tried.firstOrNull { it.second == 0 }
+                        if (pick != null) {
+                            c.boosts++
+                            flapAt(c.landing, pick.first, "flap ${c.boosts}${if (pick.second == 1) " onto their ledge" else ""}, " +
+                                "${"%.1f".format(toLanding)} blocks to go, pitch ${"%.0f".format(pick.first)}")
+                        } else if (here.y < minOf(c.landing.y, c.launch.y) - FLAP_DIP) {
+                            c.boosts++
+                            aimedDoubleJump(c.landing, "flap ${c.boosts}, nothing better")
+                        }
+                    }
+                }
             }
             // On the cloud: it lasts five seconds.
             4 -> {
@@ -3621,6 +3803,16 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         /** An opponent who has kept within this many blocks of one spot for [CAMP_TICKS] is holding it. */
         const val CAMP_RADIUS = 5.0
         const val CAMP_TICKS = 160L
+        /** Blocks a flap is counted on for when a flight is planned (it goes further in open air, less under a low roof). */
+        const val FLAP_STRIDE = 3.5
+        /** What a block of flying counts for against a block of walking when choosing where to take off. */
+        const val FLAP_COST = 1.5
+        /** Within this of the landing the flap is aimed to come down on it; further out it is flown level. */
+        const val FLAP_LAST = 5.5
+        /** How far below their floor a flight lets itself sink while it waits for a flap that clears what is in the way. */
+        const val FLAP_DIP = 2.5
+        val FLAP_LEVEL = doubleArrayOf(0.0)
+        val FLAP_PITCHES = doubleArrayOf(0.0, -20.0, -40.0, -55.0, -70.0, -82.0)
         /** How far around the ground it was killed on a bot keeps off. */
         const val TRAP_RADIUS = 4.0
         /** Wall climbing drains a full bar in 200 ticks at 0.4 blocks a tick: this much per block. */
