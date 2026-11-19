@@ -45,8 +45,6 @@ object ScoreboardService : KoinComponent {
     private val lang: LangService by inject()
 
     private const val FOOTER = "AI Edition"
-    /** Pixels between the end of the widest entry of a column and the start of the column beside it. */
-    private const val COLUMN_GAP = 9
 
     private val boards = HashMap<UUID, Pair<BrawlMinigame, Scoreboard>>()
     private val lobbyBoards = HashMap<UUID, Scoreboard>()
@@ -279,9 +277,9 @@ object ScoreboardService : KoinComponent {
                 }
                 .sortedWith(ROW_ORDER)
 
-        // The settings and everyone still alive are always on it, one fighter to a line. The client
-        // draws fifteen lines: a crowded match first puts the settings two to a line and drops the
-        // blank lines, and what is still over is drawn under the box (SidebarLayout, SidebarOverflow).
+        // The settings and everyone still alive are always on it, each on a line of its own. The
+        // client draws fifteen lines: a crowded match drops its blank lines, and what is still over
+        // is drawn under the box (SidebarLayout, SidebarOverflow).
         val shape = SidebarLayout.of(rows.size)
 
         val items = ClassicSidebar.spawnSetting("Items", setup.items, setup.itemIntervalSeconds, GameSetupService.ITEM_INTERVALS, false)
@@ -294,13 +292,8 @@ object ScoreboardService : KoinComponent {
 
         fun entry(row: Row): Component = cell(row, Bukkit.getPlayerExact(row.name)?.let { BotManager.displayNameOf(it) } ?: row.name)
         val all = ArrayList<Line>()
-        if (shape.settingsLines == 4) listOf(items, smash, difficulty, mode).forEach { all += Line(it, EnergyHud.widthOf(it)) }
-        else {
-            // Two to a line, the second of each starting at the same place.
-            val column = COLUMN_GAP + maxOf(EnergyHud.widthOf(items), EnergyHud.widthOf(difficulty))
-            for ((first, second) in listOf(items to smash, difficulty to mode))
-                all += Line(EnergyHud.beside(first, second, column, pack), column + EnergyHud.widthOf(second))
-        }
+        // The four settings one to a line, like the fighters: two to a line made the board twice as wide.
+        listOf(items, smash, difficulty, mode).forEach { all += Line(it, EnergyHud.widthOf(it)) }
         all += Line(text(ClassicSidebar.DIVIDER, NamedTextColor.GREEN).let { if (pack) it.append(Component.text("\uEFFF")) else it },
             EnergyHud.dividerWidth(ClassicSidebar.DIVIDER.length), ResourcePackService.SIDEBAR_DIVIDER_FONT)
         val heading = text("Players", NamedTextColor.YELLOW, bold = true)

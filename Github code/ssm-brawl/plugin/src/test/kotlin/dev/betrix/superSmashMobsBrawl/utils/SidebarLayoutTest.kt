@@ -13,17 +13,16 @@ import net.kyori.adventure.text.format.NamedTextColor
 /** The match sidebar with many fighters: one to a line, the settings on top, and nobody left off. */
 class SidebarLayoutTest : StringSpec({
     "room is made step by step, and only what is over fifteen lines goes under the box" {
-        for (fighters in 1..6) SidebarLayout.of(fighters) shouldBe SidebarLayout.Shape(4, true, 0)
-        for (fighters in 7..8) SidebarLayout.of(fighters) shouldBe SidebarLayout.Shape(2, true, 0)
-        for (fighters in 9..10) SidebarLayout.of(fighters) shouldBe SidebarLayout.Shape(2, false, 0)
-        for (fighters in 11..16) SidebarLayout.of(fighters) shouldBe SidebarLayout.Shape(2, false, fighters - 10)
+        for (fighters in 1..6) SidebarLayout.of(fighters) shouldBe SidebarLayout.Shape(true, 0)
+        for (fighters in 7..8) SidebarLayout.of(fighters) shouldBe SidebarLayout.Shape(false, 0)
+        for (fighters in 9..16) SidebarLayout.of(fighters) shouldBe SidebarLayout.Shape(false, fighters - 8)
     }
 
     "every fighter has a line of their own at every size, and the box never holds more than fifteen" {
         for (fighters in 0..16) {
             val shape = SidebarLayout.of(fighters)
-            // settings, divider, heading, one line a fighter, footer (and two blanks while there is room)
-            shape.rows(fighters) shouldBe shape.settingsLines + 2 + fighters + 1 + if (shape.blanks) 2 else 0
+            // four settings, divider, heading, one line a fighter, footer (and two blanks while there is room)
+            shape.rows(fighters) shouldBe 4 + 2 + fighters + 1 + if (shape.blanks) 2 else 0
             (shape.rows(fighters) - shape.overflow) shouldBeLessThanOrEqual SidebarLayout.LINES
             shape.overflow shouldBeLessThanOrEqual SidebarLayout.MAX_OVERFLOW
         }
