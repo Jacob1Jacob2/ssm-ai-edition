@@ -9,9 +9,30 @@ data class RouteNode(val x: Int, val y16: Int, val z: Int) {
     val y get() = y16 / 16.0
     fun distance(other: RouteNode) = hypot((x - other.x).toDouble(), (z - other.z).toDouble()) + abs(y - other.y) * 0.8
 }
-/** [climb] marks a wall climb: straight up the wall beside the block the edge starts from, then onto [node]. */
-data class RouteEdge(val node: RouteNode, val jump: Boolean, val cost: Double, val climb: Boolean = false)
-data class RouteStep(val node: RouteNode, val jump: Boolean, val climb: Boolean = false)
+/**
+ * [climb] marks a wall climb: straight up the wall beside the block the edge starts from, then onto [node].
+ * [long] marks a long jump flown in the head for this arena ([ArenaJumps]): the bot lines up for it.
+ */
+data class RouteEdge(val node: RouteNode, val jump: Boolean, val cost: Double, val climb: Boolean = false, val long: Boolean = false)
+data class RouteStep(val node: RouteNode, val jump: Boolean, val climb: Boolean = false, val long: Boolean = false)
+
+/**
+ * What a fighter can do from a block: what the rules give ([base]) and the long jumps flown in
+ * the head for it ([long], see [ArenaJumps]). An entry of [long] with a cost below zero is not a
+ * jump to take but a jump of the rules struck out, because flown it did not come off. With
+ * [strike] those are taken out of [base] (for a kit that jumps the ordinary way; a chicken's
+ * flight to the same landing is another matter). Walking there is never struck out.
+ */
+fun withLongJumps(base: List<RouteEdge>, long: List<RouteEdge>, strike: Boolean): List<RouteEdge> {
+    if (long.isEmpty()) return base
+    var struck: HashSet<RouteNode>? = null
+    if (strike) for (e in long) if (e.cost < 0) (struck ?: HashSet<RouteNode>().also { struck = it }).add(e.node)
+    val gone = struck
+    val out = ArrayList<RouteEdge>(base.size + long.size)
+    for (e in base) if (gone == null || !e.jump || e.node !in gone) out += e
+    for (e in long) if (e.cost >= 0) out += e
+    return out
+}
 
 /** Incremental A*: a fixed expansion budget per tick, and a useful partial route if out of budget. */
 class ArenaRoute(
@@ -74,7 +95,7 @@ class ArenaRoute(
         var at = best
         while (at != start) {
             val prev = parent[at] ?: break
-            result.add(RouteStep(at, prev.second.jump, prev.second.climb)); at = prev.first
+            result.add(RouteStep(at, prev.second.jump, prev.second.climb, prev.second.long)); at = prev.first
         }
         return result.asReversed()
     }

@@ -20,6 +20,8 @@ class NetherPigPassive(player: Player) : BrawlPassive("nether_pig",player) {
             if(!active && player.health>0 && player.health<=(metadata.double("lowHealthThreshold")?:6.0)) {
                 active=true;player.exp=1f;SmashLooks.pig(player,false)
                 player.world.playSound(player.location,Sound.ENTITY_ZOMBIFIED_PIGLIN_ANGRY,2f,1f)
+                if(dev.betrix.superSmashMobsBrawl.bots.BotManager.debug)
+                    org.bukkit.Bukkit.getLogger().info("[smashdbg] ${player.name} nether pig: ${SmashLooks.describe(player)}")
             } else if(active && player.health>=10) {
                 active=false;SmashLooks.restore(player)
                 player.world.playSound(player.location,Sound.ENTITY_PIG_AMBIENT,2f,1f)

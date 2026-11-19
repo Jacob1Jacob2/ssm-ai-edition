@@ -20,6 +20,10 @@ object SmashLooks {
         disguise.isSelfDisguiseVisible=false;disguise.notifyBar=DisguiseConfig.NotifyBar.NONE
         disguise.setReplaceSounds(false)
         disguise.setHideArmorFromSelf(false);disguise.setHideHeldItemFromSelf(false)
+        // The armor a kit wears is for its numbers, not for show: on a mob with a body to wear it
+        // (a Zombie Pigman, a Piglin Brute) it would be drawn. Empty stacks hide it; leaving the
+        // watcher alone would pass the player's own armor through.
+        disguise.watcher.armor=Array(4) { org.bukkit.inventory.ItemStack.empty() }
         disguise.watcher.customName=net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer.legacySection().serialize(player.playerListName())
         disguise.watcher.isCustomNameVisible=true
         // Outside the Nether a piglin trembles as if about to zombify; this one is here to stay.
@@ -27,6 +31,11 @@ object SmashLooks {
         DisguiseAPI.disguiseToAll(player,disguise)
     }
     fun restore(player:Player) {if(forms.remove(player.uniqueId)!=null)player.disguise?.refreshVisual()}
+    /** Debug: what others see this player as, and the armor drawn on it (empty when none is). */
+    fun describe(player:Player):String {
+        val look=DisguiseAPI.getDisguise(player) ?: return "no disguise"
+        return "${look.type} armor=[${look.watcher.armor.joinToString(",") { it?.type?.name?.lowercase() ?: "inherited" }}]"
+    }
     fun slimeSize(player:Player,size:Int) {
         (DisguiseAPI.getDisguise(player)?.watcher as? SlimeWatcher)?.let { if(it.size!=size)it.size=size }
     }

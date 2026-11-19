@@ -89,6 +89,9 @@ object BotManager : KoinComponent {
                 ")"
         )
 
+        // Where each arena's long jumps are kept once they have been worked out.
+        ArenaJumps.folder = java.io.File(plugin.dataFolder, "nav")
+
         // Bots that are not queued or playing leave after a short while.
         Bukkit.getScheduler().runTaskTimer(plugin, Runnable { removeIdleBots() }, 40L, 40L)
 

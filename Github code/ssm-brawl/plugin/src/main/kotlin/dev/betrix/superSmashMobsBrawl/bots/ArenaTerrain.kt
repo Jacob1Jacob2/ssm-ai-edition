@@ -131,16 +131,21 @@ class ArenaTerrain(private val world: World, private val voidY: Int, private val
         return if (i < 0 || i >= c.cells.size) OPEN else c.cells[i] ?: OPEN
     }
 
-    /** Is there room for a body standing with its feet at ([x], [y], [z])? */
-    fun clear(x: Double, y: Double, z: Double): Boolean {
+    /**
+     * Is there room for a body standing with its feet at ([x], [y], [z])? [foot] is how much of
+     * the very bottom of the body is left out of the question: a little, so that standing on a
+     * block is not being inside it. A jump flown in the head ([JumpSim]) asks with next to none.
+     */
+    fun clear(x: Double, y: Double, z: Double, foot: Double = .025): Boolean {
         val minX = x - .3
         val maxX = x + .3
         val minZ = z - .3
         val maxZ = z + .3
-        val minY = y + .025
+        val minY = y + foot
         val maxY = y + 1.8
         for (bx in floor(minX).toInt()..floor(maxX).toInt()) for (bz in floor(minZ).toInt()..floor(maxZ).toInt()) {
-            for (by in floor(y).toInt()..floor(maxY).toInt()) {
+            // (From the block below up: a fence or a wall stands half a block taller than the block it is in.)
+            for (by in floor(minY).toInt() - 1..floor(maxY).toInt()) {
                 val s = shape(bx, by, bz)
                 if (s === OPEN) continue
                 if (s.hazard) return false
@@ -348,6 +353,10 @@ class ArenaTerrain(private val world: World, private val voidY: Int, private val
         }
     }
 
+    /** A plain hop from [a] onto the block next to it, flown in the head with no air jump: what a step up in a tunnel is. */
+    private fun plainHop(a: RouteNode, b: RouteNode): Boolean =
+        JumpSim.promised({ x, y, z, foot -> clear(x, y, z, foot) }, null, a.x+.5, a.y, a.z+.5, b.x+.5, b.y, b.z+.5)
+
     fun neighbours(a: RouteNode): List<RouteEdge> {
         val result = ArrayList<RouteEdge>(12)
         var atEdge = false
@@ -362,7 +371,9 @@ class ArenaTerrain(private val world: World, private val voidY: Int, private val
                 val diagonalGap = dx!=0 && dz!=0 &&
                     (surface(a.x+dx,a.z,a.y)==null || surface(a.x,a.z+dz,a.y)==null)
                 val jump = b.y > a.y+.6 || diagonalGap
-                if (traversable(a,b,jump)) result.add(RouteEdge(b,jump,a.distance(b)+(if(jump) .8 else 0.0)))
+                // (The swept arc is a double jump's, with that much room over it. Under a low
+                // ceiling a hop onto the next block needs far less: there the hop itself is flown.)
+                if (traversable(a,b,jump) || (jump && plainHop(a,b))) result.add(RouteEdge(b,jump,a.distance(b)+(if(jump) .8 else 0.0)))
             } else {
                 // Open air beside the block with no floor under it is an edge. A wall is not.
                 if (!atEdge && clear(a.x+dx+.5,a.y,a.z+dz+.5)) atEdge = true
@@ -380,14 +391,127 @@ class ArenaTerrain(private val world: World, private val voidY: Int, private val
         return result
     }
 
+    /**
+     * Every other landing a double jump really reaches from [a]: the ones the rules in
+     * [neighbours] do not offer, because they stop at six blocks, look in eight directions, or
+     * judge a jump by a parabola with room over it. Each is flown in the head first ([JumpSim]),
+     * through whatever is really in the way: the long jump between two islands, the hop across a
+     * hatch under a low ceiling, up a shaft and across at the top.
+     *
+     * [base] is what [neighbours] gave for [a]. Nearest landings first, and of several one behind
+     * the other at about the same height only the nearest: the next one is jumped to from there.
+     * From the rim of something that is everything within reach. In the middle of a floor there
+     * is nothing to jump but a ledge overhead, and that only from close by: the balcony whose own
+     * overhang is in the way from right under it, the wall half a block too high for the rules.
+     * This is the expensive question, which is why the answers are kept ([ArenaJumps]).
+     *
+     * The jumps the rules do offer are flown as well. One that does not come down where the rules
+     * say (the drop that clips a ledge on the way, the gap under a beam) comes back struck out: an
+     * edge to the same landing with [STRUCK] for a cost, which takes the rule's own edge out of
+     * the graph ([ArenaJumps.merge]) and leaves its direction open for a jump that does work.
+     */
+    fun longJumps(a: RouteNode, base: List<RouteEdge>): List<RouteEdge> {
+        if (!doubleJump) return emptyList()
+        var rim = false
+        for (dx in -1..1) for (dz in -1..1) {
+            if (rim || (dx == 0 && dz == 0)) continue
+            if (surface(a.x+dx,a.z+dz,a.y,1.25,1.25) == null && clear(a.x+dx+.5,a.y,a.z+dz+.5)) rim = true
+        }
+        val known = HashSet<RouteNode>(base.size * 2 + 8)
+        val taken = DoubleArray(SECTORS * LONG_PER_SECTOR)
+        val count = IntArray(SECTORS)
+        fun fresh(sector: Int, y: Double): Boolean {
+            for (i in 0 until count[sector]) if (abs(taken[sector * LONG_PER_SECTOR + i] - y) < 2.0) return false
+            return count[sector] < LONG_PER_SECTOR
+        }
+        fun take(sector: Int, y: Double) { if (count[sector] < LONG_PER_SECTOR) taken[sector * LONG_PER_SECTOR + count[sector]++] = y }
+        val result = ArrayList<RouteEdge>(4)
+        val space = JumpSim.Space { x, y, z, foot -> clear(x, y, z, foot) }
+        // Wherever the fighter can already go from here is a direction that needs no long jump.
+        for (e in base) {
+            known += e.node
+            val dx = e.node.x - a.x
+            val dz = e.node.z - a.z
+            if (dx == 0 && dz == 0) continue
+            if (jumped(a, e) && !JumpSim.jump(space,JumpSim.STANDARD,a.x+.5,a.y,a.z+.5,e.node.x+.5,e.node.y,e.node.z+.5)) {
+                result.add(RouteEdge(e.node,true,STRUCK,long = true))
+                continue
+            }
+            take(sectorOf(dx, dz), e.node.y)
+        }
+        var tries = 0
+        // (So many in each direction, so that a crowd of ledges one way does not use up the looking for all the others.)
+        val tried = IntArray(SECTORS)
+        for (o in OFFSETS) {
+            if (!rim && o.dist > LEDGE_FROM) break
+            val beside = o.dist < 1.9
+            for (y in column(a.x+o.dx,a.z+o.dz).stand) {
+                val dy = y - a.y
+                if (dy > LONG_RISE) continue
+                if (dy < -MAX_DROP) break
+                // A step or a hop onto the block next door is the rules' business. A ledge overhead is
+                // theirs first (straight up its side), and flown here where they would not have it.
+                if (beside && dy <= 1.25) break
+                if (!rim && dy <= 1.25) break
+                // With a block in hand: a jump at the very end of what the physics allows is not one to promise.
+                if (o.dist > JumpSim.reach(dy) - LONG_MARGIN) continue
+                val b = RouteNode(a.x+o.dx,(y*16).roundToInt(),a.z+o.dz)
+                if (b in known || !fresh(o.sector,y)) continue
+                if (abs(dy) <= 1.25 && flooredBetween(a,b)) continue
+                if (++tried[o.sector] > LONG_SECTOR_TRIES) continue
+                if (++tries > (if (rim) LONG_TRIES else LEDGE_TRIES)) return result
+                if (!JumpSim.promised(space,JumpSim.STANDARD,a.x+.5,a.y,a.z+.5,b.x+.5,y,b.z+.5)) continue
+                known += b
+                take(o.sector,y)
+                // Dearer than a jump the rules are sure of: where there is a safer way of about the same length, that is the one.
+                result.add(RouteEdge(b,true,a.distance(b)*LONG_COST+LONG_EXTRA,long = true))
+            }
+        }
+        return result
+    }
+
+    /**
+     * Is this step of the rules one a fighter takes with a real jump? Not a walk, a hop onto the
+     * block next door, a climb, or a landing close by and well below, which is walked off the edge
+     * to and not jumped at (the same sum as the bot's own: BotBrain.stepOffSpeed).
+     */
+    private fun jumped(a: RouteNode, e: RouteEdge): Boolean {
+        if (!e.jump || e.climb) return false
+        val across = hypot((e.node.x - a.x).toDouble(), (e.node.z - a.z).toDouble())
+        val dy = e.node.y - a.y
+        if (across < 1.9 && dy <= 1.25) return false
+        if (dy <= -3.0) {
+            val fall = JumpSim.ticksUntilBelow(e.node.y, 0.0, a.y)
+            if ((across - 0.6).coerceAtLeast(0.1) * 0.09 / (1 - 0.91.pow(fall)) <= 0.28) return false
+        }
+        return true
+    }
+
     /** One column a leap might land in, relative to where it starts. */
     private class Offset(val dx: Int, val dz: Int) {
         val dist = hypot(dx.toDouble(), dz.toDouble())
         val straight = dx == 0 || dz == 0 || abs(dx) == abs(dz)
-        val sector = Math.floorMod((atan2(dz.toDouble(), dx.toDouble()) / (2 * PI) * SECTORS).roundToInt(), SECTORS)
+        val sector = sectorOf(dx, dz)
     }
 
     companion object {
+        /** The cost that marks an edge of [longJumps] as a jump of the rules struck out, not a jump to take. */
+        const val STRUCK = -1.0
+        /** Which of the [SECTORS] directions ([dx], [dz]) lies in. */
+        private fun sectorOf(dx: Int, dz: Int) = Math.floorMod((atan2(dz.toDouble(), dx.toDouble()) / (2 * PI) * SECTORS).roundToInt(), SECTORS)
+        /** Long jumps kept in each direction (at different heights), and how many may be flown in the head for one block. */
+        private const val LONG_PER_SECTOR = 4
+        private const val LONG_TRIES = 120
+        private const val LONG_SECTOR_TRIES = 8
+        /** Away from any rim: how far off a ledge overhead is still jumped for, and how many are flown in the head. */
+        private const val LEDGE_FROM = 3.0
+        private const val LEDGE_TRIES = 10
+        /** What a block of a long jump costs a route, against a block walked, and what it costs just to take one. */
+        private const val LONG_COST = 1.5
+        private const val LONG_EXTRA = 5.0
+        /** The highest landing a long jump is offered for, and how far short of the furthest possible it stops. */
+        private const val LONG_RISE = 5.5
+        private const val LONG_MARGIN = 1.0
         /** The deepest fall a route will take on purpose. */
         private const val MAX_DROP = 32.0
         /** How much further out than a level jump a drop may land. */
@@ -397,9 +521,9 @@ class ArenaTerrain(private val world: World, private val voidY: Int, private val
         private const val PER_SECTOR = 3
         private val SIDES = listOf(1 to 0, -1 to 0, 0 to 1, 0 to -1)
         private val GRIP_HEIGHTS = doubleArrayOf(0.1, 0.9)
-        /** Every column within ten blocks, nearest first. */
-        private val OFFSETS: Array<Offset> = (-10..10).flatMap { dx -> (-10..10).map { dz -> Offset(dx, dz) } }
-            .filter { it.dist > 0.0 && it.dist <= 10.0 }.sortedBy { it.dist }.toTypedArray()
+        /** Every column within twelve blocks (as far as a jump with a long way to fall gets), nearest first. */
+        private val OFFSETS: Array<Offset> = (-12..12).flatMap { dx -> (-12..12).map { dz -> Offset(dx, dz) } }
+            .filter { it.dist > 0.0 && it.dist <= 12.0 }.sortedBy { it.dist }.toTypedArray()
 
         /**
          * Blocks that are water (or lava) to a fighter. Touching the liquid itself is death in the

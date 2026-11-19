@@ -39,10 +39,34 @@ class ArenaNav private constructor(private val world: World, private val voidY: 
         return terrain
     }
 
-    /** True when the last [neighbours] answer was worked out with part of the world not loaded. */
+    /** True when the last [base] answer was worked out with part of the world not loaded. */
     private var incomplete = false
+    val lastIncomplete: Boolean get() = incomplete
 
+    /** The reader behind this graph, as it is now. */
+    fun terrainNow(): ArenaTerrain = terrain()
+
+    private class Merged(val base: List<RouteEdge>, val long: List<RouteEdge>, val all: List<RouteEdge>)
+    private val merged = HashMap<RouteNode, Merged>()
+
+    /**
+     * Everywhere a fighter of this kind can go from [node]: what the rules give ([base]) and, for
+     * anyone with an air jump, the long jumps flown in the head for this arena ([ArenaJumps]).
+     * Where those are not worked out yet the answer goes without them, and the block is asked for.
+     */
     fun neighbours(node: RouteNode): List<RouteEdge> {
+        val base = base(node)
+        if (!mobility.airborne) return base
+        val jumps = ArenaJumps.find(world) ?: return base
+        val long = jumps.of(node)
+        if (long == null) { jumps.want(node); return base }
+        if (long.isEmpty()) return base
+        merged[node]?.takeIf { it.base === base && it.long === long }?.let { return it.all }
+        return ArenaJumps.merge(base, long, mobility == Mobility.JUMPER).also { merged[node] = Merged(base, long, it) }
+    }
+
+    /** What the rules of walking, hopping and jumping give from [node], without the long jumps. */
+    fun base(node: RouteNode): List<RouteEdge> {
         val now = Bukkit.getCurrentTick()
         incomplete = false
         edges[node]?.takeIf { it.expires > now }?.let { return it.edges }
@@ -58,7 +82,7 @@ class ArenaNav private constructor(private val world: World, private val voidY: 
     }
 
     /** Is there room for a body with its feet at this point? Answered from the columns the graph has already read. */
-    fun clear(x: Double, y: Double, z: Double): Boolean = terrain().clear(x, y, z)
+    fun clear(x: Double, y: Double, z: Double, foot: Double = .025): Boolean = terrain().clear(x, y, z, foot)
 
     /** The place to stand in column [x],[z] nearest below [y] (within [down]) or just over it (within [up]), if there is one. */
     fun surface(x: Int, z: Int, y: Double, up: Double, down: Double): RouteNode? = terrain().surface(x, z, y, up, down)
@@ -66,6 +90,7 @@ class ArenaNav private constructor(private val world: World, private val voidY: 
     /** Forgets what was worked out around a block that turned out to be missing or in the way. */
     fun invalidate(x: Int, z: Int, radius: Int = 7) {
         edges.keys.removeIf { abs(it.x - x) <= radius && abs(it.z - z) <= radius }
+        merged.keys.removeIf { abs(it.x - x) <= radius + 12 && abs(it.z - z) <= radius + 12 }
         ArenaTerrain.forget(world, x, z, radius)
         terrain = ArenaTerrain(world, voidY, mobility, shared = true)
         terrainBorn = Bukkit.getCurrentTick()
@@ -81,7 +106,7 @@ class ArenaNav private constructor(private val world: World, private val voidY: 
         var waiting = 0
         while (warmQueue.isNotEmpty() && System.nanoTime() < deadline) {
             val node = warmQueue.removeFirst()
-            val found = neighbours(node)
+            val found = base(node)
             if (incomplete) {
                 // Its surroundings have not loaded yet: come back to it, and stop for this tick
                 // once everything left is waiting on chunks.
@@ -156,6 +181,7 @@ class ArenaNav private constructor(private val world: World, private val voidY: 
         /** The arena changed around a block: every kind of fighter's graph of this world looks again. */
         fun invalidateAll(world: World, x: Int, z: Int) {
             navs[world.uid]?.values?.forEach { it.invalidate(x, z) }
+            ArenaJumps.find(world)?.forget(x, z, 7)
         }
     }
 }

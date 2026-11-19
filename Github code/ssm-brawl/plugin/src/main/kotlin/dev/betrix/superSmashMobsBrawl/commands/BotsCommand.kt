@@ -18,6 +18,7 @@ import org.koin.core.component.inject
 class BotsCommand : KoinComponent {
     private val dataService: DataService by inject()
     private val plugin: dev.betrix.superSmashMobsBrawl.SuperSmashMobsBrawl by inject()
+    private val minigameService: dev.betrix.superSmashMobsBrawl.services.MinigameService by inject()
 
     private fun allowed(sender: CommandSender): Boolean {
         if (sender is Player && !sender.isOp) {
@@ -419,6 +420,60 @@ class BotsCommand : KoinComponent {
         BotManager.debug = true
         sender.sendMessage(dev.betrix.superSmashMobsBrawl.bots.BotChaseTest.start(map, kit, BotDifficulty.parse(difficulty), 1, 1, seconds, 1,
             Triple(x, y, z), hiderKit, ambush = true))
+    }
+
+    @Execute(name = "navgen")
+    @Description("Debug: works out the long jumps of maps ahead of time and saves them (all, all@small, aviation,ruins@big ...)")
+    fun navGen(@Context sender: CommandSender, @Arg maps: String) {
+        if (!allowed(sender)) return
+        val answer = dev.betrix.superSmashMobsBrawl.bots.BotNavGen.start(maps.split(',').filter { it.isNotBlank() })
+        plugin.logger.info("[navgen] $answer")
+        sender.sendMessage(answer)
+    }
+
+    @Execute(name = "edges")
+    @Description("Debug: where the route planner says a kit can go from the block at x y z of the running match, long jumps apart")
+    fun edges(@Context sender: CommandSender, @Arg x: Double, @Arg y: Double, @Arg z: Double, @Arg kit: String) {
+        if (!allowed(sender)) return
+        val bot = BotManager.onlineBots().firstOrNull { it.world.key.value().startsWith("ssmbworld") }
+            ?: run { plugin.logger.info("[edges] no match world"); return }
+        val data = minigameService.getMinigameForPlayer(bot)?.worldManager?.getWorld()?.data
+            ?: run { plugin.logger.info("[edges] no match"); return }
+        val voidY = data.voidLevel.toInt()
+        val nav = dev.betrix.superSmashMobsBrawl.bots.ArenaNav.of(bot.world, voidY, dev.betrix.superSmashMobsBrawl.bots.Mobility.of(kit, true))
+        val node = nav.nearest(org.bukkit.Location(bot.world, x, y, z), 5.0)
+            ?: run { plugin.logger.info("[edges] nowhere to stand at $x $y $z"); return }
+        val jumps = dev.betrix.superSmashMobsBrawl.bots.ArenaJumps.of(bot.world, voidY, data)
+        fun show(edges: List<dev.betrix.superSmashMobsBrawl.bots.RouteEdge>) = edges.joinToString(" ") {
+            "${it.node.x},${"%.2f".format(it.node.y)},${it.node.z}${if (it.climb) "c" else if (it.jump) "j" else ""}(${"%.1f".format(it.cost)})" }
+        plugin.logger.info("[edges] from ${node.x},${"%.2f".format(node.y)},${node.z} as $kit: " + show(nav.base(node)))
+        val long = jumps.of(node) ?: jumps.now(node)
+        plugin.logger.info("[edges] long jumps (${jumps.size} blocks known, ${jumps.jumps} jumps, complete=${jumps.complete}, from disk=${jumps.loaded}): " +
+            show(long.filter { it.cost >= 0 }))
+        plugin.logger.info("[edges] jumps of the rules struck out: " + show(long.filter { it.cost < 0 }))
+    }
+
+    @Execute(name = "jumptest")
+    @Description("Debug: flies the jump from the block at x1 y1 z1 to the block at x2 y2 z2 of the running match in the head, and says how each try ended")
+    fun jumpTest(@Context sender: CommandSender, @Arg x1: Double, @Arg y1: Double, @Arg z1: Double, @Arg x2: Double, @Arg y2: Double, @Arg z2: Double) {
+        if (!allowed(sender)) return
+        val bot = BotManager.onlineBots().firstOrNull { it.world.key.value().startsWith("ssmbworld") }
+            ?: run { plugin.logger.info("[jumptest] no match world"); return }
+        val data = minigameService.getMinigameForPlayer(bot)?.worldManager?.getWorld()?.data
+            ?: run { plugin.logger.info("[jumptest] no match"); return }
+        val terrain = dev.betrix.superSmashMobsBrawl.bots.ArenaTerrain(bot.world, data.voidLevel.toInt(), dev.betrix.superSmashMobsBrawl.bots.Mobility.JUMPER, loadChunks = true)
+        val a = terrain.surface(kotlin.math.floor(x1).toInt(), kotlin.math.floor(z1).toInt(), y1, 1.25, 3.0)
+        val b = terrain.surface(kotlin.math.floor(x2).toInt(), kotlin.math.floor(z2).toInt(), y2, 1.25, 3.0)
+        if (a == null || b == null) { plugin.logger.info("[jumptest] nowhere to stand at ${if (a == null) "the first" else "the second"} spot"); return }
+        val sim = dev.betrix.superSmashMobsBrawl.bots.JumpSim
+        val space = dev.betrix.superSmashMobsBrawl.bots.JumpSim.Space { x, y, z, foot -> terrain.clear(x, y, z, foot) }
+        sim.trace = { plugin.logger.info("[jumptest] $it") }
+        try {
+            val ok = sim.promised(space, sim.STANDARD, a.x + .5, a.y, a.z + .5, b.x + .5, b.y, b.z + .5)
+            val across = kotlin.math.hypot((b.x - a.x).toDouble(), (b.z - a.z).toDouble())
+            plugin.logger.info("[jumptest] ${a.x},${"%.2f".format(a.y)},${a.z} -> ${b.x},${"%.2f".format(b.y)},${b.z}: ${"%.2f".format(across)} across, " +
+                "${"%.2f".format(b.y - a.y)} up, open-air reach at that height ${sim.reach(b.y - a.y)}, promised=$ok")
+        } finally { sim.trace = null }
     }
 
     @Execute(name = "nolearn")

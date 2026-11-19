@@ -63,3 +63,5 @@ advancements/
 # ---- large files that are rebuilt from the rest
 /public-hosting/server.tar.gz
 /public-hosting/ssm-pack.zip
+# every map's long jumps for the bots: worked out again by the plugin during a map's first match
+/test-server/plugins/super-smash-mobs-brawl/nav/
