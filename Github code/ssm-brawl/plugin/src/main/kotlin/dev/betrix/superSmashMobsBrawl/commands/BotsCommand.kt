@@ -346,11 +346,24 @@ class BotsCommand : KoinComponent {
             ?: return sender.sendMessage("Personality is one of toxic, salty, chill, silent, random")
         BotManager.debug = true
         val size = count.coerceIn(4, 16)
-        val setup = dev.betrix.superSmashMobsBrawl.bots.BotNavGen.shapeOf(map).apply(dev.betrix.superSmashMobsBrawl.services.GameSetupService.Setup(
+        val plain = dev.betrix.superSmashMobsBrawl.services.GameSetupService.Setup(
             difficulty = if (difficulty == "any") null else BotDifficulty.parse(difficulty),
-            players = size, items = false, crystals = false, teams = true, lives = lives.coerceIn(1, 8), botPersonality = mode))
-        val bots = BotManager.startBotGame(def, size, setup.difficulty, map.substringBefore('@'), setup = setup)
+            players = size, items = false, crystals = false, teams = true, lives = lives.coerceIn(1, 8), botPersonality = mode)
+        // (The map may be "@random", for a match too big for the map one would have named.)
+        val setup = if (map.startsWith("@")) plain else dev.betrix.superSmashMobsBrawl.bots.BotNavGen.shapeOf(map).apply(plain)
+        val bots = BotManager.startBotGame(def, size, setup.difficulty, if (map.startsWith("@")) map else map.substringBefore('@'), setup = setup)
         sender.sendMessage("Two teams game: ${bots.joinToString { it.name }}")
+    }
+
+    @Execute(name = "sidebar")
+    @Description("Debug: writes the sidebar of every match that is on to the log as [sidebar], line by line (a gap between two columns shows as the pixel the second one starts at)")
+    fun sidebar(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        for (game in minigameService.activeMinigames().filter { it.getState() == dev.betrix.superSmashMobsBrawl.minigames.MinigameState.IN_PROGRESS }) {
+            val lines = dev.betrix.superSmashMobsBrawl.services.ScoreboardService.describe(game)
+            plugin.logger.info("[sidebar] ${game.allPlayers().size} fighters, ${lines.size} lines")
+            lines.forEachIndexed { i, line -> plugin.logger.info("[sidebar] ${"%2d".format(i + 1)} | $line") }
+        }
     }
 
     @Execute(name = "sidehost")

@@ -53,6 +53,23 @@ object EnergyHud {
         }, 1L, 2L)
     }
     private fun space(pixels: Int) = Component.text((0xF000 + pixels.coerceIn(-512, 512) + 512).toChar().toString()).font(FONT)
+
+    /** A gap of exactly [pixels], drawn with the pack's spacer glyphs: for lining text up. Only for a client that has the pack. */
+    fun gap(pixels: Int): Component = space(pixels)
+
+    /** How many pixels wide the client draws [text] in the game's plain letters (the sidebar's fonts are the same letters). */
+    fun widthOf(text: Component): Int = width(text)
+
+    /**
+     * [left] and [right] on one line, [right] starting exactly [column] pixels in, so that a
+     * run of such lines makes two straight columns. A client without the pack has no spacer
+     * glyphs: there the gap is made of spaces, to the nearest four pixels.
+     */
+    fun beside(left: Component, right: Component, column: Int, pack: Boolean): Component {
+        val room = (column - width(left)).coerceAtLeast(4)
+        val spacer = if (pack) space(room) else Component.text(" ".repeat((room + 3) / 4))
+        return Component.empty().append(left).append(spacer).append(right)
+    }
     fun compose(progress: Float, color: net.kyori.adventure.text.format.TextColor?, text: Component, damage:Double?=null): Component {
         val fill = (progress.coerceIn(0f, 1f) * 182).toInt()
         var bar = Component.empty()

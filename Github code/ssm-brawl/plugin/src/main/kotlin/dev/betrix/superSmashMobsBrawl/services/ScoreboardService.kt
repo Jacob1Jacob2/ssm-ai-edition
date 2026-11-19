@@ -6,6 +6,7 @@ import dev.betrix.superSmashMobsBrawl.bots.BotManager
 import dev.betrix.superSmashMobsBrawl.minigames.BrawlMinigame
 import dev.betrix.superSmashMobsBrawl.minigames.MinigameState
 import dev.betrix.superSmashMobsBrawl.utils.ClassicSidebar
+import dev.betrix.superSmashMobsBrawl.utils.SidebarLayout
 import io.papermc.paper.scoreboard.numbers.NumberFormat
 import java.util.UUID
 import net.kyori.adventure.text.Component
@@ -44,10 +45,8 @@ object ScoreboardService : KoinComponent {
     private val lang: LangService by inject()
 
     private const val FOOTER = "AI Edition"
-    /** Nine fixed lines include the settings, section spacing, and footer. */
-    private const val MAX_PLAYER_LINES = 6
-    /** Player lines that fit once the settings block is hidden (heading, two blanks and the footer stay). */
-    private const val MAX_PLAYER_LINES_ALONE = 11
+    /** Pixels between the end of the widest entry of a column and the start of the column beside it. */
+    private const val COLUMN_GAP = 9
 
     private val boards = HashMap<UUID, Pair<BrawlMinigame, Scoreboard>>()
     private val lobbyBoards = HashMap<UUID, Scoreboard>()
@@ -251,7 +250,12 @@ object ScoreboardService : KoinComponent {
                 text(FOOTER, NamedTextColor.GOLD).append(text(" ${game.displayCode}", NamedTextColor.DARK_GRAY))))
             return
         }
-        val humans = everyone.filter { !BotManager.isBot(it.uniqueId) }
+        writeLines(board, matchLines(game, ResourcePackService.hasPack(viewer)))
+    }
+
+    /** The lines of the sidebar of a match that is on, top to bottom, for a client with or without the pack. */
+    internal fun matchLines(game: BrawlMinigame, pack: Boolean): List<Component> {
+        val everyone = game.allPlayers()
         // The game's settings are whatever its (first) real player picked in the hub.
         val setup = game.settings
 
@@ -268,47 +272,73 @@ object ScoreboardService : KoinComponent {
                 }
                 .sortedWith(ROW_ORDER)
 
-        // A sidebar holds fifteen lines and everyone still alive is always listed. A crowded match
-        // first gives up the settings block, then puts two names on a line.
-        val showSettings = rows.size <= MAX_PLAYER_LINES
-        val perLine = if (rows.size <= MAX_PLAYER_LINES_ALONE) 1 else 2
-        val shown = rows.take(MAX_PLAYER_LINES_ALONE * perLine)
+        // A sidebar holds fifteen lines. The settings and everyone still alive are always on it: a
+        // crowded match puts the settings two to a line, then the fighters in two columns, each
+        // column starting at the same place on every line (see SidebarLayout).
+        val shape = SidebarLayout.of(rows.size)
+
+        val items = ClassicSidebar.spawnSetting("Items", setup.items, setup.itemIntervalSeconds, GameSetupService.ITEM_INTERVALS, false)
+        val smash = ClassicSidebar.spawnSetting("Smash", setup.crystals && setup.enabledCrystalTiers.isNotEmpty(),
+            setup.crystalIntervalSeconds, GameSetupService.CRYSTAL_INTERVALS, true)
+        val difficulty = text("Difficulty: ", NamedTextColor.WHITE).append(text(setup.difficultyName, if(setup.botsIdle)NamedTextColor.GRAY else difficultyColor(setup.difficulty)))
+        // By what the match is, not by what was asked for: two teams only where there are sides.
+        val mode = text("Mode: ", NamedTextColor.WHITE).append(modeText(
+            if (game.sides.isNotEmpty()) MatchMode.TEAMS else setup.matchMode.takeIf { it != MatchMode.TEAMS } ?: MatchMode.FFA, everyone.size))
+
+        fun entry(row: Row): Component = cell(row, Bukkit.getPlayerExact(row.name)?.let { BotManager.displayNameOf(it) } ?: row.name)
+        // In a match of two teams a column is a side, Blue on the left; otherwise the list runs
+        // left to right and down, most lives first, as a single column would.
+        val (left, right) =
+            if (shape.columns == 1) rows to emptyList()
+            else if (game.sides.isNotEmpty()) rows.partition { it.side == dev.betrix.superSmashMobsBrawl.minigames.TeamSide.BLUE }
+            else SidebarLayout.columns(rows.size).let { (l, r) -> l.map(rows::get) to r.map(rows::get) }
+        val cells = left.map(::entry)
+        // One place for the second column to start, for the settings and the fighters alike:
+        // just past the widest thing that stands in the first.
+        val column = COLUMN_GAP + maxOf(
+            if (shape.compactSettings) maxOf(EnergyHud.widthOf(items), EnergyHud.widthOf(difficulty)) else 0,
+            if (shape.columns == 2) cells.maxOfOrNull(EnergyHud::widthOf) ?: 0 else 0)
 
         val lines = mutableListOf<Component>()
-        if (showSettings) {
-            lines += ClassicSidebar.spawnSetting("Items", setup.items, setup.itemIntervalSeconds, GameSetupService.ITEM_INTERVALS, false)
-            lines += ClassicSidebar.spawnSetting("Smash", setup.crystals && setup.enabledCrystalTiers.isNotEmpty(),
-                setup.crystalIntervalSeconds, GameSetupService.CRYSTAL_INTERVALS, true)
-            lines += text("Difficulty: ", NamedTextColor.WHITE).append(text(setup.difficultyName, if(setup.botsIdle)NamedTextColor.GRAY else difficultyColor(setup.difficulty)))
-            // By what the match is, not by what was asked for: two teams only where there are sides.
-            lines += text("Mode: ", NamedTextColor.WHITE).append(modeText(
-                if (game.sides.isNotEmpty()) MatchMode.TEAMS else setup.matchMode.takeIf { it != MatchMode.TEAMS } ?: MatchMode.FFA, everyone.size))
-            lines += text(ClassicSidebar.DIVIDER, NamedTextColor.GREEN).let {
-                if (ResourcePackService.hasPack(viewer)) it.append(Component.text("\uEFFF"))
-                    .font(ResourcePackService.SIDEBAR_DIVIDER_FONT) else it
-            }
+        if (!shape.compactSettings) lines += listOf(items, smash, difficulty, mode)
+        else {
+            lines += EnergyHud.beside(items, smash, column, pack)
+            lines += EnergyHud.beside(difficulty, mode, column, pack)
+        }
+        lines += text(ClassicSidebar.DIVIDER, NamedTextColor.GREEN).let {
+            if (pack) it.append(Component.text("\uEFFF")).font(ResourcePackService.SIDEBAR_DIVIDER_FONT) else it
         }
         lines += text("Players", NamedTextColor.YELLOW, bold = true).let {
-            if (ResourcePackService.hasPack(viewer)) it.font(ResourcePackService.SIDEBAR_HEADING_FONT) else it
+            if (pack) it.font(ResourcePackService.SIDEBAR_HEADING_FONT) else it
         }
         lines += Component.empty()
-        fun entry(row: Row): Component = cell(row, Bukkit.getPlayerExact(row.name)?.let { BotManager.displayNameOf(it) } ?: row.name)
-        shown.chunked(perLine).forEach { pair ->
-            var row = entry(pair[0])
-            if (pair.size > 1) row = Component.empty().append(row).append(text("   ", NamedTextColor.WHITE))
-                .append(entry(pair[1]))
-            lines += if (ResourcePackService.hasPack(viewer)) row.font(ResourcePackService.SIDEBAR_PLAYER_FONT) else row
-        }
-        if (shown.size < rows.size) lines += text("+${rows.size - shown.size} more", NamedTextColor.GRAY).let {
-            if (ResourcePackService.hasPack(viewer)) it.font(ResourcePackService.SIDEBAR_PLAYER_FONT) else it
-        }
+        fun playerLine(line: Component) = if (pack) line.font(ResourcePackService.SIDEBAR_PLAYER_FONT) else line
+        if (shape.columns == 1) cells.forEach { lines += playerLine(it) }
+        else for (i in 0 until minOf(maxOf(left.size, right.size), SidebarLayout.FIGHTER_LINES)) lines += playerLine(
+            EnergyHud.beside(cells.getOrNull(i) ?: Component.empty(), right.getOrNull(i)?.let(::entry) ?: Component.empty(), column, pack))
         lines += Component.empty()
         lines += text(FOOTER, NamedTextColor.GOLD)
             .append(text(" ${game.displayCode}", NamedTextColor.DARK_GRAY)).let {
-            if (ResourcePackService.hasPack(viewer)) it.font(ResourcePackService.SIDEBAR_FOOTER_FONT) else it
+            if (pack) it.font(ResourcePackService.SIDEBAR_FOOTER_FONT) else it
         }
+        return lines
+    }
 
-        writeLines(board, lines)
+    /**
+     * Debug: the sidebar of [game] as text, one string per line. A gap made with the pack's spacer
+     * glyphs is written as the pixel the text after it starts at, in angle brackets: the same
+     * number down a column is that column standing straight.
+     */
+    fun describe(game: BrawlMinigame): List<String> {
+        val plain = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
+        return matchLines(game, pack = true).map { line ->
+            val parts = line.children()
+            val spacer = parts.getOrNull(1)?.takeIf { it.font() == EnergyHud.FONT }
+            if (parts.size == 3 && spacer != null) {
+                val gap = plain.serialize(spacer).single().code - 0xF000 - 512
+                "${plain.serialize(parts[0])} <${EnergyHud.widthOf(parts[0]) + gap}> ${plain.serialize(parts[2])}"
+            } else plain.serialize(line)
+        }
     }
 
     private fun writeLines(board: Scoreboard, lines: List<Component>) {
