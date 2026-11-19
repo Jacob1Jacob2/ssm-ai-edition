@@ -294,16 +294,13 @@ object GameSetupService : KoinComponent {
             val mode = s.matchMode
             set(47, menuItem(Material.COPPER_SWORD, if (duel) "1v1 — You vs 1 Bot" else when (mode) {
                     MatchMode.BOTS_VS_YOU -> "${s.bots}v1 — All Bots vs You"
-                    MatchMode.TEAM_UPS -> "Team-Ups — Bots May Gang Up on You"
+                    MatchMode.TEAM_UPS -> "Team-Ups"
                     MatchMode.FFA -> "FFA — Free for All"
                 }, NamedTextColor.AQUA,
                 (if (duel) listOf("With one opponent the match is always 1v1") else when (mode) {
                     MatchMode.FFA -> listOf("Everybody for themselves")
                     MatchMode.BOTS_VS_YOU -> listOf("Every bot is on one team against you")
-                    MatchMode.TEAM_UPS -> listOf("A free-for-all, until you get on the lobby's nerves:",
-                        "camp, spam one ability, farm the same bot or trash talk",
-                        "and the bots may call a truce and team up on you", "until you lose a life",
-                        "Toxic and Salty bots team up readily, Chill ones hardly ever")
+                    MatchMode.TEAM_UPS -> listOf("FFA, but the bots can team on you", "if you camp or get annoying")
                 } + listOf("Left-click for the next mode", "Right-click to go back")) +
                     "Every fighter has ${s.lives} ${if (s.lives == 1) "life" else "lives"}", selected="Mode" in chosen)) {
                 // Through the modes like through the player counts: left-click on, right-click back.
