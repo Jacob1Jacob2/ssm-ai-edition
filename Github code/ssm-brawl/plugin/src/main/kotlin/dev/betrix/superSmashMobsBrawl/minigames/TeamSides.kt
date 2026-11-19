@@ -12,6 +12,23 @@ enum class TeamSide(val label: String) {
         get() = if (this == BLUE) net.kyori.adventure.text.format.NamedTextColor.BLUE else net.kyori.adventure.text.format.NamedTextColor.RED
 }
 
+/**
+ * Who is on which side right now, across every match of two teams that is on: what a fighter's
+ * name is coloured by wherever it is shown (over their head, in chat, in the kill feed). Kept apart
+ * from the matches themselves so that chat, which is put together off the main thread, can ask.
+ */
+object TeamRoster {
+    private val sides = java.util.concurrent.ConcurrentHashMap<UUID, TeamSide>()
+
+    /** A match of two teams has its fighters: from here on their names are in their side's colour. */
+    fun enter(match: Map<UUID, TeamSide>) { sides.putAll(match) }
+
+    /** These fighters are out of their match (it ended, or they left it): their names are their own again. */
+    fun leave(fighters: Collection<UUID>) { fighters.forEach(sides::remove) }
+
+    fun sideOf(fighter: UUID): TeamSide? = sides[fighter]
+}
+
 object TeamSides {
     data class Fighter(val id: UUID, val name: String)
 

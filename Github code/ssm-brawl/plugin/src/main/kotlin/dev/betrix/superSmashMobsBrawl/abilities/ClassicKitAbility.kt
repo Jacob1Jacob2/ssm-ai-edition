@@ -81,7 +81,9 @@ abstract class ClassicKitAbility(id: String, player: Player) : BrawlAbility(id, 
 
     /** Health over a summon's head, so it is plain that it can be killed and how close it is. */
     private fun healthTag(entity: LivingEntity) {
-        entity.customName(net.kyori.adventure.text.Component.text("${player.name} ", net.kyori.adventure.text.format.NamedTextColor.YELLOW)
+        // (In a match of two teams the owner's name is in the colour of their side: whose summon this is, and whose side it is on.)
+        entity.customName(net.kyori.adventure.text.Component.text("${player.name} ",
+            dev.betrix.superSmashMobsBrawl.services.ClassicChatService.teamColor(player.uniqueId) ?: net.kyori.adventure.text.format.NamedTextColor.YELLOW)
             .append(net.kyori.adventure.text.Component.text("❤ ${kotlin.math.ceil(entity.health).toInt()}", net.kyori.adventure.text.format.NamedTextColor.RED)))
         entity.isCustomNameVisible = true
     }

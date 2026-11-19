@@ -79,6 +79,8 @@ class DefaultPlayerConnectionManager(private val minigame: BrawlMinigame) :
 
         // Mark as left immediately to prevent re-entry
         hasLeft.add(player.uniqueId)
+        // Out of the match, their name is no longer in a side's colour (in the hub's chat, say).
+        dev.betrix.superSmashMobsBrawl.minigames.TeamRoster.leave(listOf(player.uniqueId))
 
         // Fire analytics event with provided reason
         PlayerLeaveMinigameAnalyticsEvent(player, minigame, reason).callEvent()

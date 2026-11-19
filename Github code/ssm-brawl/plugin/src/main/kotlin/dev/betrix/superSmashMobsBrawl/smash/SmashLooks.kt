@@ -24,7 +24,7 @@ object SmashLooks {
         // (a Zombie Pigman, a Piglin Brute) it would be drawn. Empty stacks hide it; leaving the
         // watcher alone would pass the player's own armor through.
         disguise.watcher.armor=Array(4) { org.bukkit.inventory.ItemStack.empty() }
-        disguise.watcher.customName=net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer.legacySection().serialize(player.playerListName())
+        disguise.watcher.customName=dev.betrix.superSmashMobsBrawl.services.ClassicChatService.nameTag(player)
         disguise.watcher.isCustomNameVisible=true
         // Outside the Nether a piglin trembles as if about to zombify; this one is here to stay.
         (disguise.watcher as? PiglinAbstractWatcher)?.isShaking=false

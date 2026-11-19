@@ -120,7 +120,8 @@ object CombatLogService : KoinComponent {
                 it != victim && minigameService.getMinigameForPlayer(it) === game
             }?.let { killer ->
                 if (game.claimFirstBlood()) {
-                    val firstBlood = prefix("Game").append(t(BotManager.displayNameOf(killer), NamedTextColor.YELLOW))
+                    // (Names are in the colour of the fighter's side in a match of two teams, and yellow otherwise.)
+                    val firstBlood = prefix("Game").append(t(BotManager.displayNameOf(killer), game.nameColor(killer.uniqueId)))
                         .append(t(" drew ", NamedTextColor.GRAY))
                         .append(t("First Blood!", NamedTextColor.YELLOW))
                     game.allPlayers().mapNotNull { it.player }.filter { !BotManager.isBot(it) }.forEach {
@@ -141,12 +142,12 @@ object CombatLogService : KoinComponent {
         Bukkit.getScheduler().runTaskLater(
             plugin,
             Runnable {
-                val name = t(BotManager.displayNameOf(victim), NamedTextColor.YELLOW)
+                val name = t(BotManager.displayNameOf(victim), game.nameColor(victim.uniqueId))
                 val message =
                     prefix("Death").append(name).append(
                         if (lastHit != null) {
                             t(" killed by ", NamedTextColor.GRAY)
-                                .append(t(lastHit.attacker + if(summary.assists>0) " + ${summary.assists}" else "", NamedTextColor.YELLOW))
+                                .append(t(lastHit.attacker + if(summary.assists>0) " + ${summary.assists}" else "", game.nameColor(lastHit.attackerId)))
                                 .append(t(" with ", NamedTextColor.GRAY))
                                 .append(t(lastHit.label, NamedTextColor.GREEN))
                                 .append(t(".", NamedTextColor.GRAY))
@@ -181,7 +182,7 @@ object CombatLogService : KoinComponent {
                 summary.rows.forEachIndexed { i, row ->
                     val last=row.last
                     victim.sendMessage(t("#${i+1+rowOffset}: ", NamedTextColor.GREEN)
-                        .append(t(last.attacker, NamedTextColor.YELLOW))
+                        .append(t(last.attacker, game.nameColor(last.attackerId)))
                         .append(t(" [", NamedTextColor.GRAY))
                         .append(t("%.1f".format(Locale.ROOT,row.total), NamedTextColor.YELLOW))
                         .append(t("] [", NamedTextColor.GRAY))

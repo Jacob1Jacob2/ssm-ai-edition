@@ -356,6 +356,10 @@ class BrawlMinigame(val minigameDef: MinigameDef, val teams: List<MinigameTeam>,
             return
         }
 
+        // Two teams: from here on every fighter's name is in the colour of their side, wherever it
+        // is shown (before the kits go on, which is when the name over a fighter's head is made).
+        TeamRoster.enter(sides)
+
         // Initialize all managers
         teamManager.setup()
         hazardManager.setup()
@@ -430,9 +434,18 @@ class BrawlMinigame(val minigameDef: MinigameDef, val teams: List<MinigameTeam>,
         if (state != MinigameState.STARTING) return
         val begin = {
             state = MinigameState.IN_PROGRESS
-            if (dev.betrix.superSmashMobsBrawl.bots.BotManager.debug && sides.isNotEmpty()) org.bukkit.Bukkit.getLogger().info("[sides] " +
-                TeamSide.entries.joinToString("; ") { side -> "${side.label}: " + allPlayers().filter { sideOf(it) == side }
-                    .joinToString { dev.betrix.superSmashMobsBrawl.bots.BotManager.displayNameOf(it) } })
+            if (dev.betrix.superSmashMobsBrawl.bots.BotManager.debug && sides.isNotEmpty()) {
+                org.bukkit.Bukkit.getLogger().info("[sides] " +
+                    TeamSide.entries.joinToString("; ") { side -> "${side.label}: " + allPlayers().filter { sideOf(it) == side }
+                        .joinToString { dev.betrix.superSmashMobsBrawl.bots.BotManager.displayNameOf(it) } })
+                // How each name is written over the fighter's head and in chat (& and a colour code: 9 is blue, c is red).
+                val legacy = net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer.legacyAmpersand()
+                allPlayers().mapNotNull { it.player }.forEach { p ->
+                    org.bukkit.Bukkit.getLogger().info("[sides] name of ${p.name}: over the head " +
+                        "${me.libraryaddict.disguise.DisguiseAPI.getDisguise(p)?.watcher?.customName?.replace('§', '&')}, in chat " +
+                        legacy.serialize(dev.betrix.superSmashMobsBrawl.services.ClassicChatService.identity(p)))
+                }
+            }
             dev.betrix.superSmashMobsBrawl.services.BotConversationService.started(this)
             gameStartTime = kotlin.time.TimeSource.Monotonic.markNow()
             allPlayers().filter { !connectionManager.isDisconnected(it) }.mapNotNull { it.player }.forEach {
@@ -527,7 +540,12 @@ class BrawlMinigame(val minigameDef: MinigameDef, val teams: List<MinigameTeam>,
         return teamA.id == teamB.id
     }
 
+    /** The colour [fighter]'s name has in this match: their side's in a match of two teams, the classic yellow otherwise. */
+    fun nameColor(fighter: UUID): net.kyori.adventure.text.format.NamedTextColor =
+        sides[fighter]?.color ?: net.kyori.adventure.text.format.NamedTextColor.YELLOW
+
     override fun teardown() {
+        TeamRoster.leave(sides.keys)
         dev.betrix.superSmashMobsBrawl.services.BotConversationService.close(this)
         dev.betrix.superSmashMobsBrawl.items.ItemService.close(this)
         super.teardown()

@@ -73,11 +73,9 @@ abstract class BrawlDisguise(protected val player: Player) : Manageable() {
         disguise.setHideHeldItemFromSelf(false)
         disguise.setReplaceSounds(false) // Combat explicitly layers the mob and player hurt cues.
 
-        // Ranks and levels belong to chat; the tab name is the plain colored player name.
-        val shownName =
-            net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer.legacySection()
-                .serialize(player.playerListName())
-        disguise.watcher.customName = shownName
+        // Ranks and levels belong to chat; the name over a fighter is the plain colored player name
+        // (in a match of two teams, coloured by their side).
+        disguise.watcher.customName = dev.betrix.superSmashMobsBrawl.services.ClassicChatService.nameTag(player)
         disguise.watcher.isCustomNameVisible = true
 
         DisguiseAPI.disguiseToAll(player, disguise)

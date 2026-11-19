@@ -138,6 +138,8 @@ object LobbyBotService : KoinComponent {
                 d.teleportDuration = 2
             } }
             label.teleport(at)
+            // In a match of two teams the name is in the colour of the bot's side, like everybody else's.
+            label.text(Component.text(BotManager.displayNameOf(bot), ClassicChatService.teamColor(id) ?: NamedTextColor.YELLOW))
             for (viewer in Bukkit.getOnlinePlayers().filterNot(BotManager::isBot)) {
                 if (viewer.canSee(bot) && !bot.isInvisible && !dev.betrix.superSmashMobsBrawl.items.ItemService.hidden(bot))
                     viewer.showEntity(plugin, label) else viewer.hideEntity(plugin, label)

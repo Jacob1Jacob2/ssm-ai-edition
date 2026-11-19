@@ -37,12 +37,16 @@ object BotIdentity {
             .decorate(TextDecoration.BOLD).append(Component.space())
         return prefix.append(Component.text(profile.name, color)).decoration(TextDecoration.ITALIC, false)
     }
-    fun name(profile: BotManager.BotProfile): Component {
+    /**
+     * Level, rank and name as chat shows them. [nameColor] is the colour of the bot's side in a
+     * match of two teams: the name takes it, the level and the rank keep their own.
+     */
+    fun name(profile: BotManager.BotProfile, nameColor: NamedTextColor? = null): Component {
         val rank = if (profile.rank == "mythic") "mythical" else profile.rank
         val color = rankColor(rank)
         var result = Component.text("${profile.level} ", levelColor(profile.level))
         if (rank != "none") result = result.append(Component.text(rank.uppercase(), color)
             .decorate(TextDecoration.BOLD)).append(Component.space())
-        return result.append(Component.text(profile.name, color))
+        return result.append(Component.text(profile.name, nameColor ?: color))
     }
 }
