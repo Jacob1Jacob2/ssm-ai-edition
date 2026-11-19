@@ -282,20 +282,35 @@ object KitService : KoinComponent, Manageable() {
 
     fun openKitSelectionGui(player: Player) = openKitSelection(player, null, 0)
 
-    fun openBotKitSelectionGui(player: Player, name: String, page: Int) = openKitSelection(player, name, page)
+    /** The kit of one bot of the roster, opened from Choose Opponents or (with [team]) from Your Team, and going back there. */
+    fun openBotKitSelectionGui(player: Player, name: String, page: Int, team: Boolean = false) = openKitSelection(player, name, page, team)
 
-    private fun selectFromMenu(player: Player, kit: KitDef, botName: String?, page: Int) {
+    private fun backToRoster(player: Player, page: Int, team: Boolean) =
+        if (team) SetupSelectionMenus.team(player, page) else SetupSelectionMenus.opponents(player, page)
+
+    private fun selectFromMenu(player: Player, kit: KitDef, botName: String?, page: Int, team: Boolean = false) {
         if (botName != null) {
             val setup = GameSetupService.setupOf(player)
             setup.botKits = setup.botKits + (botName.lowercase() to kit.id)
-            // Giving an opponent a kit means wanting them in the match.
-            if (setup.selectedBotNames.none { it.equals(botName, ignoreCase = true) }) {
-                if (setup.selectedBotNames.size < setup.bots) setup.selectedBotNames = setup.selectedBotNames + botName
-                else player.sendMessage(Component.text("Kit saved. Increase the player count to add $botName to the match.", net.kyori.adventure.text.format.NamedTextColor.YELLOW))
+            val yellow = net.kyori.adventure.text.format.NamedTextColor.YELLOW
+            val onTeam = setup.teams && setup.teammates.take(setup.teammateLimit).any { it.equals(botName, ignoreCase = true) }
+            val picked = setup.selectedBotNames.any { it.equals(botName, ignoreCase = true) }
+            if (team) {
+                // Giving a teammate a kit means wanting them on the team.
+                if (!onTeam) {
+                    if (setup.teammates.take(setup.teammateLimit).size < setup.teammateLimit) {
+                        setup.teammates = setup.teammates.filterNot { it.equals(botName, ignoreCase = true) } + botName
+                        setup.selectedBotNames = setup.selectedBotNames.filterNot { it.equals(botName, ignoreCase = true) }
+                    } else player.sendMessage(Component.text("Kit saved. Your team is full: take somebody off it to add $botName.", yellow))
+                }
+            } else if (!picked && !onTeam) {
+                // Giving an opponent a kit means wanting them in the match.
+                if (setup.selectedBotNames.size < setup.opponentLimit) setup.selectedBotNames = setup.selectedBotNames + botName
+                else player.sendMessage(Component.text("Kit saved. Increase the player count to add $botName to the match.", yellow))
             }
             GameSetupService.save()
             LobbyBotService.configure(player)
-            SetupSelectionMenus.opponents(player, page)
+            backToRoster(player, page, team)
         } else {
             playerSelectKit(player, kit)
             openKitSelectionGui(player)
@@ -304,7 +319,7 @@ object KitService : KoinComponent, Manageable() {
         player.playSound(player.location, Sound.BLOCK_NOTE_BLOCK_PLING, .3f, 2f)
     }
 
-    private fun openKitSelection(player: Player, botName: String?, page: Int) {
+    private fun openKitSelection(player: Player, botName: String?, page: Int, team: Boolean = false) {
         val selectedId = if (botName == null) (if(isRandomSelected(player)) "@random" else currentSelectedKitForPlayer(player).id)
             else GameSetupService.setupOf(player).botKits[botName.lowercase()]
 
@@ -357,7 +372,7 @@ object KitService : KoinComponent, Manageable() {
                                 )
                             },
                         ) {
-                            if (isRightClick) { openKitStats(player, kit, botName, page); return@set }
+                            if (isRightClick) { openKitStats(player, kit, botName, page, team); return@set }
                             if (!isLeftClick) return@set
                             if (botName == null && selectedId == kit.id) {
                                 player.sendMessage(lang.t("messages.kits.select.already_selected") { "kitId" to kit.id })
@@ -365,7 +380,7 @@ object KitService : KoinComponent, Manageable() {
                                 return@set
                             }
 
-                            selectFromMenu(player, kit, botName, page)
+                            selectFromMenu(player, kit, botName, page, team)
                         }
                     }
 
@@ -401,16 +416,16 @@ object KitService : KoinComponent, Manageable() {
                         setup.botKits = setup.botKits - botName.lowercase(); GameSetupService.save()
                         LobbyBotService.configure(player)
                         player.playSound(player.location, Sound.BLOCK_NOTE_BLOCK_PLING, .3f, 2f)
-                        SetupSelectionMenus.opponents(player, page)
+                        backToRoster(player, page, team)
                     }
                 }
                 val inGame=minigameService.isPlayerInMinigame(player)
                 set(45,button(Material.EMERALD_BLOCK,if(botName != null || inGame) "Done" else "Play",net.kyori.adventure.text.format.NamedTextColor.GREEN)) {
-                    if (botName != null) SetupSelectionMenus.opponents(player, page)
+                    if (botName != null) backToRoster(player, page, team)
                     else { player.closeInventory();if(!inGame)GameSetupService.startGame(player) }
                 }
                 set(53,button(Material.REDSTONE_BLOCK,"Back",net.kyori.adventure.text.format.NamedTextColor.RED)) {
-                    if (botName != null) SetupSelectionMenus.opponents(player, page)
+                    if (botName != null) backToRoster(player, page, team)
                     else if(inGame)player.closeInventory() else GameSetupService.openMenu(player)
                 }
             }
@@ -420,7 +435,7 @@ object KitService : KoinComponent, Manageable() {
 
     fun openKitStats(player: Player, kit: KitDef) = openKitStats(player, kit, null, 0)
 
-    private fun openKitStats(player: Player, kit: KitDef, botName: String?, page: Int) {
+    private fun openKitStats(player: Player, kit: KitDef, botName: String?, page: Int, team: Boolean = false) {
         val gray = net.kyori.adventure.text.format.NamedTextColor.GRAY
         val color = lang.kitColor(kit.id)
         fun display(material: Material, name: Component, lore: List<Component> = emptyList()) = ItemStack.of(material).apply {
@@ -459,10 +474,10 @@ object KitService : KoinComponent, Manageable() {
                     lang.t("passives.${entry.id}.name").color(color), listOf(lang.t("passives.${entry.id}.description").color(gray))))
             }
             set(18, display(Material.REDSTONE_BLOCK, Component.text("Back", net.kyori.adventure.text.format.NamedTextColor.RED))) {
-                openKitSelection(player, botName, page)
+                openKitSelection(player, botName, page, team)
             }
             set(26, display(Material.LIME_DYE, Component.text("Select Kit", color))) {
-                selectFromMenu(player, kit, botName, page)
+                selectFromMenu(player, kit, botName, page, team)
             }
         })
     }

@@ -36,11 +36,8 @@ object GameSetupService : KoinComponent {
 
     private const val MINIGAME_ID = "super_smash_mobs"
 
-    /** Game sizes you can pick, counting yourself (2 = you vs 1 bot). */
+    /** Game sizes you can pick, counting yourself (2 = you vs 1 bot). One, the sandbox, is picked apart from these. */
     val PLAYER_COUNTS = listOf(2, 4, 8, 16)
-
-    /** The match modes, in the order the settings menu goes through them. */
-    enum class MatchMode { FFA, BOTS_VS_YOU, TEAM_UPS }
 
     data class Setup @JvmOverloads constructor(
         var difficulty: BotDifficulty? = BotDifficulty.NORMAL, // null = mixed
@@ -64,11 +61,55 @@ object GameSetupService : KoinComponent {
         var lives: Int = 4,
         /** A free-for-all in which the bots may team up on a player who gets on their nerves (see bots/TeamUps). */
         var teamUps: Boolean = false,
+        /** Two even teams (2v2, 4v4, 8v8): the player and [teammates] against the rest (see minigames/TeamSides). */
+        var teams: Boolean = false,
+        /** The bots picked for the player's own team; seats nobody was picked for are filled at random. */
+        var teammates: List<String> = emptyList(),
+        /** A new number of players (2, 4, 8 or 16) for every match; [players] holds the one rolled for the next. */
+        var playersRandom: Boolean = false,
     ) {
         /** How the fighters stand to each other. */
         var matchMode: MatchMode
-            get() = if (allBotsVsPlayer) MatchMode.BOTS_VS_YOU else if (teamUps) MatchMode.TEAM_UPS else MatchMode.FFA
-            set(value) { allBotsVsPlayer = value == MatchMode.BOTS_VS_YOU; teamUps = value == MatchMode.TEAM_UPS }
+            get() = if (teams) MatchMode.TEAMS else if (allBotsVsPlayer) MatchMode.BOTS_VS_YOU else if (teamUps) MatchMode.TEAM_UPS else MatchMode.FFA
+            set(value) { teams = value == MatchMode.TEAMS; allBotsVsPlayer = value == MatchMode.BOTS_VS_YOU; teamUps = value == MatchMode.TEAM_UPS }
+
+        /** Nobody to fight: the arena to oneself, to try out items and smashes. */
+        val sandbox: Boolean
+            get() = players <= 1
+
+        /** True when this gives a match of two teams, which takes four fighters or more. */
+        val teamGame: Boolean
+            get() = teams && players >= 4
+
+        /** What the match is called: FFA, Team-Ups, 3v1, 2v2, 1v1 or Sandbox. */
+        val modeLabel: String
+            get() = matchMode.label(players)
+
+        /** Seats for bots on the player's own team. */
+        val teammateSlots: Int
+            get() = if (teamGame) players / 2 - 1 else 0
+
+        /** How many of the bots are opponents. */
+        val opponentSlots: Int
+            get() = (bots - teammateSlots).coerceAtLeast(0)
+
+        /** The most teammates and opponents that can be picked: on Random the match may turn out its largest. */
+        val teammateLimit: Int
+            get() = if (playersRandom) PLAYER_COUNTS.max() / 2 - 1 else teammateSlots
+        val opponentLimit: Int
+            get() = if (!playersRandom) opponentSlots else if (teams) PLAYER_COUNTS.max() / 2 else PLAYER_COUNTS.max() - 1
+
+        /** The picked teammates there is a seat for in a match of this size. */
+        val effectiveTeammates: List<String>
+            get() = teammates.take(teammateSlots)
+
+        /** The picked opponents there is a seat for. Somebody picked for both is a teammate. */
+        val effectiveOpponents: List<String>
+            get() = selectedBotNames.filter { name -> effectiveTeammates.none { it.equals(name, true) } }.take(opponentSlots)
+
+        /** Every bot asked for by name, the player's own team first. */
+        val wantedBotNames: List<String>
+            get() = effectiveTeammates + effectiveOpponents
 
         var reverseMode: ReverseMode
             get() = if (reverseRandom) ReverseMode.RANDOM else if (reverseMap) ReverseMode.ON else ReverseMode.OFF
@@ -109,7 +150,7 @@ object GameSetupService : KoinComponent {
             setups[UUID.fromString(key)] =
                 Setup(
                     difficulty = parts[0].takeIf { it != "mixed" }?.let { BotDifficulty.parse(it) },
-                    players = PLAYER_COUNTS.minBy { kotlin.math.abs(it - savedPlayers) },
+                    players = if (savedPlayers <= 1) 1 else PLAYER_COUNTS.minBy { kotlin.math.abs(it - savedPlayers) },
                     items = parts[2].toBoolean(),
                     crystals = parts[3].toBoolean(),
                     itemIntervalSeconds = migrateInterval(parts.getOrNull(4)?.toIntOrNull()?.let { if(parts.size<10) it else when(it) { 9 -> 12; 90 -> 120; else -> it } },listOf(30,60,90,120),ITEM_INTERVALS,parts.size<10),
@@ -129,12 +170,15 @@ object GameSetupService : KoinComponent {
                     botKits = parts.getOrNull(17)?.split('|')?.mapNotNull {entry -> entry.split(':').takeIf {it.size==2}?.let {it[0].lowercase() to it[1]}}?.toMap() ?: emptyMap(),
                     lives = parts.getOrNull(18)?.toIntOrNull()?.coerceIn(1, 8) ?: 4,
                     teamUps = parts.getOrNull(19)?.toBoolean() ?: false,
+                    teams = parts.getOrNull(20)?.toBoolean() ?: false,
+                    teammates = parts.getOrNull(21)?.split('|')?.filter { it.isNotBlank() } ?: emptyList(),
+                    playersRandom = parts.getOrNull(22)?.toBoolean() ?: false,
                 )
         }
     }
 
     fun forgetBot(name:String) {
-        setups.values.forEach {s -> s.selectedBotNames=s.selectedBotNames.filterNot {it.equals(name,true)};s.botKits=s.botKits-name.lowercase()}
+        setups.values.forEach {s -> s.selectedBotNames=s.selectedBotNames.filterNot {it.equals(name,true)};s.teammates=s.teammates.filterNot {it.equals(name,true)};s.botKits=s.botKits-name.lowercase()}
         save()
     }
 
@@ -144,7 +188,7 @@ object GameSetupService : KoinComponent {
         setups.forEach { (uuid, s) ->
             props.setProperty(
                 uuid.toString(),
-                "${s.difficulty?.name?.lowercase() ?: "mixed"},${s.players},${s.items},${s.crystals},${s.itemIntervalSeconds},${s.crystalIntervalSeconds},${s.allBotsVsPlayer},${s.botsIdle},${s.selectedBotNames.joinToString("|")},${s.enabledCrystalTiers.sortedBy {it.ordinal}.joinToString("|") {it.name}},${s.reverseMap},${s.reverseRandom},${s.reflectMode.name},${s.mapScale.name},${s.enabledItems.sortedBy { it.ordinal }.joinToString("|") { it.id }},${dev.betrix.superSmashMobsBrawl.items.ArenaItem.CATALOG_VERSION},${s.botPersonality.name},${s.botKits.entries.joinToString("|") {"${it.key}:${it.value}"}},${s.lives},${s.teamUps}",
+                "${s.difficulty?.name?.lowercase() ?: "mixed"},${s.players},${s.items},${s.crystals},${s.itemIntervalSeconds},${s.crystalIntervalSeconds},${s.allBotsVsPlayer},${s.botsIdle},${s.selectedBotNames.joinToString("|")},${s.enabledCrystalTiers.sortedBy {it.ordinal}.joinToString("|") {it.name}},${s.reverseMap},${s.reverseRandom},${s.reflectMode.name},${s.mapScale.name},${s.enabledItems.sortedBy { it.ordinal }.joinToString("|") { it.id }},${dev.betrix.superSmashMobsBrawl.items.ArenaItem.CATALOG_VERSION},${s.botPersonality.name},${s.botKits.entries.joinToString("|") {"${it.key}:${it.value}"}},${s.lives},${s.teamUps},${s.teams},${s.teammates.joinToString("|")},${s.playersRandom}",
             )
         }
         file.parentFile.mkdirs()
@@ -165,16 +209,24 @@ object GameSetupService : KoinComponent {
         if(legacy && saved in old)return current[old.indexOf(saved)]
         return saved?.takeIf {it in current} ?: current[1]
     }
-    fun changePlayerCount(s:Setup,increase:Boolean) {
-        val index=PLAYER_COUNTS.indexOf(s.players).coerceAtLeast(0)
-        s.players=PLAYER_COUNTS[(index+if(increase)1 else -1).coerceIn(0,PLAYER_COUNTS.lastIndex)]
-        s.selectedBotNames=s.selectedBotNames.take(s.bots)
+    /** A number of players picked by hand (1 is the sandbox). Opponents picked for a bigger match do not all fit a smaller one. */
+    private fun choosePlayers(player: Player, s: Setup, count: Int) {
+        s.playersRandom = false
+        s.players = count
+        s.selectedBotNames = s.selectedBotNames.take(s.bots)
+        changed(player)
     }
+
+    /** Rolls the number of players of a setup on Random: one of the sizes the chosen map and the server have room for. */
+    internal fun rollPlayers(player: Player, s: Setup) {
+        val fitting = PLAYER_COUNTS.filter { MapVoteService.hasRoomFor(player, it) && minigameService.capacityRejection(it) == null }
+        s.players = fitting.ifEmpty { listOf(PLAYER_COUNTS.first()) }.random()
+    }
+
     private val CHOICE_COLUMNS = listOf(2, 3, 4, 5, 7)
     private val CHOICE_COLORS = listOf(NamedTextColor.GREEN, NamedTextColor.YELLOW, NamedTextColor.GOLD, NamedTextColor.RED, NamedTextColor.LIGHT_PURPLE)
-    /** Columns 1 to 7 of the frame rows. */
-    private val COLUMN_PANES = listOf(Material.RED_STAINED_GLASS_PANE, Material.LIME_STAINED_GLASS_PANE, Material.YELLOW_STAINED_GLASS_PANE,
-        Material.ORANGE_STAINED_GLASS_PANE, Material.RED_STAINED_GLASS_PANE, Material.WHITE_STAINED_GLASS_PANE, Material.MAGENTA_STAINED_GLASS_PANE)
+    /** The top row: a block of wool for each number of players, in the colour of its column. */
+    private val WOOLS = listOf(Material.LIME_WOOL, Material.YELLOW_WOOL, Material.ORANGE_WOOL, Material.RED_WOOL, Material.MAGENTA_WOOL)
     private val PERSONALITY_COLORS = listOf(NamedTextColor.GRAY, NamedTextColor.GREEN, NamedTextColor.GOLD, NamedTextColor.RED, NamedTextColor.LIGHT_PURPLE)
     private val DYES = listOf(Material.LIME_DYE, Material.YELLOW_DYE, Material.ORANGE_DYE, Material.RED_DYE, Material.MAGENTA_DYE)
     private val CANDLES = listOf(Material.LIME_CANDLE, Material.YELLOW_CANDLE, Material.ORANGE_CANDLE, Material.RED_CANDLE, Material.MAGENTA_CANDLE)
@@ -206,21 +258,34 @@ object GameSetupService : KoinComponent {
                         10,11,12,13,14,16 -> "Difficulty"
                         19,20,21,22,23,25 -> "Items"
                         28,29,30,31,32,34 -> "Crystals"
-                        47 -> "Mode"
-                        49 -> "Players"
+                        37,38,39,40 -> "Mode"
+                        1,2,3,4,5,7 -> "Players"
                         else -> null
                     }
                     if(group!=null)chosen.add(group)
                 }
             }
             for (slot in 0 until 54) set(slot, menuItem(Material.GRAY_STAINED_GLASS_PANE, ""))
-            // A coloured frame above and below the choices, each pane matching its column.
-            COLUMN_PANES.forEachIndexed { i, pane -> set(1 + i, menuItem(pane, "")); set(37 + i, menuItem(pane, "")) }
-            for (row in 1..3) set(row * 9 + 6, menuItem(Material.WHITE_STAINED_GLASS_PANE, ""))
+            // One white column, top to bottom, between the four fixed choices of a row and its Random.
+            for (row in 0..5) set(row * 9 + 6, menuItem(Material.WHITE_STAINED_GLASS_PANE, ""))
+
+            // Top row: how many fighters, yourself included. The size of each stack says the same.
+            set(1, menuItem(Material.BARRIER, "No Players", NamedTextColor.RED, listOf("Sandbox: the arena to yourself,", "to try out items and smashes"),
+                "Players" in chosen && !s.playersRandom && s.sandbox)) { choosePlayers(player, s, 1) }
+            PLAYER_COUNTS.forEachIndexed { i, count ->
+                set(CHOICE_COLUMNS[i], menuItem(WOOLS[i], "$count Players", CHOICE_COLORS[i], listOf("You vs ${count - 1} bot${if (count == 2) "" else "s"}"),
+                    "Players" in chosen && !s.playersRandom && s.players == count).apply { amount = count }) { choosePlayers(player, s, count) }
+            }
+            set(CHOICE_COLUMNS[4], menuItem(WOOLS[4], "Random", CHOICE_COLORS[4], listOf("2, 4, 8 or 16 players,", "rolled again for every match"),
+                "Players" in chosen && s.playersRandom)) {
+                s.playersRandom = true
+                rollPlayers(player, s)
+                changed(player)
+            }
 
             set(8, menuItem(Material.HOPPER, "Select Lives", lore = listOf("Current: ${s.lives} ${if (s.lives == 1) "life" else "lives"}", "How many lives every fighter starts with"))) { SetupSelectionMenus.lives(player) }
             set(10,menuItem(Material.BARRIER,"None",NamedTextColor.RED,listOf("Bots stand still and do not attack"),"Difficulty" in chosen && s.botsIdle)) {s.botsIdle=true;changed(player)}
-            set(17,menuItem(Material.CHEST,"Choose Opponents",lore=listOf("Choose players from the bot roster",if(s.selectedBotNames.isEmpty())"Random opponents" else "${s.selectedBotNames.size}/${s.bots} chosen — random fills the rest"))) {SetupSelectionMenus.opponents(player)}
+            set(17,menuItem(Material.CHEST,"Choose Opponents",lore=listOf("Choose players from the bot roster",if(s.effectiveOpponents.isEmpty())"Random opponents" else "${s.effectiveOpponents.size}/${s.opponentSlots} chosen — random fills the rest"))) {SetupSelectionMenus.opponents(player)}
             DIFFICULTIES.forEachIndexed { i, difficulty ->
                 val name = difficulty?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: "Random"
                 set(9 + CHOICE_COLUMNS[i], menuItem(DYES[i], name, CHOICE_COLORS[i],
@@ -282,50 +347,64 @@ object GameSetupService : KoinComponent {
                 "Health regen, armor, attack damage", "and cooldowns of your selected kit", "Current: ${KitStatsService.verdict(player.uniqueId, kit).label}"))) {
                 KitStatsService.openMenu(player)
             }
-            // Only there when there is something to put back.
+            // Always in its place: dark while there is nothing to put back, lit once there is.
             if (KitStatsService.changed(player.uniqueId, kit)) set(43, menuItem(Material.COPPER_CHEST, "Reset to Normal Kit Stats", NamedTextColor.GOLD,
                 listOf("Puts your selected kit back to normal"))) {
                 KitStatsService.reset(player.uniqueId, kit)
                 player.playSound(player.location, Sound.UI_BUTTON_CLICK, 0.6f, 1.2f)
                 openMenu(player)
-            }
-            // One opponent is a duel whichever mode is saved, so it is never called a free-for-all.
-            val duel = s.bots == 1
+            } else set(43, MenuIcons.dark(menuItem(Material.COPPER_CHEST, "Reset to Normal Kit Stats", NamedTextColor.DARK_GRAY,
+                listOf("Your kit's stats are normal")))) { unavailable(player) }
+
+            // Fifth row: the mode, one tool each. With fewer than three fighters there is only one way to stand.
             val mode = s.matchMode
-            set(47, menuItem(Material.COPPER_SWORD, if (duel) "1v1 — You vs 1 Bot" else when (mode) {
-                    MatchMode.BOTS_VS_YOU -> "${s.bots}v1 — All Bots vs You"
-                    MatchMode.TEAM_UPS -> "Team-Ups"
-                    MatchMode.FFA -> "FFA — Free for All"
-                }, NamedTextColor.AQUA,
-                (if (duel) listOf("With one opponent the match is always 1v1") else when (mode) {
-                    MatchMode.FFA -> listOf("Everybody for themselves")
-                    MatchMode.BOTS_VS_YOU -> listOf("Every bot is on one team against you")
-                    MatchMode.TEAM_UPS -> listOf("FFA, but the bots can team on you", "if you camp or get annoying")
-                } + listOf("Left-click for the next mode", "Right-click to go back")) +
-                    "Every fighter has ${s.lives} ${if (s.lives == 1) "life" else "lives"}", selected="Mode" in chosen)) {
-                // Through the modes like through the player counts: left-click on, right-click back.
-                if (!duel && (click.isLeftClick || click.isRightClick)) {
-                    val modes = MatchMode.entries
-                    s.matchMode = modes[(mode.ordinal + if (click.isLeftClick) 1 else modes.size - 1) % modes.size]
+            val counted = !s.playersRandom && s.players >= 2
+            val few = when {
+                s.playersRandom -> null
+                s.sandbox -> "The sandbox has nobody to fight"
+                s.players == 2 -> "With 2 players it is always a 1v1"
+                else -> null
+            }
+            fun modeButton(slot: Int, material: Material, value: MatchMode, name: String, lore: List<String>) =
+                set(slot, menuItem(material, name, NamedTextColor.AQUA, lore + listOfNotNull(few), "Mode" in chosen && mode == value)) {
+                    s.matchMode = value
                     changed(player)
                 }
+            modeButton(37, Material.COPPER_AXE, MatchMode.FFA, "FFA", listOf("Everybody for themselves"))
+            modeButton(38, Material.IRON_AXE, MatchMode.TEAM_UPS, "Team-Ups", listOf("FFA, but the bots can team on you", "if you camp or get annoying"))
+            modeButton(39, Material.COPPER_SWORD, MatchMode.BOTS_VS_YOU, if (counted) "${s.bots}v1" else "All vs 1",
+                listOf("Every bot is on one team against you"))
+            modeButton(40, Material.IRON_SWORD, MatchMode.TEAMS, if (s.playersRandom) "Teams" else "${maxOf(s.players, 4) / 2}v${maxOf(s.players, 4) / 2}",
+                listOf("Two even teams, yours is blue", "Pick your team with the head"))
+            // Lit while the two teams mode is chosen, the same way as the chest: who is on your team, and their kits.
+            if (s.teams && (s.playersRandom || s.players >= 4)) set(41, menuItem(Material.PLAYER_HEAD, "Your Team", NamedTextColor.BLUE,
+                listOf("Choose your teammates", "and the kits they play",
+                    if (s.effectiveTeammates.isEmpty()) "Random teammates" else "${s.effectiveTeammates.size}/${s.teammateSlots} chosen — random fills the rest"))) {
+                SetupSelectionMenus.team(player)
+            } else set(41, MenuIcons.dark(menuItem(Material.PLAYER_HEAD, "Your Team", NamedTextColor.DARK_GRAY,
+                listOf(if (s.teams) "Takes 4 or more players" else "Only for 2v2, 4v4 and 8v8")))) { unavailable(player) }
+
+            val versus = when {
+                s.playersRandom -> "A random number of ${s.difficultyName} bots"
+                s.sandbox -> "Sandbox: nobody to fight"
+                s.teamGame -> "${s.modeLabel} with ${s.difficultyName} bots"
+                else -> "You vs ${s.bots} ${s.difficultyName} bot${if (s.bots == 1) "" else "s"}"
             }
-            set(45, menuItem(Material.EMERALD_BLOCK, "Play", NamedTextColor.GREEN, listOf(
-                "You vs ${s.bots} ${s.difficultyName} bots", "Start with your selected kit and map"))) {
+            set(45, menuItem(Material.EMERALD_BLOCK, "Play", NamedTextColor.GREEN, listOf(versus, "Start with your selected kit and map"))) {
                 player.closeInventory()
                 startGame(player)
             }
+            set(47, menuItem(Material.FILLED_MAP,"Choose Map",lore=listOf("Choose the arena for your next match"))) {MapVoteService.openVoteGui(player)}
+            set(49, menuItem(Material.REDSTONE_BLOCK, "Close", NamedTextColor.RED)) { player.closeInventory() }
             set(53, menuItem(Material.CREEPER_HEAD, "Choose Kit", lore = listOf("Choose your mob"))) {
                 KitService.openKitSelectionGui(player)
             }
-            set(49, menuItem(Material.ARMOR_STAND, "Players: ${s.players}", lore = listOf(
-                "You vs ${s.bots} bot${if (s.bots == 1) "" else "s"}", "Left-click to increase", "Right-click to decrease"),selected="Players" in chosen)) {
-                if(click.isLeftClick || click.isRightClick) {changePlayerCount(s,click.isLeftClick);changed(player)}
-            }
-            set(51, menuItem(Material.FILLED_MAP,"Choose Map",lore=listOf("Choose the arena for your next match"))) {MapVoteService.openVoteGui(player)}
         }
         player.openInventory(gui)
     }
+
+    /** A button that is there but dark: nothing to do with it yet. */
+    private fun unavailable(player: Player) = player.playSound(player.location, Sound.BLOCK_NOTE_BLOCK_BASS, 0.4f, 0.7f)
 
     private fun changed(player: Player) {
         save()
@@ -377,6 +456,8 @@ object GameSetupService : KoinComponent {
             // World setup registers the participants synchronously before its first suspension.
             // No simulated login wait: the selected opponents already exist at this point.
             QueuePopEvent(def.id, listOf(player) + bots, s.copy(), player.uniqueId, lobbyId).callEvent()
+            // On Random the match after this one gets a size of its own.
+            setupOf(player).takeIf { it.playersRandom }?.let { rollPlayers(player, it); save() }
         } catch (error: Exception) {
             bots.filter { !minigameService.isPlayerInMinigame(it) }.forEach(BotManager::despawn)
             throw error

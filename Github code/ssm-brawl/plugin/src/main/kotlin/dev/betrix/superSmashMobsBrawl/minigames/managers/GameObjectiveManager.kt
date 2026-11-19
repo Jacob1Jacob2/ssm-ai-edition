@@ -115,11 +115,16 @@ class TeamBasedStocksObjectiveManager(private val minigame: BrawlMinigame) :
     }
 
     override fun recordDeath(player: OfflinePlayer) {
+        // The sandbox has no lives to lose and nobody to win it.
+        if (minigame.sandbox) return
         val team = minigame.teamManager.findTeamOf(player) ?: return
         val currentStocks = team.metadata["stocks"] as? Int ?: return
 
         if (currentStocks > 0) {
             team.metadata["stocks"] = currentStocks - 1
+            if (dev.betrix.superSmashMobsBrawl.bots.BotManager.debug) minigame.sideOf(player)?.let { side ->
+                org.bukkit.Bukkit.getLogger().info("[sides] ${dev.betrix.superSmashMobsBrawl.bots.BotManager.displayNameOf(player)} (${side.label}) lost a life, ${currentStocks - 1} left")
+            }
             if(currentStocks==1)team.players.forEach {if(it !in minigame.eliminationOrder)minigame.eliminationOrder+=it}
 
             // Check win conditions after reducing stocks
@@ -139,6 +144,15 @@ class TeamBasedStocksObjectiveManager(private val minigame: BrawlMinigame) :
                 val stocks = team.metadata["stocks"] as? Int ?: 0
                 stocks > 0 && team.players.any { it.isOnline && !minigame.connectionManager.isDisconnected(it) }
             }
+        if (minigame.sandbox) return WinResult.None
+        // Two teams: it is over when one side has nobody left, and that whole side has won,
+        // the ones who went out on the way included.
+        if (minigame.sides.isNotEmpty()) {
+            val standing = teamsWithStocks.flatMap { it.players }.mapNotNull { minigame.sideOf(it) }.toSet()
+            val side = standing.singleOrNull() ?: return WinResult.None
+            return WinResult.WinningTeam(dev.betrix.superSmashMobsBrawl.minigames.MinigameTeam(
+                minigame.allPlayers().filter { minigame.sideOf(it) == side }, name = side.label))
+        }
         if (minigame.settings.allBotsVsPlayer && minigame.host != null && teamsWithStocks.isNotEmpty()) {
             val hostAlive = teamsWithStocks.any { team -> team.players.any { it.uniqueId == minigame.host } }
             val botsAlive = teamsWithStocks.any { team -> team.players.any { it.uniqueId != minigame.host } }

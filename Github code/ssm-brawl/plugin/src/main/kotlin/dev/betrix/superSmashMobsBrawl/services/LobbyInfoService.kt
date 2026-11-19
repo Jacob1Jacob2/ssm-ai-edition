@@ -49,8 +49,7 @@ object LobbyInfoService {
 
     fun stateFor(player: Player): List<String> {
         val s = GameSetupService.setupOf(player)
-        val opponents = if (s.selectedBotNames.isEmpty()) s.bots else s.selectedBotNames.size
-        val mode = if (s.allBotsVsPlayer || opponents == 1) "${opponents}v1" else if (s.teamUps) "Team-Ups" else "FFA"
+        val mode = modeWord(s)
         val items = if (!s.items || s.enabledItems.isEmpty()) "Off"
             else if (s.itemIntervalSeconds < 0) "Random 3-120 sec"
             else "Every ${s.itemIntervalSeconds} sec"
@@ -58,9 +57,20 @@ object LobbyInfoService {
             else if (s.crystalIntervalSeconds < 0) "Random 1-15 min"
             else "Every ${s.crystalIntervalSeconds / 60} min"
         return listOf(MapVoteService.selectedMapName(player),
-            "Difficulty: ${s.difficultyName} - $mode - ${opponents + 1} Players - ${livesLabel(s.lives)}",
+            // The sandbox has no bots to be difficult, no opponents to count and no lives to lose.
+            // (Worded without an "on" or an "off" in it: those are coloured wherever they stand on the wall.)
+            if (s.sandbox && !s.playersRandom) "$mode - Just You"
+            else "Difficulty: ${s.difficultyName} - $mode - ${if (s.playersRandom) "Random" else "${s.players}"} Players - ${livesLabel(s.lives)}",
             "Items: $items - Smash Crystals: $crystals",
             "Reverse: ${s.reverseMode.label} - Reflect: ${s.reflectMode.label} - ${s.mapScale.label}")
+    }
+
+    /** The mode as the wall words it. On Random players the sizes of the sides are not known yet. */
+    private fun modeWord(s: GameSetupService.Setup): String = when {
+        !s.playersRandom -> s.modeLabel
+        s.matchMode == MatchMode.TEAMS -> "Teams"
+        s.matchMode == MatchMode.BOTS_VS_YOU -> "All v 1"
+        else -> s.matchMode.label(4)
     }
 
     private fun livesLabel(lives: Int) = "$lives ${if (lives == 1) "Life" else "Lives"}"
@@ -133,8 +143,20 @@ object LobbyInfoService {
                     "harder" -> Material.ORANGE_CONCRETE; "expert" -> Material.RED_CONCRETE
                     "random" -> Material.MAGENTA_CONCRETE; else -> Material.LIGHT_GRAY_CONCRETE
                 })
-                val count = if (s.selectedBotNames.isEmpty()) s.bots else s.selectedBotNames.size
-                if (s.allBotsVsPlayer || count == 1) { mark("${count}v1", Material.RED_CONCRETE); letters[line.indexOf("${count}v1") + "${count}v".length] = Material.LIME_CONCRETE }
+                // "3v1" has the bots red and you green, "2v2" your side blue and theirs red: as on the scoreboard.
+                val word = modeWord(s)
+                val at = line.indexOf(" $word ") + 1
+                val v = word.indexOf('v')
+                if (at > 0 && v > 0 && word.first().isDigit()) {
+                    val teams = s.teamGame
+                    for (i in word.indices) letters[at + i] = when {
+                        i < v -> if (teams) Material.BLUE_CONCRETE else Material.RED_CONCRETE
+                        i == v -> if (teams) Material.QUARTZ_BLOCK else Material.RED_CONCRETE
+                        else -> if (teams) Material.RED_CONCRETE else Material.LIME_CONCRETE
+                    }
+                }
+                mark("Sandbox", Material.LIGHT_BLUE_CONCRETE)
+                mark("Teams", Material.BLUE_CONCRETE)
                 // Last on the line, so nothing before it can be mistaken for it.
                 val label = livesLabel(s.lives)
                 val from = line.lastIndexOf(label)

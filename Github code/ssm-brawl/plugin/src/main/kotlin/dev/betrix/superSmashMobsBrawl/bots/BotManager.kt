@@ -328,7 +328,9 @@ object BotManager : KoinComponent {
             plugin,
             Runnable {
                 val players = spawned.filter { it.isOnline && !minigameService.isPlayerInMinigame(it) }
-                if (players.size >= 2) dev.betrix.superSmashMobsBrawl.events.QueuePopEvent(def.id, players, setup, lobbyId = lobbyId).callEvent()
+                // (One alone is a match too when that is what was asked for: the sandbox.)
+                if (players.size >= 2 || players.size == 1 && setup?.sandbox == true)
+                    dev.betrix.superSmashMobsBrawl.events.QueuePopEvent(def.id, players, setup, lobbyId = lobbyId).callEvent()
             },
             20L,
         )

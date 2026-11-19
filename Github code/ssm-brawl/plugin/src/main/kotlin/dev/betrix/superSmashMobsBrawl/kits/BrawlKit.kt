@@ -146,6 +146,8 @@ open class BrawlKit(val id: String, val player: Player) : KoinComponent {
         if (minigameInstance == null || minigameInstance.getState() == dev.betrix.superSmashMobsBrawl.minigames.MinigameState.IN_PROGRESS) startPassives()
         dev.betrix.superSmashMobsBrawl.services.MatchCompass.equip(player, kitData)
         if (id == "skeleton" || id == "zombie") player.inventory.setItem(3, ItemStack.of(Material.ARROW, 3))
+        // After everything of the kit's own: the sandbox's tools take the slots that are left.
+        dev.betrix.superSmashMobsBrawl.services.SandboxTools.equip(player)
 
         player.gameMode = GameMode.SURVIVAL
         player.heal()
@@ -193,6 +195,7 @@ open class BrawlKit(val id: String, val player: Player) : KoinComponent {
         dev.betrix.superSmashMobsBrawl.items.DiamondHelmet.clear(player)
         dev.betrix.superSmashMobsBrawl.services.KitStatsService.showArmor(player, null)
         dev.betrix.superSmashMobsBrawl.services.MatchCompass.remove(player)
+        dev.betrix.superSmashMobsBrawl.services.SandboxTools.remove(player)
         dev.betrix.superSmashMobsBrawl.smash.SmashService.clear(player)
         invincible = false
         player.fireTicks = 0

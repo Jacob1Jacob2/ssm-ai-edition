@@ -15,7 +15,8 @@ object MatchEnding {
     data class Presentation(val lines:List<Component>,val title:Title, val game:BrawlMinigame, val winners:Set<java.util.UUID>) {
         fun show(player:Player) {
             lines.forEach(player::sendMessage)
-            player.showTitle(if(player.uniqueId in winners) title else deathTitle())
+            // In a match of two teams everybody is told which side won; otherwise the losers are told they died.
+            player.showTitle(if(player.uniqueId in winners || game.sides.isNotEmpty()) title else deathTitle())
             dev.betrix.superSmashMobsBrawl.services.ScoreboardService.showEnding(game, player)
         }
     }
@@ -33,12 +34,16 @@ object MatchEnding {
         if(winners.isEmpty())return null
         val map=game.worldManager.getWorld()?.data
         val separator=Component.text("═".repeat(30),GREEN)
-        val winnerName=winners.joinToString(", ") {dev.betrix.superSmashMobsBrawl.bots.BotManager.displayNameOf(it)}
+        val names=winners.joinToString(", ") {dev.betrix.superSmashMobsBrawl.bots.BotManager.displayNameOf(it)}
+        // Two teams: a side has won, not a list of names (eight of them would not fit a title).
+        val side=winners.firstOrNull()?.let(game::sideOf)
+        val winnerName=side?.label ?: names
         val lines=buildList {
             add(separator);add(Component.text("Game - ",GREEN).append(Component.text("Super Smash Mobs",YELLOW,BOLD)))
             add(Component.empty())
-            add(Component.text("1st Place ",RED,BOLD).append(Component.text(winnerName,WHITE).decoration(BOLD,false)))
-            if(!game.settings.allBotsVsPlayer)game.eliminationOrder.asReversed()
+            add(Component.text("1st Place ",RED,BOLD).append(Component.text(winnerName,side?.color ?: WHITE).decoration(BOLD,false)))
+            if(side!=null)add(Component.text("  $names",side.color))
+            if(!game.settings.allBotsVsPlayer && side==null)game.eliminationOrder.asReversed()
                 .filter {it !in winners}.distinctBy {it.uniqueId}.take(2).forEachIndexed {i,player ->
                     add(Component.text(if(i==0)"2nd Place " else "3rd Place ",if(i==0)GOLD else YELLOW,BOLD)
                         .append(Component.text(dev.betrix.superSmashMobsBrawl.bots.BotManager.displayNameOf(player),WHITE).decoration(BOLD,false)))
@@ -53,7 +58,7 @@ object MatchEnding {
             add(action("CHOOSE A DIFFERENT MAP", YELLOW, "/playagain map"))
             add(action("RETURN TO LOBBY", WHITE, "/hub"))
         }
-        return Presentation(lines,Title.title(Component.text(winnerName,YELLOW),Component.text("won the game",YELLOW),
+        return Presentation(lines,Title.title(Component.text(winnerName,side?.color ?: YELLOW),Component.text("won the game",YELLOW),
             Title.Times.times(Duration.ofMillis(300),Duration.ofMillis(1500),Duration.ofMillis(700))), game, winners.map { it.uniqueId }.toSet())
     }
 }

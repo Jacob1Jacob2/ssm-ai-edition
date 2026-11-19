@@ -323,6 +323,22 @@ class BrawlMinigame(val minigameDef: MinigameDef, val teams: List<MinigameTeam>,
 
     fun allPlayers(): List<OfflinePlayer> = teams.flatMap { it.players }
 
+    /**
+     * Two teams mode (2v2, 4v4, 8v8): which side each fighter is on. Empty in every other mode.
+     * Every fighter keeps a team and lives of their own; the side is who they fight with.
+     */
+    val sides: Map<UUID, TeamSide> =
+        if (settings.teams && allPlayers().size >= 4) TeamSides.assign(host,
+            allPlayers().map { TeamSides.Fighter(it.uniqueId, dev.betrix.superSmashMobsBrawl.bots.BotManager.displayNameOf(it)) },
+            settings.teammates, settings.selectedBotNames)
+        else emptyMap()
+
+    fun sideOf(player: OfflinePlayer): TeamSide? = sides[player.uniqueId]
+
+    /** One fighter and nobody to fight: nothing is won or lost, and it lasts until the player leaves. */
+    val sandbox: Boolean
+        get() = minigameDef.id == "super_smash_mobs" && allPlayers().size <= 1
+
     fun getState(): MinigameState = state
 
     fun getKitSwitchingMode(): KitSwitchingMode = minigameDef.kitSwitchingMode
@@ -351,6 +367,16 @@ class BrawlMinigame(val minigameDef: MinigameDef, val teams: List<MinigameTeam>,
 
         // Setup kit switching event handling
         setupKitSwitchingEvents()
+
+        // Debug: who takes whose life in a match of two teams (never one of their own side).
+        if (sides.isNotEmpty()) listeners.add(event<dev.betrix.superSmashMobsBrawl.events.BrawlKillEvent> {
+            val killerSide = sideOf(killer) ?: return@event
+            val victimSide = sideOf(victim) ?: return@event
+            if (dev.betrix.superSmashMobsBrawl.bots.BotManager.debug) org.bukkit.Bukkit.getLogger().info("[sides] " +
+                "${dev.betrix.superSmashMobsBrawl.bots.BotManager.displayNameOf(killer)} (${killerSide.label}) killed " +
+                "${dev.betrix.superSmashMobsBrawl.bots.BotManager.displayNameOf(victim)} (${victimSide.label})" +
+                if (killerSide == victimSide && killer != victim) " -- OWN SIDE" else "")
+        })
 
         // Fire join analytics events
         allPlayers().forEach { player ->
@@ -404,6 +430,9 @@ class BrawlMinigame(val minigameDef: MinigameDef, val teams: List<MinigameTeam>,
         if (state != MinigameState.STARTING) return
         val begin = {
             state = MinigameState.IN_PROGRESS
+            if (dev.betrix.superSmashMobsBrawl.bots.BotManager.debug && sides.isNotEmpty()) org.bukkit.Bukkit.getLogger().info("[sides] " +
+                TeamSide.entries.joinToString("; ") { side -> "${side.label}: " + allPlayers().filter { sideOf(it) == side }
+                    .joinToString { dev.betrix.superSmashMobsBrawl.bots.BotManager.displayNameOf(it) } })
             dev.betrix.superSmashMobsBrawl.services.BotConversationService.started(this)
             gameStartTime = kotlin.time.TimeSource.Monotonic.markNow()
             allPlayers().filter { !connectionManager.isDisconnected(it) }.mapNotNull { it.player }.forEach {
@@ -415,6 +444,9 @@ class BrawlMinigame(val minigameDef: MinigameDef, val teams: List<MinigameTeam>,
 
     fun endMinigame(reason: String, winners: List<OfflinePlayer> = emptyList()) {
         if (state == MinigameState.ENDED || state == MinigameState.ENDING) return
+        if (dev.betrix.superSmashMobsBrawl.bots.BotManager.debug && (sides.isNotEmpty() || sandbox)) org.bukkit.Bukkit.getLogger().info(
+            "[${if (sandbox) "sandbox" else "sides"}] match over ($reason)" + (winners.firstOrNull()?.let(::sideOf)?.let { ": ${it.label} won" } ?: "") +
+                (if (winners.isEmpty()) "" else " (${winners.joinToString { dev.betrix.superSmashMobsBrawl.bots.BotManager.displayNameOf(it) }})"))
 
         if (state == MinigameState.IN_PROGRESS && reason in setOf("winner_determined", "team_victory")) {
             dev.betrix.superSmashMobsBrawl.services.LobbyLeaderboardService.recordVictory(resultId,
@@ -479,6 +511,10 @@ class BrawlMinigame(val minigameDef: MinigameDef, val teams: List<MinigameTeam>,
     }
 
     fun arePlayersOnSameTeam(playerA: OfflinePlayer, playerB: OfflinePlayer): Boolean {
+        // Two teams: the side decides, whatever else is set.
+        val sideA = sides[playerA.uniqueId]
+        val sideB = sides[playerB.uniqueId]
+        if (sideA != null && sideB != null) return sideA == sideB
         // Team-Ups: bots that have teamed up on somebody do not fight each other until that is over.
         if (settings.teamUps && dev.betrix.superSmashMobsBrawl.services.BotConversationService.allied(this, playerA.uniqueId, playerB.uniqueId)) return true
         if (settings.allBotsVsPlayer && host != null && playerA.uniqueId != host && playerB.uniqueId != host &&

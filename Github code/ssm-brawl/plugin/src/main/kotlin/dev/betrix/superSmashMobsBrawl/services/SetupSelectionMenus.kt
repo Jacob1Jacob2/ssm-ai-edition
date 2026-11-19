@@ -80,21 +80,38 @@ object SetupSelectionMenus {
         })
     }
 
-    fun opponents(player:Player,page:Int=0) {
+    /** Who to fight: bots picked from the roster by name. */
+    fun opponents(player:Player,page:Int=0)=roster(player,page,false)
+
+    /** Two teams mode (2v2, 4v4, 8v8): who is on the player's own team, and the kits they play. */
+    fun team(player:Player,page:Int=0)=roster(player,page,true)
+
+    /** The roster as heads, to pick opponents from or (with [team]) teammates. A bot is one or the other. */
+    private fun roster(player:Player,page:Int,team:Boolean) {
         val s=GameSetupService.setupOf(player)
         // Null marks Add Player, separating the built-in roster from custom opponents.
-        val roster:List<BotManager.BotProfile?> = BotManager.rosterProfiles().sortedBy {it.name.lowercase()} + CustomBotService.profiles()
-        val pages=((roster.size+44)/45).coerceAtLeast(1)
+        val listed:List<BotManager.BotProfile?> = BotManager.rosterProfiles().sortedBy {it.name.lowercase()} + CustomBotService.profiles()
+        val pages=((listed.size+44)/45).coerceAtLeast(1)
         val current=page.coerceIn(0,pages-1)
+        fun List<String>.has(name:String)=any {it.equals(name,true)}
+        fun List<String>.without(name:String)=filterNot {it.equals(name,true)}
+        // What counts of each list: as many as a match can seat (on Random players, its largest).
+        val teamPicks=if(s.teams)s.teammates.take(s.teammateLimit) else emptyList()
+        val foePicks=s.selectedBotNames.filter {!teamPicks.has(it)}.take(s.opponentLimit)
+        val picks=if(team)teamPicks else foePicks
+        val limit=if(team)s.teammateLimit else s.opponentLimit
+        fun reopen()=roster(player,current,team)
         // The count first: "1/3" alone read as one of three chosen, not as the page.
-        player.openInventory(brawlGui(Component.text("Opponents ${s.selectedBotNames.size}/${s.bots} — Page ${current+1}/$pages"),54) {
+        player.openInventory(brawlGui(Component.text("${if(team)"Your Team" else "Opponents"} ${picks.size}/$limit — Page ${current+1}/$pages"),54) {
             onClick {isCancelled=true}
-            roster.drop(current*45).take(45).forEachIndexed {slot,profile ->
+            listed.drop(current*45).take(45).forEachIndexed {slot,profile ->
                 if(profile==null) {
                     set(slot,item(Material.LIME_DYE,"Add Player",listOf("Add a Minecraft username","Choose their bot difficulty"))) {CustomBotService.prompt(player,current)}
                     return@forEachIndexed
                 }
-                val selected=profile.name in s.selectedBotNames
+                val selected=picks.has(profile.name)
+                // On the other list: this click moves the bot over.
+                val other=(if(team)foePicks else teamPicks).has(profile.name)
                 val head=item(Material.PLAYER_HEAD,profile.name,selected=selected).apply {
                     editMeta {
                         it.displayName(dev.betrix.superSmashMobsBrawl.bots.BotIdentity.rosterName(profile).let { name -> if(CustomBotService.isCustom(profile.name)) name.append(Component.text(" (Custom)",GRAY)) else name })
@@ -103,8 +120,14 @@ object SetupSelectionMenus {
                                 .decoration(TextDecoration.ITALIC,false),
                             Component.text("Kit: ${CustomBotService.kitName(s.botKits[profile.name.lowercase()])} — right-click to change",GRAY).decoration(TextDecoration.ITALIC,false),
                             Component.text(if(CustomBotService.isCustom(profile.name))"Custom opponent — manual selection only" else "Built-in opponent",GRAY).decoration(TextDecoration.ITALIC,false),
-                            Component.text(if(selected)"Selected — click to remove" else "Click to choose this opponent",GRAY)
-                                .decoration(TextDecoration.ITALIC,false)))
+                            Component.text(when {
+                                team && selected -> "On your team — click to remove"
+                                team && other -> "Picked as an opponent — click to move to your team"
+                                team -> "Click to put on your team"
+                                selected -> "Selected — click to remove"
+                                other -> "On your team — click to make an opponent"
+                                else -> "Click to choose this opponent"
+                            },GRAY).decoration(TextDecoration.ITALIC,false)))
                         // Every head here is drawn by the pack, lit the same way whether chosen or not.
                         it.itemModel=org.bukkit.NamespacedKey("ssm",if(selected)"opponent_selected" else "opponent")
                     }
@@ -115,12 +138,19 @@ object SetupSelectionMenus {
                     }
                 }
                 set(slot,head) {
-                    if(isRightClick) {CustomBotService.kits(player,profile.name,current);return@set}
-                    if(selected)s.selectedBotNames=s.selectedBotNames-profile.name
-                    else if(s.selectedBotNames.size<s.bots)s.selectedBotNames=s.selectedBotNames+profile.name
-                    else {player.sendMessage(Component.text("Increase the player count to choose more opponents.",YELLOW));return@set}
+                    if(isRightClick) {KitService.openBotKitSelectionGui(player,profile.name,current,team);return@set}
+                    if(selected) {
+                        if(team)s.teammates=s.teammates.without(profile.name) else s.selectedBotNames=s.selectedBotNames.without(profile.name)
+                    } else if(picks.size<limit) {
+                        // Onto this list and off the other one: nobody is on both sides.
+                        if(team) {s.teammates=s.teammates.without(profile.name)+profile.name;s.selectedBotNames=s.selectedBotNames.without(profile.name)}
+                        else {s.selectedBotNames=s.selectedBotNames.without(profile.name)+profile.name;s.teammates=s.teammates.without(profile.name)}
+                    } else {
+                        player.sendMessage(Component.text(if(team)"Your team is full. Take somebody off it first." else "Increase the player count to choose more opponents.",YELLOW))
+                        return@set
+                    }
                     player.playSound(player.location,org.bukkit.Sound.BLOCK_NOTE_BLOCK_PLING,0.3f,2f)
-                    GameSetupService.save();LobbyBotService.configure(player);opponents(player,current)
+                    GameSetupService.save();LobbyBotService.configure(player);reopen()
                 }
                 val targetInventory=inventory
                 BotSkinService.resolve(profile.name) {skin ->
@@ -133,12 +163,19 @@ object SetupSelectionMenus {
                 }
             }
             set(45,item(Material.ARROW,if(current>0)"Previous Page" else "Back to Settings")) {
-                if(current>0)opponents(player,current-1) else GameSetupService.openMenu(player)
+                if(current>0)roster(player,current-1,team) else GameSetupService.openMenu(player)
             }
-            set(47,item(Material.LIME_DYE,"Add Player",listOf("Add a Minecraft username"))) {CustomBotService.prompt(player,current)}
-            set(49,item(Material.PAPER,"${s.selectedBotNames.size}/${s.bots} chosen",listOf("Choose up to ${s.bots} opponents","Random built-in bots fill the rest")))
-            set(51,item(Material.ENDER_EYE,"Random Opponents",listOf("Use random built-in opponents","Custom opponents are never picked randomly","Also resets every kit you chose for them"))) {s.selectedBotNames=emptyList();s.botKits=emptyMap();GameSetupService.save();LobbyBotService.configure(player);opponents(player,current)}
-            if(current<pages-1)set(53,item(Material.ARROW,"Next Page")) {opponents(player,current+1)}
+            if(team) {
+                set(49,item(Material.PAPER,"${picks.size}/$limit chosen",listOf("Choose up to $limit teammate${if(limit==1)"" else "s"}","Random bots fill the rest of your team")))
+                set(51,item(Material.ENDER_EYE,"Random Teammates",listOf("Takes everybody off your team:","it is filled at random"))) {
+                    s.teammates=emptyList();GameSetupService.save();LobbyBotService.configure(player);reopen()
+                }
+            } else {
+                set(47,item(Material.LIME_DYE,"Add Player",listOf("Add a Minecraft username"))) {CustomBotService.prompt(player,current)}
+                set(49,item(Material.PAPER,"${picks.size}/$limit chosen",listOf("Choose up to $limit opponent${if(limit==1)"" else "s"}","Random built-in bots fill the rest")))
+                set(51,item(Material.ENDER_EYE,"Random Opponents",listOf("Use random built-in opponents","Custom opponents are never picked randomly","Also resets every kit you chose for them"))) {s.selectedBotNames=emptyList();s.botKits=emptyMap();GameSetupService.save();LobbyBotService.configure(player);reopen()}
+            }
+            if(current<pages-1)set(53,item(Material.ARROW,"Next Page")) {roster(player,current+1,team)}
         })
     }
 }

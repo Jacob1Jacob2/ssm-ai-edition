@@ -59,11 +59,11 @@ object ScoreboardService : KoinComponent {
     fun showEnding(game: BrawlMinigame, viewer: Player) {
         if (BotManager.isBot(viewer)) return
         val board = createBoard()
-        val rows = game.teams.flatMap { team -> team.players.map { (team.metadata["stocks"] as? Int ?: 0) to (it.name ?: "Player") } }
-            .filter { it.first > 0 }
-            .sortedWith(compareByDescending<Pair<Int, String>> { it.first }.thenBy { it.second })
+        val rows = game.teams.flatMap { team -> team.players.map { Row(team.metadata["stocks"] as? Int ?: 0, it.name ?: "Player", game.sideOf(it)) } }
+            .filter { (it.lives ?: 0) > 0 }
+            .sortedWith(ROW_ORDER)
         val lines = mutableListOf<Component>(Component.empty(), text("Players", NamedTextColor.YELLOW, true), Component.empty())
-        rows.take(10).forEach { (lives, name) -> lines += livesRow("$lives $name", lives) }
+        rows.take(10).forEach { lines += cell(it, it.name) }
         lines += Component.empty()
         lines += text(FOOTER, NamedTextColor.GOLD).append(text(" ${game.displayCode}", NamedTextColor.DARK_GRAY))
         writeLines(board, lines)
@@ -103,6 +103,37 @@ object ScoreboardService : KoinComponent {
     private fun livesRow(row: String, lives: Int): Component =
         dev.betrix.superSmashMobsBrawl.utils.CombatFeedback.livesText(row, lives, (System.currentTimeMillis() / 500).toInt())
             .decoration(TextDecoration.BOLD, false)
+
+    /** One fighter on the board: lives left (none to show in the sandbox), name, and side in a match of two teams. */
+    private data class Row(val lives: Int?, val name: String, val side: dev.betrix.superSmashMobsBrawl.minigames.TeamSide?)
+
+    /** Blue before Red where there are sides; within a side, and in every other mode, most lives first. */
+    private val ROW_ORDER = compareBy<Row> { it.side?.ordinal ?: 0 }.thenByDescending { it.lives ?: 0 }.thenBy { it.name.lowercase() }
+
+    /**
+     * A fighter's line. In a match of two teams it is in the colour of the side, blue or red, so
+     * the board shows at a glance who is with whom; in every other mode it is in the colour of the
+     * lives left.
+     */
+    private fun cell(row: Row, label: String): Component = when {
+        row.lives == null -> text(label, row.side?.color ?: NamedTextColor.WHITE)
+        row.side != null -> text("${row.lives} $label", row.side.color)
+        else -> livesRow("${row.lives} $label", row.lives)
+    }
+
+    private fun versus(left: String, leftColor: NamedTextColor, right: String, rightColor: NamedTextColor): Component =
+        text(left, leftColor).append(text("v", NamedTextColor.WHITE)).append(text(right, rightColor))
+
+    /** The mode as the sidebar words it, the numbers of a 3v1 or a 2v2 in the colours of their sides. */
+    private fun modeText(mode: MatchMode, players: Int, random: Boolean = false): Component = when {
+        random && mode == MatchMode.TEAMS -> versus("Blue", NamedTextColor.BLUE, "Red", NamedTextColor.RED)
+        random && mode == MatchMode.BOTS_VS_YOU -> versus("All", NamedTextColor.RED, "1", NamedTextColor.GREEN)
+        !random && players <= 1 -> text("Sandbox", NamedTextColor.AQUA)
+        !random && (players == 2 || mode == MatchMode.BOTS_VS_YOU) -> versus("${players - 1}", NamedTextColor.RED, "1", NamedTextColor.GREEN)
+        !random && mode == MatchMode.TEAMS && players >= 4 -> versus("${players / 2}", NamedTextColor.BLUE, "${players - players / 2}", NamedTextColor.RED)
+        mode == MatchMode.TEAM_UPS -> text("Team-Ups", NamedTextColor.GOLD)
+        else -> text("FFA", NamedTextColor.GREEN)
+    }
 
     private fun difficultyColor(d: BotDifficulty?): NamedTextColor =
         when (d) {
@@ -169,15 +200,17 @@ object ScoreboardService : KoinComponent {
             val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
             buildString { repeat(8) { append(alphabet.random()) } }
         }
-        val mode = if (setup.allBotsVsPlayer || setup.bots == 1) text("${setup.bots}", NamedTextColor.RED)
-            .append(text("v", NamedTextColor.WHITE)).append(text("1", NamedTextColor.GREEN))
-            else if (setup.teamUps) text("Team-Ups", NamedTextColor.GOLD)
-            else text("FFA", NamedTextColor.GREEN)
+        val mode = modeText(setup.matchMode, setup.players, setup.playersRandom)
+        val lives = livesRow("${setup.lives} ${if (setup.lives == 1) "Life" else "Lives"}", setup.lives)
         val lines = listOf(
             Component.empty(),
             text("Players", NamedTextColor.YELLOW, bold = true),
-            text("${setup.players} (You + ${setup.bots} AI)  ", NamedTextColor.WHITE)
-                .append(livesRow("${setup.lives} ${if (setup.lives == 1) "Life" else "Lives"}", setup.lives)),
+            when {
+                setup.playersRandom -> text("Random (You + AI)  ", NamedTextColor.LIGHT_PURPLE).append(lives)
+                // No lives in the sandbox: nothing to lose there.
+                setup.sandbox -> text("Just you", NamedTextColor.WHITE)
+                else -> text("${setup.players} (You + ${setup.bots} AI)  ", NamedTextColor.WHITE).append(lives)
+            },
             Component.empty(),
             text("Map", NamedTextColor.RED, bold = true),
             text(MapVoteService.selectedMapName(viewer), NamedTextColor.WHITE),
@@ -221,18 +254,18 @@ object ScoreboardService : KoinComponent {
         // The game's settings are whatever its (first) real player picked in the hub.
         val setup = game.settings
 
-        // (lives, name) for everyone still in it, most lives first.
+        // Everyone still in it: most lives first, and in a match of two teams one side after the other.
         val rows =
             game.teams
                 .flatMap { team ->
-                    val lives = team.metadata["stocks"] as? Int
-                    team.players.map { p -> lives to (p.name ?: "?") }
+                    val lives = (team.metadata["stocks"] as? Int).takeIf { !game.sandbox }
+                    team.players.map { p -> Row(lives, p.name ?: "?", game.sideOf(p)) }
                 }
-                .filter { (lives, _) -> lives == null || lives > 0 }
-                .filter { (_, name) ->
-                    Bukkit.getPlayerExact(name)?.let { it.gameMode != GameMode.SPECTATOR || game.respawnManager.isRespawning(it) } ?: false
+                .filter { it.lives == null || it.lives > 0 }
+                .filter { row ->
+                    Bukkit.getPlayerExact(row.name)?.let { it.gameMode != GameMode.SPECTATOR || game.respawnManager.isRespawning(it) } ?: false
                 }
-                .sortedWith(compareByDescending<Pair<Int?, String>> { it.first ?: 0 }.thenBy { it.second.lowercase() })
+                .sortedWith(ROW_ORDER)
 
         // A sidebar holds fifteen lines and everyone still alive is always listed. A crowded match
         // first gives up the settings block, then puts two names on a line.
@@ -246,11 +279,9 @@ object ScoreboardService : KoinComponent {
             lines += ClassicSidebar.spawnSetting("Smash", setup.crystals && setup.enabledCrystalTiers.isNotEmpty(),
                 setup.crystalIntervalSeconds, GameSetupService.CRYSTAL_INTERVALS, true)
             lines += text("Difficulty: ", NamedTextColor.WHITE).append(text(setup.difficultyName, if(setup.botsIdle)NamedTextColor.GRAY else difficultyColor(setup.difficulty)))
-            lines += text("Mode: ", NamedTextColor.WHITE).append(
-                if (setup.allBotsVsPlayer || everyone.size == 2) text("${everyone.size - 1}", NamedTextColor.RED)
-                    .append(text("v", NamedTextColor.WHITE)).append(text("1", NamedTextColor.GREEN))
-                else if (setup.teamUps) text("Team-Ups", NamedTextColor.GOLD)
-                else text("FFA", NamedTextColor.GREEN))
+            // By what the match is, not by what was asked for: two teams only where there are sides.
+            lines += text("Mode: ", NamedTextColor.WHITE).append(modeText(
+                if (game.sides.isNotEmpty()) MatchMode.TEAMS else setup.matchMode.takeIf { it != MatchMode.TEAMS } ?: MatchMode.FFA, everyone.size))
             lines += text(ClassicSidebar.DIVIDER, NamedTextColor.GREEN).let {
                 if (ResourcePackService.hasPack(viewer)) it.append(Component.text("\uEFFF"))
                     .font(ResourcePackService.SIDEBAR_DIVIDER_FONT) else it
@@ -260,14 +291,11 @@ object ScoreboardService : KoinComponent {
             if (ResourcePackService.hasPack(viewer)) it.font(ResourcePackService.SIDEBAR_HEADING_FONT) else it
         }
         lines += Component.empty()
-        fun cell(lives: Int?, name: String): Component {
-            val label = Bukkit.getPlayerExact(name)?.let { BotManager.displayNameOf(it) } ?: name
-            return if (lives == null) text(label, NamedTextColor.WHITE) else livesRow("$lives $label", lives)
-        }
+        fun entry(row: Row): Component = cell(row, Bukkit.getPlayerExact(row.name)?.let { BotManager.displayNameOf(it) } ?: row.name)
         shown.chunked(perLine).forEach { pair ->
-            var row = cell(pair[0].first, pair[0].second)
+            var row = entry(pair[0])
             if (pair.size > 1) row = Component.empty().append(row).append(text("   ", NamedTextColor.WHITE))
-                .append(cell(pair[1].first, pair[1].second))
+                .append(entry(pair[1]))
             lines += if (ResourcePackService.hasPack(viewer)) row.font(ResourcePackService.SIDEBAR_PLAYER_FONT) else row
         }
         if (shown.size < rows.size) lines += text("+${rows.size - shown.size} more", NamedTextColor.GRAY).let {

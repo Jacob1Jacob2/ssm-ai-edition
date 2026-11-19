@@ -57,6 +57,11 @@ object MapVoteService : KoinComponent {
         }
         return true
     }
+    /** Has the map this player chose room for a match of [players]? A Random choice is made to fit when the match starts. */
+    fun hasRoomFor(player: Player, players: Int): Boolean {
+        val map = votes[player.uniqueId]?.let { dataService.getGameMap(it) } ?: return true
+        return capacity(map) >= players
+    }
     fun capacity(map: GameMapDef) = (map.spawnPoints + map.itemSpawnPoints + map.crystalSpawnPoints)
         .distinctBy { Triple(it.x, it.y, it.z) }.size
 

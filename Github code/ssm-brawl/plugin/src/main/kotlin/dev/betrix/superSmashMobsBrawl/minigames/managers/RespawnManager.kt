@@ -197,7 +197,8 @@ class DefaultRespawnManager(private val minigame: BrawlMinigame) :
         (minigame.kitHandler as? IKitHandler)?.assignKitToPlayer(player)
         player.showTitle(Title.title(
             Component.empty(),
-            stocksLeft?.let(dev.betrix.superSmashMobsBrawl.utils.CombatFeedback::livesTitle) ?: Component.empty(),
+            // (Not in the sandbox, where there are no lives to count.)
+            stocksLeft?.takeIf { !minigame.sandbox }?.let(dev.betrix.superSmashMobsBrawl.utils.CombatFeedback::livesTitle) ?: Component.empty(),
             Title.Times.times(Duration.ofMillis(250),Duration.ofSeconds(2),Duration.ofMillis(500))))
         dev.betrix.superSmashMobsBrawl.items.ItemService.hide(player,40)
     }

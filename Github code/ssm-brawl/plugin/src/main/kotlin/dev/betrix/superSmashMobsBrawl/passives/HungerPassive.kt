@@ -83,7 +83,8 @@ class HungerPassive(player: Player) : BrawlPassive("hunger", player), KoinCompon
         super.setup()
     }
 
-    private fun live() = minigameService.getMinigameForPlayer(player)?.getState() == MinigameState.IN_PROGRESS
+    /** The clock runs in a match that is on. Not in the sandbox: there is nobody there to hit for food. */
+    private fun live() = minigameService.getMinigameForPlayer(player)?.let { it.getState() == MinigameState.IN_PROGRESS && !it.sandbox } == true
 
     private fun mask() {
         player.sendHealthUpdate(player.health, HungerRules.SPRINT_FLOOR + 1, 0f)

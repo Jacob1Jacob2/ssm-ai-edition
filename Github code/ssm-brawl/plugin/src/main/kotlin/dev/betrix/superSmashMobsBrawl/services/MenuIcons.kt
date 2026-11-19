@@ -41,6 +41,12 @@ object MenuIcons {
         1200->Material.DIAMOND_BLOCK;else->Material.NETHERITE_BLOCK
     }
     fun star(item:ItemStack,index:Int) {SmashItems.styleStar(item,index)}
+    /** The materials the pack has a dark copy of (see [MenuAssets]): a button that is there but cannot be used yet. */
+    private val darkIcons=setOf(Material.COPPER_CHEST,Material.PLAYER_HEAD)
+    /** The same icon with the light off. It lights up again by being the plain item. */
+    fun dark(item:ItemStack):ItemStack=item.apply {
+        if(type in darkIcons)editMeta { it.itemModel=NamespacedKey("ssm","dark_${type.key.key}") }
+    }
     /**
      * Kit id -> the vanilla item model of its menu icon, for the small copy drawn on an
      * opponent's head in Choose Opponents. Sheep and Wither Skeleton are 3D and handled apart.
@@ -104,6 +110,25 @@ object MenuAssets {
         val kitIcon="""{"type":"minecraft:select","property":"minecraft:custom_model_data","index":0,"cases":[${cases.joinToString(",")}],"fallback":{"type":"minecraft:empty"}}"""
         files["assets/ssm/items/opponent.json"] = """{"model":{"type":"minecraft:composite","models":[$lighting,$head,$kitIcon]}}""".toByteArray()
         files["assets/ssm/items/opponent_selected.json"] = """{"model":{"type":"minecraft:composite","models":[$lighting,$head,$overlay,$kitIcon]}}""".toByteArray()
+        // Dark copies of two icons, for a button that is there but cannot be used yet (MenuIcons.dark):
+        // the item as it is, under a see-through black veil of the item's own shape. Nothing on the
+        // server can dim a chest or a head, which are drawn by the game and take no tint. The veil
+        // is a little bigger than what it covers so the two surfaces never lie in one plane, and it
+        // borrows the item's own base model so it is turned and scaled exactly like it.
+        files["assets/ssm/textures/item/dark_veil.png"] = veil()
+        fun veilModel(parent:String,vararg boxes:Pair<List<Double>,List<Double>>):ByteArray {
+            val sides=listOf("north","south","east","west","up","down").joinToString(",") {"\"$it\":{\"uv\":[0,0,16,16],\"texture\":\"#veil\"}"}
+            val elements=boxes.joinToString(",") {(from,to) -> """{"from":[${from.joinToString(",")}],"to":[${to.joinToString(",")}],"shade":false,"faces":{$sides}}"""}
+            return """{"parent":"$parent","textures":{"veil":"ssm:item/dark_veil","particle":"ssm:item/dark_veil"},"elements":[$elements]}""".toByteArray()
+        }
+        // A shut chest is 14 wide, deep and high, with its lock one further to the south.
+        files["assets/ssm/models/item/dark_chest_veil.json"] = veilModel("minecraft:item/copper_chest",
+            listOf(0.8,-0.2,0.8) to listOf(15.2,14.2,15.2), listOf(6.8,6.8,15.2) to listOf(9.2,11.2,16.2))
+        // A head is 8 each way and stands on the floor of its block; its hat layer is a quarter more all round.
+        files["assets/ssm/models/item/dark_head_veil.json"] = veilModel("minecraft:item/template_skull",
+            listOf(3.5,-0.5,3.5) to listOf(12.5,8.5,12.5))
+        files["assets/ssm/items/dark_copper_chest.json"] = """{"model":{"type":"minecraft:composite","models":[{"type":"minecraft:special","base":"minecraft:item/copper_chest","model":{"type":"minecraft:chest","texture":"minecraft:copper"}},{"type":"minecraft:model","model":"ssm:item/dark_chest_veil"}]}}""".toByteArray()
+        files["assets/ssm/items/dark_player_head.json"] = """{"model":{"type":"minecraft:composite","models":[$head,{"type":"minecraft:model","model":"ssm:item/dark_head_veil"}]}}""".toByteArray()
         // Shadow Walk keeps the vanilla skeleton skull, with an animated glint when enabled.
         files["assets/ssm/textures/item/shadow_walk_enabled.png"] = selectionShimmer(showCheck=false)
         files["assets/ssm/textures/item/shadow_walk_enabled.png.mcmeta"] = """{"animation":{"frametime":2,"interpolate":false}}""".toByteArray()
@@ -239,6 +264,15 @@ object MenuAssets {
             val saturation=if(!edge && y<=6 && x<=7).55f else .85f
             image.setRGB(x,frame*16+y,java.awt.Color.HSBtoRGB(hue,saturation,light) or (0xFF shl 24))
         }
+        return png(image)
+    }
+    /** How much of an icon's own colour is left under the dark veil. */
+    const val DARK_ICON_LIGHT = 0.26
+    /** One flat see-through black: what a veiled icon is darkened with. */
+    internal fun veil(): ByteArray {
+        val image=java.awt.image.BufferedImage(16,16,java.awt.image.BufferedImage.TYPE_INT_ARGB)
+        val alpha=Math.round((1-DARK_ICON_LIGHT)*255).toInt()
+        for(y in 0 until 16)for(x in 0 until 16)image.setRGB(x,y,alpha shl 24)
         return png(image)
     }
     private fun selectionShimmer(showCheck:Boolean=true): ByteArray {

@@ -78,5 +78,29 @@ object ItemMenus {
             }
         }.runTaskTimer(ItemService.plugin,20L,20L)
     }
+    /** The sandbox's item chest: every item there is, and a click puts it into the arena in front of the player. */
+    fun spawner(player: Player) {
+        val items = ArenaItem.entries.sortedBy { it.rarity.ordinal }
+        player.openInventory(brawlGui(Component.text("Spawn Items"), 54) {
+            onClick { isCancelled = true }
+            for (slot in 0..53) set(slot, GuideMenus.item(Material.GRAY_STAINED_GLASS_PANE, ""))
+            items.forEachIndexed { index, kind ->
+                val icon = ItemStack.of(ItemPresentation.material(kind, player)).apply { editMeta {
+                    it.displayName(Component.text(kind.label, kind.rarity.color).decoration(TextDecoration.ITALIC, false))
+                    it.lore(listOf(Component.text("${kind.rarity.label} · ${kind.uses} ${kind.useLabel}", kind.rarity.color)
+                        .decoration(TextDecoration.ITALIC, false)) + wrap(kind.description) +
+                        listOf(Component.text("Click to spawn it in front of you", YELLOW).decoration(TextDecoration.ITALIC, false)))
+                    it.setEnchantmentGlintOverride(kind == ArenaItem.SHOTBOW)
+                } }
+                ItemPresentation.plainTooltip(icon)
+                set(9 + index, icon) {
+                    player.closeInventory()
+                    player.sendMessage(dev.betrix.superSmashMobsBrawl.services.SandboxTools.notice(ItemService.spawnInFront(player, kind)))
+                    click(player)
+                }
+            }
+            set(49, GuideMenus.item(Material.REDSTONE_BLOCK, "Close", color = RED)) { player.closeInventory() }
+        })
+    }
     private fun click(player: Player) = player.playSound(player.location, Sound.BLOCK_WOODEN_BUTTON_CLICK_ON, .5f, 1f)
 }

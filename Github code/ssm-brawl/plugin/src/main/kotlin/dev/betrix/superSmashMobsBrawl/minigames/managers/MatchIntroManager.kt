@@ -73,12 +73,25 @@ class MatchIntroManager(private val game:BrawlMinigame):Manageable() {
             add(separator)
             add(Component.text("Game - ",GREEN).append(Component.text("Super Smash Mobs",YELLOW,BOLD)))
             add(Component.empty())
-            add(Component.text("  Each player has $respawns ${if(respawns==1)"respawn" else "respawns"}",WHITE))
-            if(game.isPassiveValid("hunger"))add(Component.text("  Attack to restore hunger!",WHITE))
-            add(Component.text(if(game.settings.allBotsVsPlayer)"  Defeat the opposing team!" else "  Last player alive wins!",WHITE))
-            // Team-Ups (with one opponent there is nobody for that opponent to team with).
-            if(game.settings.teamUps && !game.settings.allBotsVsPlayer && game.allPlayers().size>2)
-                add(Component.text("  Camp, spam or trash talk and the bots may team up on you!",WHITE))
+            if(game.sandbox) {
+                // Nobody to fight and nothing to lose: say what the three tools in the hotbar are for.
+                add(Component.text("  Sandbox: the arena is yours",WHITE))
+                add(Component.text("  Spawn items and smash crystals from the chests",WHITE))
+                add(Component.text("  The redstone block takes you back to the hub",WHITE))
+            } else {
+                add(Component.text("  Each player has $respawns ${if(respawns==1)"respawn" else "respawns"}",WHITE))
+                if(game.isPassiveValid("hunger"))add(Component.text("  Attack to restore hunger!",WHITE))
+                add(Component.text(objective(),WHITE))
+                // Two teams: who is on which, in the colours they have on the scoreboard.
+                for(side in dev.betrix.superSmashMobsBrawl.minigames.TeamSide.entries) {
+                    val members=game.allPlayers().filter {game.sideOf(it)==side}
+                    if(members.isNotEmpty())add(Component.text("  ${side.label}: ",side.color,BOLD).append(Component.text(
+                        members.joinToString(", ") {dev.betrix.superSmashMobsBrawl.bots.BotManager.displayNameOf(it)},side.color).decoration(BOLD,false)))
+                }
+                // Team-Ups (with one opponent there is nobody for that opponent to team with).
+                if(game.settings.matchMode==dev.betrix.superSmashMobsBrawl.services.MatchMode.TEAM_UPS && game.allPlayers().size>2)
+                    add(Component.text("  Camp, spam or trash talk and the bots may team up on you!",WHITE))
+            }
             add(Component.empty());add(credited);add(separator)
             if(includeKitPrompt && game.getKitSwitchingMode()!=KitSwitchingMode.MYSTERY) {
                 add(Component.empty());add(kitPrompt());add(promptFooter())
@@ -86,11 +99,18 @@ class MatchIntroManager(private val game:BrawlMinigame):Manageable() {
         }
     }
 
+    /** What the match is won by, as one line. */
+    private fun objective(indent:String="  ")=indent+when {
+        game.sandbox -> "Try out items and smashes!"
+        game.sides.isNotEmpty() || game.settings.allBotsVsPlayer -> "Defeat the opposing team!"
+        else -> "Last player alive wins!"
+    }
+
     fun start(onComplete:()->Unit) {
         if(started)return
         started=true
         val title=Title.title(Component.text("Super Smash Mobs",YELLOW,BOLD),
-            Component.text(if(game.settings.allBotsVsPlayer)"Defeat the opposing team!" else "Last player alive wins!",WHITE),
+            Component.text(objective(""),WHITE),
             Title.Times.times(Duration.ofMillis(300),Duration.ofMillis(3800),Duration.ofMillis(600)))
         val lines=messages(includeKitPrompt=false)
         game.allPlayers().filter { !game.connectionManager.isDisconnected(it) }.mapNotNull {it.player}.forEach {p ->

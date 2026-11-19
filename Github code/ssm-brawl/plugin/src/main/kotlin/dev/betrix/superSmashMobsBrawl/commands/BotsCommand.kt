@@ -337,6 +337,103 @@ class BotsCommand : KoinComponent {
         sender.sendMessage("Team-Ups game (${mode.label}): ${bots.joinToString { it.name }}")
     }
 
+    @Execute(name = "sidegame")
+    @Description("Debug: a bots-only game of two teams (4 bots 2v2, 8 4v4, 16 8v8); the sides, every life lost and the side that wins are written to the log as [sides]")
+    fun sideGame(@Context sender: CommandSender, @Arg count: Int, @Arg difficulty: String, @Arg map: String) {
+        if (!allowed(sender)) return
+        val def = dataService.getMinigame("super_smash_mobs") ?: return
+        BotManager.debug = true
+        val size = count.coerceIn(4, 16)
+        val setup = dev.betrix.superSmashMobsBrawl.bots.BotNavGen.shapeOf(map).apply(dev.betrix.superSmashMobsBrawl.services.GameSetupService.Setup(
+            difficulty = if (difficulty == "any") null else BotDifficulty.parse(difficulty),
+            players = size, items = false, crystals = false, teams = true, lives = 2))
+        val bots = BotManager.startBotGame(def, size, setup.difficulty, map.substringBefore('@'), setup = setup)
+        sender.sendMessage("Two teams game: ${bots.joinToString { it.name }}")
+    }
+
+    @Execute(name = "menutest")
+    @Description("Debug: opens Game Settings for a bot, clicks through the player counts, the modes, Your Team and Choose Opponents, and logs what the slots hold and what every click changed as [menutest]")
+    fun menuTest(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        val profile = BotManager.rosterProfiles().firstOrNull() ?: return sender.sendMessage("The roster is empty")
+        val bot = BotManager.spawn(profile) ?: return sender.sendMessage("Could not spawn ${profile.name}")
+        dev.betrix.superSmashMobsBrawl.services.LobbyService.assign(bot, 1)
+        dev.betrix.superSmashMobsBrawl.services.HubService.tryTeleportToDefaultHub(bot)
+        val setups = dev.betrix.superSmashMobsBrawl.services.GameSetupService
+        val s = setups.setupOf(bot)
+        val plainText = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
+        fun log(text: String) = plugin.logger.info("[menutest] $text")
+        fun top() = bot.openInventory.topInventory
+        fun title() = plainText.serialize(bot.openInventory.title())
+        fun describe(slot: Int): String {
+            val item = top().getItem(slot) ?: return "-"
+            if (item.type.name.endsWith("_PANE")) return item.type.name.substringBefore("_STAINED").lowercase() + " pane"
+            val model = item.getData(io.papermc.paper.datacomponent.DataComponentTypes.ITEM_MODEL)?.let { " <${it.asString()}>" } ?: ""
+            val name = item.itemMeta?.displayName()?.let(plainText::serialize) ?: ""
+            val lore = item.itemMeta?.lore()?.joinToString(" / ") { plainText.serialize(it) } ?: ""
+            return "${item.type.name.lowercase()}${if (item.amount > 1) " x${item.amount}" else ""}$model '$name' [$lore]"
+        }
+        fun dump(what: String, slots: Iterable<Int>) = slots.forEach { log("$what slot $it: ${describe(it)}") }
+        fun click(slot: Int, right: Boolean = false) = org.bukkit.Bukkit.getPluginManager().callEvent(org.bukkit.event.inventory.InventoryClickEvent(
+            bot.openInventory, org.bukkit.event.inventory.InventoryType.SlotType.CONTAINER, slot,
+            if (right) org.bukkit.event.inventory.ClickType.RIGHT else org.bukkit.event.inventory.ClickType.LEFT,
+            org.bukkit.event.inventory.InventoryAction.PICKUP_ALL))
+        fun state() = "players=${s.players} random=${s.playersRandom} mode=${s.matchMode} label=${s.modeLabel} " +
+            "teammates=${s.teammates} effective=${s.effectiveTeammates} opponents=${s.selectedBotNames} effective=${s.effectiveOpponents} kits=${s.botKits}"
+        runCatching {
+            setups.openMenu(bot)
+            log("opened '${title()}', ${top().size} slots; ${state()}")
+            dump("menu", 0..53)
+            click(1); log("click No Players -> ${state()}"); dump("sandbox", listOf(1, 37, 38, 39, 40, 41, 45))
+            click(2); log("click 2 players -> ${state()}"); dump("duel", listOf(2, 37, 39, 40, 41, 45))
+            click(4); log("click 8 players -> ${state()}")
+            click(40); log("click two teams -> ${state()}"); dump("teams", listOf(4, 39, 40, 41, 43, 45))
+            click(41); log("click Your Team -> '${title()}'"); dump("team menu", listOf(0, 1, 2, 45, 47, 49, 51, 53))
+            click(0); click(1); log("put two on the team -> '${title()}'; ${state()}"); dump("team menu", listOf(0, 1, 2))
+            click(2, right = true); log("right-click a third -> '${title()}'")
+            click(1); log("picked the kit in slot 1 -> '${title()}'; ${state()}"); dump("team menu", listOf(0, 1, 2, 3, 49))
+            click(3); log("a fourth for three seats -> ${state()}")
+            click(0); log("took the first off again -> ${state()}")
+            click(45); log("back -> '${title()}'"); dump("teams", listOf(17, 41))
+            click(17); log("click Choose Opponents -> '${title()}'"); dump("opponents", listOf(0, 1, 2, 3, 49))
+            click(1); log("a teammate made an opponent -> ${state()}"); dump("opponents", listOf(1))
+            click(45); log("back -> '${title()}'")
+            click(7); log("click Random players -> ${state()}"); dump("random", listOf(7, 39, 40, 41, 45))
+            click(5); log("click 16 players -> ${state()}"); dump("sixteen", listOf(5, 39, 40))
+            click(37); log("click FFA -> ${state()}"); dump("ffa", listOf(37, 40, 41))
+            click(39); log("click bots vs you -> ${state()}"); dump("vs", listOf(39))
+            click(38); log("click Team-Ups -> ${state()}"); dump("team-ups", listOf(38))
+            click(49); log("click Close -> top inventory is now '${title()}' (${top().type})")
+        }.onFailure { log("FAILED: $it"); it.printStackTrace() }
+        BotManager.despawn(bot)
+        log("done")
+    }
+
+    @Execute(name = "sandboxgame")
+    @Description("Debug: one bot alone in a sandbox match (nobody to fight, nothing to win or lose); 'bots sandboxkill' takes a life off it to show the match goes on")
+    fun sandboxGame(@Context sender: CommandSender, @Arg map: String) {
+        if (!allowed(sender)) return
+        val def = dataService.getMinigame("super_smash_mobs") ?: return
+        BotManager.debug = true
+        val setup = dev.betrix.superSmashMobsBrawl.bots.BotNavGen.shapeOf(map).apply(dev.betrix.superSmashMobsBrawl.services.GameSetupService.Setup(
+            players = 1, items = false, crystals = false))
+        val bots = BotManager.startBotGame(def, 1, null, map.substringBefore('@'), setup = setup)
+        sender.sendMessage("Sandbox game: ${bots.joinToString { it.name }}")
+    }
+
+    @Execute(name = "sandboxkill")
+    @Description("Debug: kills the fighter of every sandbox match once, and logs what the match and its hotbar look like")
+    fun sandboxKill(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        for (game in minigameService.activeMinigames().filter { it.sandbox }) {
+            for (fighter in game.allPlayers().mapNotNull { it.player }) {
+                val hotbar = (0..8).joinToString(" ") { slot -> fighter.inventory.getItem(slot)?.type?.name?.lowercase() ?: "-" }
+                plugin.logger.info("[sandbox] ${fighter.name}: state ${game.getState()}, lives ${game.teamManager.findTeamOf(fighter)?.metadata?.get("stocks")}, food ${fighter.foodLevel}, hotbar $hotbar")
+                dev.betrix.superSmashMobsBrawl.events.BrawlDeathEvent.call(fighter, dev.betrix.superSmashMobsBrawl.events.DeathReason.Damage)
+            }
+        }
+    }
+
     @Execute(name = "standin")
     @Description("Debug: puts the stand-in player of a Team-Ups test game at x y z and keeps it there (it still fights back), to see what the lobby does about a camper")
     fun standIn(@Context sender: CommandSender, @Arg x: Double, @Arg y: Double, @Arg z: Double) {

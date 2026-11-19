@@ -75,7 +75,7 @@ object LobbyBotService : KoinComponent {
         val custom = CustomBotService.profiles()
         val profiles = (built + custom).associateBy { it.name.lowercase() }
         val current = botsIn(id)
-        val desired = LobbyRoster.choose(settings.bots, settings.selectedBotNames,
+        val desired = LobbyRoster.choose(settings.bots, settings.wantedBotNames,
             current.map(BotManager::displayNameOf), built.shuffled().map { it.name }, custom.map { it.name })
         val chosen = desired.mapNotNull { profiles[it.lowercase()] }.map { profile ->
             val difficulty = if (CustomBotService.isCustom(profile.name)) profile.difficulty else settings.difficulty ?: profile.difficulty
@@ -106,7 +106,7 @@ object LobbyBotService : KoinComponent {
         val settings = GameSetupService.setupOf(host)
         reconcileGroup(id, settings)
         val available = botsIn(id)
-        val selected = settings.selectedBotNames.mapNotNull { name -> available.find { BotManager.displayNameOf(it).equals(name, true) } }
+        val selected = settings.wantedBotNames.mapNotNull { name -> available.find { BotManager.displayNameOf(it).equals(name, true) } }
         val chosen = (selected + available.filter { it !in selected }).take(count)
         if (chosen.size != count) return emptyList()
         transferringUntil[id] = ticks + 420 // Queue fillers can join gradually for up to 15 opponents.

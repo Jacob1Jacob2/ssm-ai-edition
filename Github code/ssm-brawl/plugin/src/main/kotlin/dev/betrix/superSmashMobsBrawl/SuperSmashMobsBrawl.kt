@@ -96,6 +96,7 @@ class SuperSmashMobsBrawl : SuspendingJavaPlugin(), KoinComponent {
         dev.betrix.superSmashMobsBrawl.smash.SmashService.setup()
         dev.betrix.superSmashMobsBrawl.services.EnergyHud.setup(this)
         dev.betrix.superSmashMobsBrawl.items.ItemService.setup()
+        dev.betrix.superSmashMobsBrawl.services.SandboxTools.setup()
         logger.info("Items update 2026-11-11: ${dev.betrix.superSmashMobsBrawl.items.ArenaItem.entries.size} arena items; Most Wins / Most Kills leaderboard.")
         runCatching { ResourcePackService.setup() }
             .onFailure { logger.severe("Resource pack service failed to start: ${it.message}") }
