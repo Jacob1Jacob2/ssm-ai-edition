@@ -312,6 +312,68 @@ class BotsCommand : KoinComponent {
         sender.sendMessage("Chat game (${mode.label}): ${bots.joinToString { it.name }}")
     }
 
+    @Execute(name = "teamgame")
+    @Description("Debug: a bots-only Team-Ups game with a chat personality (toxic, salty, chill, silent, random); the first bot stands in for a player, and what the lobby has against it, the team-ups and the chat are written to the log")
+    fun teamGame(
+        @Context sender: CommandSender,
+        @Arg count: Int,
+        @Arg difficulty: String,
+        @Arg map: String,
+        @Arg personality: String,
+    ) {
+        if (!allowed(sender)) return
+        val def = dataService.getMinigame("super_smash_mobs") ?: return
+        val mode = dev.betrix.superSmashMobsBrawl.bots.BotPersonality.entries.find { it.name.equals(personality, true) }
+            ?: return sender.sendMessage("Personality is one of toxic, salty, chill, silent, random")
+        BotManager.debug = true
+        // (The map may be given in one of its layouts, as for a chase test: desert@rev, aviation@small.)
+        val setup = dev.betrix.superSmashMobsBrawl.bots.BotNavGen.shapeOf(map).apply(dev.betrix.superSmashMobsBrawl.services.GameSetupService.Setup(
+            difficulty = if (difficulty == "any") null else BotDifficulty.parse(difficulty),
+            players = count, items = false, crystals = false, botPersonality = mode, teamUps = true))
+        val bots = BotManager.startBotGame(def, count.coerceIn(3, 16), setup.difficulty, map.substringBefore('@'), setup = setup)
+        BotManager.standIns.clear()
+        bots.firstOrNull()?.let { BotManager.standIns += it.uniqueId }
+        plugin.logger.info("[teamups] game (${mode.label}): ${bots.firstOrNull()?.name} stands in for the player against ${bots.drop(1).joinToString { it.name }}")
+        sender.sendMessage("Team-Ups game (${mode.label}): ${bots.joinToString { it.name }}")
+    }
+
+    @Execute(name = "standin")
+    @Description("Debug: puts the stand-in player of a Team-Ups test game at x y z and keeps it there (it still fights back), to see what the lobby does about a camper")
+    fun standIn(@Context sender: CommandSender, @Arg x: Double, @Arg y: Double, @Arg z: Double) {
+        if (!allowed(sender)) return
+        for (id in BotManager.standIns) {
+            val bot = org.bukkit.Bukkit.getPlayer(id) ?: continue
+            val spot = org.bukkit.Location(bot.world, x, y, z)
+            BotManager.brainOf(bot)?.rooted = true
+            // A camper nobody can shift: put back and patched up every tick, for as long as it stands in.
+            object : org.bukkit.scheduler.BukkitRunnable() {
+                override fun run() {
+                    val camper = org.bukkit.Bukkit.getPlayer(id)
+                    if (camper == null || !camper.isOnline || id !in BotManager.standIns || camper.world != spot.world) return cancel()
+                    if (camper.gameMode != org.bukkit.GameMode.SURVIVAL) return
+                    if (camper.location.distanceSquared(spot) > 0.25) camper.teleport(spot)
+                    camper.health = camper.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH)?.value ?: 20.0
+                    camper.foodLevel = 20
+                }
+            }.runTaskTimer(plugin, 0L, 1L)
+            plugin.logger.info("[teamups] ${bot.name} is camping at $x $y $z")
+        }
+    }
+
+    @Execute(name = "heat")
+    @Description("Debug: in every Team-Ups game, counts this much against each player (or stand-in) as camping, spam, farming or mouth")
+    fun heat(@Context sender: CommandSender, @Arg amount: Double, @Arg reason: String) {
+        if (!allowed(sender)) return
+        val why = dev.betrix.superSmashMobsBrawl.bots.TeamUps.Reason.entries.find { it.name.equals(reason, true) }
+            ?: return sender.sendMessage("Reason is one of camping, spam, farming, mouth")
+        for (game in minigameService.activeMinigames().filterIsInstance<dev.betrix.superSmashMobsBrawl.minigames.BrawlMinigame>()) {
+            if (!game.settings.teamUps) continue
+            val players = game.allPlayers().mapNotNull { it.player }.filter { !BotManager.isBot(it) || it.uniqueId in BotManager.standIns }
+            players.forEach { dev.betrix.superSmashMobsBrawl.services.BotConversationService.heat(game, it.uniqueId, amount, why) }
+            plugin.logger.info("[teamups] +${amount.toInt()} ${why.name.lowercase()} for ${players.joinToString { it.name }}")
+        }
+    }
+
     @Execute(name = "chasetest")
     @Description("Debug: measure whether bots can reach a still opponent all over a map")
     fun chaseTest(
@@ -429,6 +491,27 @@ class BotsCommand : KoinComponent {
         val answer = dev.betrix.superSmashMobsBrawl.bots.BotNavGen.start(maps.split(',').filter { it.isNotBlank() }, jumps.split(',').filter { it.isNotBlank() })
         plugin.logger.info("[navgen] $answer")
         sender.sendMessage(answer)
+    }
+
+    @Execute(name = "navkeys")
+    @Description("Debug: the name each map's long jumps are filed under in each of its layouts, and the name they had before layouts were part of it")
+    fun navKeys(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        for (map in dataService.getAllGameMaps().sortedBy { it.id })
+            for (scale in dev.betrix.superSmashMobsBrawl.services.MapScale.entries) for (reverse in listOf(false, true))
+                for (reflect in dev.betrix.superSmashMobsBrawl.services.ReflectMode.entries) {
+                    val transform = dev.betrix.superSmashMobsBrawl.services.MapTransform(reverse, reflect, scale)
+                    val def = if (transform.active) transform.definition(map) else map
+                    // (As it was: the same without the layout.)
+                    val shape = buildString {
+                        append(def.voidLevel).append('|').append(def.worldBorderSize).append('|')
+                        append(def.worldBorderCenterX).append('|').append(def.worldBorderCenterZ)
+                        for (p in def.spawnPoints) append('|').append(p.x).append(',').append(p.y).append(',').append(p.z)
+                    }
+                    plugin.logger.info("[navkeys] ${map.id} ${transform.key.ifEmpty { "-" }} ${map.id}-${"%08x".format(shape.hashCode())} " +
+                        dev.betrix.superSmashMobsBrawl.bots.ArenaJumps.keyOf(def))
+                }
+        plugin.logger.info("[navkeys] done")
     }
 
     @Execute(name = "edges")

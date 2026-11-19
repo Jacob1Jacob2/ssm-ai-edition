@@ -38,8 +38,10 @@ object BotConversationService : KoinComponent, Listener {
     private val games: MinigameService by inject()
     private val lang: LangService by inject()
     private val plain = PlainTextComponentSerializer.plainText()
-    private class Session {
+    private class Session(teamUps: Boolean) {
         val dialogue = BotDialogue()
+        /** Who the bots have teamed up on, in a Team-Ups match (never anybody in the other modes). */
+        val teamUps = TeamUps().also { it.enabled = teamUps }
         private var errorLogged = false
         val bus = CombatEventBus { event, error ->
             if (!errorLogged) {
@@ -47,7 +49,10 @@ object BotConversationService : KoinComponent, Listener {
                 plugin.logger.warning("Bot chat listener failed on ${event::class.simpleName}: ${error.stackTraceToString()}")
             }
         }
-        init { CombatChatBridge(bus, dialogue) { BotManager.isBot(it) } }
+        init {
+            dialogue.teamUps = this.teamUps
+            CombatChatBridge(bus, dialogue, this.teamUps.takeIf { teamUps }) { BotManager.isBot(it) && it !in BotManager.standIns }
+        }
         // A chat reply must not reveal a message to people outside its original audience.
         var chatAudience: Set<UUID>? = null
         /** Server tick at which the line being typed now will have been sent; the next one starts after it. */
@@ -68,7 +73,9 @@ object BotConversationService : KoinComponent, Listener {
     }
     fun shutdown() { running = false; task?.cancel(); task = null; sessions.keys.toList().forEach(::close) }
     fun close(game: BrawlMinigame) { sessions.remove(game)?.let { it.bus.clear(); it.dialogue.clear() } }
-    private fun session(game: BrawlMinigame): Session = sessions.getOrPut(game) { Session().also { it.dialogue.mode = game.settings.botPersonality } }
+    private fun session(game: BrawlMinigame): Session = sessions.getOrPut(game) {
+        Session(game.settings.teamUps).also { it.dialogue.mode = game.settings.botPersonality }
+    }
     private fun game(player: Player): BrawlMinigame? = if (!running) null else games.getMinigameForPlayer(player)
         ?.takeIf { it.getState() == MinigameState.IN_PROGRESS }
 
@@ -104,6 +111,8 @@ object BotConversationService : KoinComponent, Listener {
             if (game.allPlayers().none { it.uniqueId in audience && BotManager.isBot(it.uniqueId) }) return@Runnable
             val s = session(game)
             s.dialogue.mode = game.settings.botPersonality
+            // What a player types counts with the lobby too: trash talk heats it up, an apology cools it.
+            s.teamUps.said(id, body.take(256).lowercase(), now())
             if (s.dialogue.chat(id, body, now())) s.chatAudience = audience
         })
     }
@@ -123,7 +132,7 @@ object BotConversationService : KoinComponent, Listener {
             val kit = KitService.getKitForPlayer(p)?.id ?: KitService.currentSelectedKitForPlayer(p).id
             BotDialogue.Fighter(p.uniqueId, BotManager.displayNameOf(p), plain.serialize(lang.t("kits.$kit.name")),
                 (game.teamManager.findTeamOf(p)?.metadata?.get("stocks") as? Int ?: 0).coerceAtLeast(0),
-                BotManager.isBot(p), p.gameMode == GameMode.SURVIVAL && !game.respawnManager.isRespawning(p))
+                BotManager.isBot(p) && p.uniqueId !in BotManager.standIns, p.gameMode == GameMode.SURVIVAL && !game.respawnManager.isRespawning(p))
         }
     private fun tick() {
         if (!running) return
@@ -148,6 +157,16 @@ object BotConversationService : KoinComponent, Listener {
                 first != null && second != null && !game.arePlayersOnSameTeam(first, second)
             }?.let { send(game, it, s.chatAudience) }
             if (!s.dialogue.hasPending) s.chatAudience = null
+            if (s.teamUps.enabled) {
+                s.teamUps.poll(time, facts.map { TeamUps.Fighter(it.id, it.lives, it.bot, it.fighting, s.dialogue.personalityOf(it.id)) })
+                    .forEach { teamEvent(game, s, it, facts, time) }
+                // (Debug: what the lobby has against each player, every five seconds while it has anything.)
+                if (BotManager.debug && Bukkit.getCurrentTick() % 100 < 5) facts.filter { !it.bot && s.teamUps.heatOf(it.id) >= 1.0 }.takeIf { it.isNotEmpty() }?.let { hot ->
+                    plugin.logger.info("[teamups] heat: " + hot.joinToString { "${it.name} ${"%.0f".format(s.teamUps.heatOf(it.id))}" } +
+                        (s.teamUps.pact?.let { p -> "; pact of ${p.members.size} on ${facts.find { it.id == p.target }?.name}" }
+                            ?: " (${s.teamUps.standing(hot.maxBy { s.teamUps.heatOf(it.id) }.id, time) { id -> facts.find { it.id == id }?.name ?: "?" }})"))
+                }
+            }
             if (BotManager.debug && !s.castLogged && s.dialogue.personalities().isNotEmpty()) {
                 s.castLogged = true
                 plugin.logger.info("[chatdbg] personalities: " + s.dialogue.personalities().entries.joinToString {
@@ -156,8 +175,58 @@ object BotConversationService : KoinComponent, Listener {
         }
     }
 
-    /** Who [bot] told the lobby it is going after (see [BotDialogue.grudge]), for the bot's target choice. */
-    fun grudge(game: BrawlMinigame, bot: UUID): UUID? = sessions[game]?.dialogue?.grudge(bot, now())
+    /**
+     * Who [bot] is going after before anybody else: the player its pact is on (see [TeamUps]), or
+     * whoever it told the lobby it would get (see [BotDialogue.grudge]). For the bot's target choice.
+     */
+    fun grudge(game: BrawlMinigame, bot: UUID): UUID? = sessions[game]?.let { it.teamUps.targetOf(bot) ?: it.dialogue.grudge(bot, now()) }
+
+    /** Have [a] and [b] teamed up on somebody for the moment (a Team-Ups match)? They leave each other alone while they have. */
+    fun allied(game: BrawlMinigame, a: UUID, b: UUID): Boolean = sessions[game]?.teamUps?.allied(a, b) == true
+
+    /** Debug: how much the lobby of [game] has against [player], and who is teaming on them. */
+    fun teamUpsOf(game: BrawlMinigame): TeamUps? = sessions[game]?.teamUps
+
+    /** Debug: counts [amount] against [player] with the lobby of [game], for [reason]. */
+    fun heat(game: BrawlMinigame, player: UUID, amount: Double, reason: TeamUps.Reason) = session(game).teamUps.provoke(player, amount, reason)
+
+    private fun teamEvent(game: BrawlMinigame, s: Session, event: TeamUps.Event, facts: List<BotDialogue.Fighter>, time: Long) {
+        fun name(id: UUID?) = facts.find { it.id == id }?.name ?: "?"
+        /** Tells the players of the match: the one it is about in the second person. */
+        fun tell(about: UUID, you: String, them: String) = game.allPlayers().mapNotNull { it.player }
+            .filter { it.isOnline && !BotManager.isBot(it) && games.getMinigameForPlayer(it) === game }.forEach { p ->
+                p.sendMessage(Component.text("Game> ", NamedTextColor.BLUE).append(
+                    Component.text(if (p.uniqueId == about) you else them, NamedTextColor.GRAY)))
+                if (p.uniqueId == about) p.playSound(p.location, Sound.BLOCK_BELL_USE, .7f, .6f)
+            }
+        when (event) {
+            is TeamUps.Warned -> {
+                s.dialogue.teamWarned(event.bot, event.target, event.reason, facts, time)
+                // A bot that does not talk cannot say what is coming: the game says it for it.
+                if (s.dialogue.personalityOf(event.bot) == BotPersonality.SILENT)
+                    tell(event.target, "The bots are losing patience with you.", "The bots are losing patience with ${name(event.target)}.")
+                if (BotManager.debug) plugin.logger.info("[teamups] ${name(event.bot)} warns ${name(event.target)} (${event.reason.name.lowercase()})")
+            }
+            is TeamUps.Formed -> {
+                s.dialogue.teamedUp(event.pact, event.declined, facts, time)
+                tell(event.pact.target, "The bots have called a truce and are teaming up on you!", "The bots are teaming up on ${name(event.pact.target)}!")
+                if (BotManager.debug) plugin.logger.info("[teamups] pact on ${name(event.pact.target)} for ${event.pact.reason.name.lowercase()}: " +
+                    "${name(event.pact.leader)} leads ${event.pact.members.filter { it != event.pact.leader }.joinToString { name(it) }}" +
+                    (if (event.declined.isEmpty()) "" else "; staying out: ${event.declined.joinToString { name(it) }}"))
+            }
+            is TeamUps.Left -> {
+                s.dialogue.teamLeft(event.pact, event.quitters, facts, time)
+                if (BotManager.debug) plugin.logger.info("[teamups] ${event.quitters.joinToString { name(it) }} took the apology and left; " +
+                    "still on ${name(event.pact.target)}: ${event.pact.members.joinToString { name(it) }}")
+            }
+            is TeamUps.Ended -> {
+                s.dialogue.teamOver(event.pact, event.how, event.turncoat, event.betrayed, facts, time)
+                tell(event.pact.target, "The team-up on you is over.", "The team-up on ${name(event.pact.target)} is over.")
+                if (BotManager.debug) plugin.logger.info("[teamups] pact on ${name(event.pact.target)} over (${event.how.name.lowercase()})" +
+                    (if (event.turncoat != null) "; ${name(event.turncoat)} turns on ${name(event.betrayed)}" else ""))
+            }
+        }
+    }
 
     /**
      * Nobody types while running and jumping. A bot stops where it stands for as long as the line

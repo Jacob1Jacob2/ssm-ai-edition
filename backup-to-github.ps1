@@ -20,7 +20,17 @@ $ErrorActionPreference = 'Continue'   # git writes progress to stderr
 & $git add -A 2>$null | Out-Null
 & $git diff --cached --quiet
 if ($LASTEXITCODE -eq 0) { 'Nothing has changed since the last backup.' }
-else { & $git commit -q -m $Message; "Committed: $Message" }
+else {
+    # The message goes to git in a file: handed over on the command line, a message with double
+    # quotes in it is cut up by Windows PowerShell, the commit fails, and nothing said so.
+    $note = Join-Path $env:TEMP "ssm-commit-message-$PID.txt"
+    [IO.File]::WriteAllText($note, $Message, (New-Object Text.UTF8Encoding $false))
+    & $git commit -q -F $note
+    $committed = $LASTEXITCODE -eq 0
+    Remove-Item $note -Confirm:$false -ErrorAction SilentlyContinue
+    if (-not $committed) { throw "The commit did not go through (git exit code $LASTEXITCODE): nothing was sent to GitHub." }
+    "Committed: $Message"
+}
 cmd /c "`"$git`" push -q origin main 2>&1" | Out-Null
 $local = & $git rev-parse HEAD
 $remote = ((cmd /c "`"$git`" ls-remote origin refs/heads/main 2>nul") -split '\s+')[0]

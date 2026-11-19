@@ -50,7 +50,7 @@ object LobbyInfoService {
     fun stateFor(player: Player): List<String> {
         val s = GameSetupService.setupOf(player)
         val opponents = if (s.selectedBotNames.isEmpty()) s.bots else s.selectedBotNames.size
-        val mode = if (s.allBotsVsPlayer || opponents == 1) "${opponents}v1" else "FFA"
+        val mode = if (s.allBotsVsPlayer || opponents == 1) "${opponents}v1" else if (s.teamUps) "Team-Ups" else "FFA"
         val items = if (!s.items || s.enabledItems.isEmpty()) "Off"
             else if (s.itemIntervalSeconds < 0) "Random 3-120 sec"
             else "Every ${s.itemIntervalSeconds} sec"
@@ -125,6 +125,7 @@ object LobbyInfoService {
             mark("On", Material.LIME_CONCRETE)
             mark("Random", Material.MAGENTA_CONCRETE)
             mark("FFA", Material.LIME_CONCRETE)
+            mark("Team-Ups", Material.ORANGE_CONCRETE)
             mark("None", Material.LIGHT_GRAY_CONCRETE)
             if (row == 1) {
                 mark(s.difficultyName, when (s.difficultyName.lowercase()) {

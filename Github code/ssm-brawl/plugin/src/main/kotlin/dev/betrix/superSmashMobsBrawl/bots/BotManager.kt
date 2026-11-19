@@ -61,6 +61,11 @@ object BotManager : KoinComponent {
 
     /** /bots debug: log every bot jump, double jump and recovery decision. */
     @Volatile var debug = false
+    /**
+     * Debug: bots that stand in for a player in a bots-only test match. To the bots' chat and to
+     * their team-ups they are a player like any other (somebody to answer, and to gang up on).
+     */
+    val standIns: MutableSet<UUID> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     /** With [debug]: every tick of an air jump, held up against the flight that was picked for it in the head. */
     @Volatile var debugFlights = false
     /** Debug: Sheep bots try their Wool Mine perch on any opponent well below them, reachable or not. */
@@ -208,6 +213,7 @@ object BotManager : KoinComponent {
             plugin.logger.warning("Error removing bot ${bot.profile.name}: ${e.message}")
         }
         bots.remove(player.uniqueId)
+        standIns.remove(player.uniqueId)
         dev.betrix.superSmashMobsBrawl.services.LobbyService.forgetBot(player)
     }
 

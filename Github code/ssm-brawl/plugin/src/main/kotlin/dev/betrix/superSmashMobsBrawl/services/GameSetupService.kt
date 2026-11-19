@@ -39,6 +39,9 @@ object GameSetupService : KoinComponent {
     /** Game sizes you can pick, counting yourself (2 = you vs 1 bot). */
     val PLAYER_COUNTS = listOf(2, 4, 8, 16)
 
+    /** The match modes, in the order the settings menu goes through them. */
+    enum class MatchMode { FFA, BOTS_VS_YOU, TEAM_UPS }
+
     data class Setup @JvmOverloads constructor(
         var difficulty: BotDifficulty? = BotDifficulty.NORMAL, // null = mixed
         var players: Int = 4,
@@ -59,7 +62,14 @@ object GameSetupService : KoinComponent {
         var botKits: Map<String,String> = emptyMap(),
         /** Lives every fighter starts the match with. */
         var lives: Int = 4,
+        /** A free-for-all in which the bots may team up on a player who gets on their nerves (see bots/TeamUps). */
+        var teamUps: Boolean = false,
     ) {
+        /** How the fighters stand to each other. */
+        var matchMode: MatchMode
+            get() = if (allBotsVsPlayer) MatchMode.BOTS_VS_YOU else if (teamUps) MatchMode.TEAM_UPS else MatchMode.FFA
+            set(value) { allBotsVsPlayer = value == MatchMode.BOTS_VS_YOU; teamUps = value == MatchMode.TEAM_UPS }
+
         var reverseMode: ReverseMode
             get() = if (reverseRandom) ReverseMode.RANDOM else if (reverseMap) ReverseMode.ON else ReverseMode.OFF
             set(value) { reverseRandom = value == ReverseMode.RANDOM; reverseMap = value == ReverseMode.ON }
@@ -118,6 +128,7 @@ object GameSetupService : KoinComponent {
                     botPersonality = BotPersonality.restore(parts.getOrNull(16), legacyPersonalities),
                     botKits = parts.getOrNull(17)?.split('|')?.mapNotNull {entry -> entry.split(':').takeIf {it.size==2}?.let {it[0].lowercase() to it[1]}}?.toMap() ?: emptyMap(),
                     lives = parts.getOrNull(18)?.toIntOrNull()?.coerceIn(1, 8) ?: 4,
+                    teamUps = parts.getOrNull(19)?.toBoolean() ?: false,
                 )
         }
     }
@@ -133,7 +144,7 @@ object GameSetupService : KoinComponent {
         setups.forEach { (uuid, s) ->
             props.setProperty(
                 uuid.toString(),
-                "${s.difficulty?.name?.lowercase() ?: "mixed"},${s.players},${s.items},${s.crystals},${s.itemIntervalSeconds},${s.crystalIntervalSeconds},${s.allBotsVsPlayer},${s.botsIdle},${s.selectedBotNames.joinToString("|")},${s.enabledCrystalTiers.sortedBy {it.ordinal}.joinToString("|") {it.name}},${s.reverseMap},${s.reverseRandom},${s.reflectMode.name},${s.mapScale.name},${s.enabledItems.sortedBy { it.ordinal }.joinToString("|") { it.id }},${dev.betrix.superSmashMobsBrawl.items.ArenaItem.CATALOG_VERSION},${s.botPersonality.name},${s.botKits.entries.joinToString("|") {"${it.key}:${it.value}"}},${s.lives}",
+                "${s.difficulty?.name?.lowercase() ?: "mixed"},${s.players},${s.items},${s.crystals},${s.itemIntervalSeconds},${s.crystalIntervalSeconds},${s.allBotsVsPlayer},${s.botsIdle},${s.selectedBotNames.joinToString("|")},${s.enabledCrystalTiers.sortedBy {it.ordinal}.joinToString("|") {it.name}},${s.reverseMap},${s.reverseRandom},${s.reflectMode.name},${s.mapScale.name},${s.enabledItems.sortedBy { it.ordinal }.joinToString("|") { it.id }},${dev.betrix.superSmashMobsBrawl.items.ArenaItem.CATALOG_VERSION},${s.botPersonality.name},${s.botKits.entries.joinToString("|") {"${it.key}:${it.value}"}},${s.lives},${s.teamUps}",
             )
         }
         file.parentFile.mkdirs()
@@ -280,10 +291,25 @@ object GameSetupService : KoinComponent {
             }
             // One opponent is a duel whichever mode is saved, so it is never called a free-for-all.
             val duel = s.bots == 1
-            set(47, menuItem(Material.COPPER_SWORD, if (duel) "1v1 — You vs 1 Bot" else if (s.allBotsVsPlayer) "${s.bots}v1 — All Bots vs You" else "FFA — Free for All", NamedTextColor.AQUA,
-                listOf(if (duel) "With one opponent the match is always 1v1" else "Click to switch match mode", "Every fighter has ${s.lives} ${if (s.lives == 1) "life" else "lives"}"),selected="Mode" in chosen)) {
-                if (!duel) {
-                    s.allBotsVsPlayer = !s.allBotsVsPlayer
+            val mode = s.matchMode
+            set(47, menuItem(Material.COPPER_SWORD, if (duel) "1v1 — You vs 1 Bot" else when (mode) {
+                    MatchMode.BOTS_VS_YOU -> "${s.bots}v1 — All Bots vs You"
+                    MatchMode.TEAM_UPS -> "Team-Ups — Bots May Gang Up on You"
+                    MatchMode.FFA -> "FFA — Free for All"
+                }, NamedTextColor.AQUA,
+                (if (duel) listOf("With one opponent the match is always 1v1") else when (mode) {
+                    MatchMode.FFA -> listOf("Everybody for themselves")
+                    MatchMode.BOTS_VS_YOU -> listOf("Every bot is on one team against you")
+                    MatchMode.TEAM_UPS -> listOf("A free-for-all, until you get on the lobby's nerves:",
+                        "camp, spam one ability, farm the same bot or trash talk",
+                        "and the bots may call a truce and team up on you", "until you lose a life",
+                        "Toxic and Salty bots team up readily, Chill ones hardly ever")
+                } + listOf("Left-click for the next mode", "Right-click to go back")) +
+                    "Every fighter has ${s.lives} ${if (s.lives == 1) "life" else "lives"}", selected="Mode" in chosen)) {
+                // Through the modes like through the player counts: left-click on, right-click back.
+                if (!duel && (click.isLeftClick || click.isRightClick)) {
+                    val modes = MatchMode.entries
+                    s.matchMode = modes[(mode.ordinal + if (click.isLeftClick) 1 else modes.size - 1) % modes.size]
                     changed(player)
                 }
             }

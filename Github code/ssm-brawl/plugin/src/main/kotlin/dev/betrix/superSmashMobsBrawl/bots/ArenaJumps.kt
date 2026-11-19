@@ -395,16 +395,21 @@ class ArenaJumps private constructor(private val world: World, private val voidY
         fun find(world: World, mobility: Mobility): ArenaJumps? = stores[world.uid to (mobility.home.takeIf { it.airborne } ?: Mobility.JUMPER).jumps.id]
 
         /**
-         * One name for each map in each shape it is played in. Mirroring, reflecting and
-         * resizing all move the spawn points and the border, so those tell the shapes apart.
+         * One name for each map in each layout it is played in: "aviation-0bca0a7d" as it was
+         * built, "aviation@rev+small-1f3e5a77" reversed and shrunk. The layout is in the name
+         * because nothing else is sure to tell two of them apart: reflecting a map whose spawn
+         * points are symmetrical leaves spawns and border exactly as they were, on an arena that
+         * is not the same (the two files then took turns overwriting each other). The rest (void
+         * level, border, spawn points) tells a map that has been edited from the one it was.
          */
         fun keyOf(map: GameMapDef): String {
             val shape = buildString {
                 append(map.voidLevel).append('|').append(map.worldBorderSize).append('|')
                 append(map.worldBorderCenterX).append('|').append(map.worldBorderCenterZ)
                 for (p in map.spawnPoints) append('|').append(p.x).append(',').append(p.y).append(',').append(p.z)
+                if (map.layout.isNotEmpty()) append('|').append(map.layout)
             }
-            return "${map.id}-${"%08x".format(shape.hashCode())}"
+            return "${map.id}${if (map.layout.isEmpty()) "" else "@" + map.layout}-${"%08x".format(shape.hashCode())}"
         }
     }
 }

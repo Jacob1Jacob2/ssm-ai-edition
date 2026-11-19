@@ -76,6 +76,9 @@ class MatchIntroManager(private val game:BrawlMinigame):Manageable() {
             add(Component.text("  Each player has $respawns ${if(respawns==1)"respawn" else "respawns"}",WHITE))
             if(game.isPassiveValid("hunger"))add(Component.text("  Attack to restore hunger!",WHITE))
             add(Component.text(if(game.settings.allBotsVsPlayer)"  Defeat the opposing team!" else "  Last player alive wins!",WHITE))
+            // Team-Ups (with one opponent there is nobody for that opponent to team with).
+            if(game.settings.teamUps && !game.settings.allBotsVsPlayer && game.allPlayers().size>2)
+                add(Component.text("  Camp, spam or trash talk and the bots may team up on you!",WHITE))
             add(Component.empty());add(credited);add(separator)
             if(includeKitPrompt && game.getKitSwitchingMode()!=KitSwitchingMode.MYSTERY) {
                 add(Component.empty());add(kitPrompt());add(promptFooter())

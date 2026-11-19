@@ -16,6 +16,14 @@ enum class MapScale(val label: String, val factor: Double) { NORMAL("Normal", 1.
  * Order: keep/reflect a half, reverse the result, then scale all three axes. */
 data class MapTransform(val reverse: Boolean = false, val reflect: ReflectMode = ReflectMode.OFF, val scale: MapScale = MapScale.NORMAL) {
     val active get() = reverse || reflect != ReflectMode.OFF || scale != MapScale.NORMAL
+    /**
+     * A short name for this combination of modifiers, empty for none: "rev", "left", "rev+right+big".
+     * Whatever is kept for each arena (the bots' long jumps, for one) is kept under it: two
+     * layouts of one map can have the very same spawn points and border and still be different
+     * arenas (reflecting a map whose spawns are symmetrical and whose terrain is not).
+     */
+    val key get() = listOfNotNull("rev".takeIf { reverse }, reflect.name.lowercase().takeIf { reflect != ReflectMode.OFF },
+        scale.name.lowercase().takeIf { scale != MapScale.NORMAL }).joinToString("+")
     val description get() = listOfNotNull(if (reverse) "Reversed" else null,
         if (reflect != ReflectMode.OFF) "Reflect ${reflect.label}" else null,
         scale.label.takeIf { scale != MapScale.NORMAL }).joinToString(", ")
@@ -54,6 +62,6 @@ data class MapTransform(val reverse: Boolean = false, val reflect: ReflectMode =
             worldBorderSize = map.worldBorderSize * scale.factor,
             voidLevel = map.voidLevel * scale.factor - if (scale == MapScale.SMALL) 8 else 0,
             // Markers are removed BEFORE resampling, so they cannot erase real terrain when shrinking.
-            markerBlocks = emptyList())
+            markerBlocks = emptyList(), layout = key)
     }
 }

@@ -479,6 +479,8 @@ class BrawlMinigame(val minigameDef: MinigameDef, val teams: List<MinigameTeam>,
     }
 
     fun arePlayersOnSameTeam(playerA: OfflinePlayer, playerB: OfflinePlayer): Boolean {
+        // Team-Ups: bots that have teamed up on somebody do not fight each other until that is over.
+        if (settings.teamUps && dev.betrix.superSmashMobsBrawl.services.BotConversationService.allied(this, playerA.uniqueId, playerB.uniqueId)) return true
         if (settings.allBotsVsPlayer && host != null && playerA.uniqueId != host && playerB.uniqueId != host &&
             allPlayers().any { it.uniqueId == playerA.uniqueId } && allPlayers().any { it.uniqueId == playerB.uniqueId }) return true
         val teamA = teamManager.findTeamOf(playerA)

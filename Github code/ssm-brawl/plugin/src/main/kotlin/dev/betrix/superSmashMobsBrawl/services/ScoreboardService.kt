@@ -171,6 +171,7 @@ object ScoreboardService : KoinComponent {
         }
         val mode = if (setup.allBotsVsPlayer || setup.bots == 1) text("${setup.bots}", NamedTextColor.RED)
             .append(text("v", NamedTextColor.WHITE)).append(text("1", NamedTextColor.GREEN))
+            else if (setup.teamUps) text("Team-Ups", NamedTextColor.GOLD)
             else text("FFA", NamedTextColor.GREEN)
         val lines = listOf(
             Component.empty(),
@@ -248,6 +249,7 @@ object ScoreboardService : KoinComponent {
             lines += text("Mode: ", NamedTextColor.WHITE).append(
                 if (setup.allBotsVsPlayer || everyone.size == 2) text("${everyone.size - 1}", NamedTextColor.RED)
                     .append(text("v", NamedTextColor.WHITE)).append(text("1", NamedTextColor.GREEN))
+                else if (setup.teamUps) text("Team-Ups", NamedTextColor.GOLD)
                 else text("FFA", NamedTextColor.GREEN))
             lines += text(ClassicSidebar.DIVIDER, NamedTextColor.GREEN).let {
                 if (ResourcePackService.hasPack(viewer)) it.append(Component.text("\uEFFF"))

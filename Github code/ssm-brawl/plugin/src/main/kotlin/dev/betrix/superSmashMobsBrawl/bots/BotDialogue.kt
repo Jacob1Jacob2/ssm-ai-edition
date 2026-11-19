@@ -49,6 +49,8 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
     private val cast = mutableMapOf<UUID, BotPersonality>()
     /** Bot -> the fighter it said it would go after, and until when. */
     private val grudges = mutableMapOf<UUID, Pair<UUID, Long>>()
+    /** This match's team-ups (see [TeamUps]) when it is played in that mode: who is teaming on whom decides some answers. */
+    var teamUps: TeamUps? = null
     /** The match's setting: one personality for every bot, or Random for one each. */
     var mode: BotPersonality = BotPersonality.SILENT
         set(value) {
@@ -363,6 +365,83 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
         }
     }
 
+    // ------------------------------------------------------------------ Team-Ups
+
+    /** Queues one line of a conversation about a team-up, a moment after the line before it. */
+    private fun teamLine(f: Fighter?, text: String?, now: Long, grudge: UUID? = null) {
+        if (f == null || text == null || followups.size >= MAX_CONVERSATION) return
+        val after = maxOf(now, followups.lastOrNull()?.due ?: now)
+        followups.addLast(Followup(f.id, text, after + random.nextLong(900, 2601), grudge))
+    }
+
+    /**
+     * Bots have agreed to go after a player together ([TeamUps.Formed]). The one whose idea it was
+     * says so, a couple of the others say they are in, and a chill bot that was asked may say what
+     * it thinks of teaming.
+     */
+    fun teamedUp(pact: TeamUps.Pact, declined: List<UUID>, fighters: List<Fighter>, now: Long) {
+        if (mode == BotPersonality.SILENT) return
+        enroll(fighters)
+        val target = fighters.find { it.id == pact.target } ?: return
+        fun talker(id: UUID) = fighters.find { it.id == id && it.bot && talks(it.id) }
+        fun voice(f: Fighter) = lines.speaker(f, fighters, personalityOf(f.id))
+        val members = pact.members.mapNotNull(::talker)
+        val leader = talker(pact.leader) ?: members.firstOrNull() ?: return
+        val ups = teamUps
+        teamLine(leader, voice(leader).rallyOn(target, pact.reason, ups?.spammed(target.id, now),
+            ups?.killsOf(target.id, leader.id, now) ?: 0, pact.members.size), now)
+        members.filter { it.id != leader.id }.shuffled(random).take(2).forEach { teamLine(it, voice(it).joinTeam(target), now) }
+        declined.mapNotNull(::talker).filter { personalityOf(it.id) == BotPersonality.CHILL }.randomOrNull(random)
+            ?.takeIf { random.nextDouble() < 0.75 }?.let { teamLine(it, voice(it).declineTeam(target), now) }
+        lastBanter = now
+    }
+
+    /** A bot that is about to call for a team-up on a player says so first ([TeamUps.Warned]). */
+    fun teamWarned(bot: UUID, target: UUID, reason: TeamUps.Reason, fighters: List<Fighter>, now: Long) {
+        if (mode == BotPersonality.SILENT) return
+        enroll(fighters)
+        val speaker = fighters.find { it.id == bot && it.bot && talks(it.id) } ?: return
+        val player = fighters.find { it.id == target } ?: return
+        teamLine(speaker, lines.speaker(speaker, fighters, personalityOf(speaker.id)).warnTeam(player, reason, teamUps?.spammed(target, now)), now)
+    }
+
+    /** Bots that took the player's apology and left the pact ([TeamUps.Left]) say so. */
+    fun teamLeft(pact: TeamUps.Pact, quitters: List<UUID>, fighters: List<Fighter>, now: Long) {
+        if (mode == BotPersonality.SILENT) return
+        val target = fighters.find { it.id == pact.target } ?: return
+        quitters.mapNotNull { id -> fighters.find { it.id == id && it.bot && talks(it.id) } }.shuffled(random).take(1)
+            .forEach { teamLine(it, lines.speaker(it, fighters, personalityOf(it.id)).truceTaken(target), now) }
+    }
+
+    /**
+     * The pact is over ([TeamUps.Ended]). One of the bots says so; and if a toxic one has turned on
+     * a partner, it says that too and means it (see [grudge]), and the partner answers.
+     */
+    fun teamOver(pact: TeamUps.Pact, how: TeamUps.End, turncoat: UUID?, betrayed: UUID?, fighters: List<Fighter>, now: Long) {
+        // A bot that never talks can still turn on its partner.
+        if (turncoat != null && betrayed != null) grudges[turncoat] = betrayed to now + GRUDGE_MS
+        if (mode == BotPersonality.SILENT) return
+        // (Whatever of the call to arms has not been typed yet is out of date: nobody says
+        // "everyone get them" about somebody who has just been got.)
+        followups.clear()
+        fun talker(id: UUID?) = fighters.find { it.id == id && it.bot && talks(it.id) }
+        fun voice(f: Fighter) = lines.speaker(f, fighters, personalityOf(f.id))
+        val target = fighters.find { it.id == pact.target }
+        val members = pact.members.mapNotNull(::talker)
+        if (target != null) {
+            if (how == TeamUps.End.FORGIVEN) members.filter { personalityOf(it.id) == BotPersonality.CHILL }.randomOrNull(random)
+                ?.let { teamLine(it, voice(it).truceTaken(target), now) }
+            else members.filter { it.id != turncoat }.let { list -> list.find { it.id == pact.leader } ?: list.randomOrNull(random) }
+                ?.let { teamLine(it, voice(it).teamDone(target, how), now) }
+        }
+        val snake = talker(turncoat)
+        val partner = fighters.find { it.id == betrayed }
+        if (snake != null && partner != null) {
+            teamLine(snake, voice(snake).turnOn(partner), now, partner.id)
+            talker(betrayed)?.let { teamLine(it, voice(it).turnedOn(snake), now, snake.id) }
+        }
+    }
+
     /** Counts a camping callout and keeps bots off that fighter's case for a while. Returns how many came before. */
     private fun calledOut(id: UUID, now: Long): Int {
         val level = callouts[id] ?: 0
@@ -421,7 +500,18 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
         // Questions with a factual answer first, then accusations, then small talk.
         if (has("\\b(what|which|wat) kit\\b")) return say.kit()
         if (has("\\b(how many lives|your lives|ur lives|my lives|score)\\b")) return say.lives(player)
-        if (has("\\b(stop|why|quit)\\b.*\\b(target|targeting|attack|attacking|chasing|chase|focus|focusing|hitting)\\b|\\b(teaming|teamers|teamer|2v1|targeting me)\\b")) {
+        // In a Team-Ups match the bots may really have a pact on this player: "stop teaming" and
+        // "sorry" then get the truth for an answer.
+        val pact = teamUps?.pact?.takeIf { it.target == player.id }
+        if (pact != null && has(TEAMING)) {
+            topic("target")
+            return if (bot.id in pact.members) say.whyTeamed(player, pact.reason, teamUps?.spammed(player.id, now),
+                    teamUps?.killsOf(player.id, bot.id, now) ?: 0, pact.members.size)
+                else say.notTeaming(player)
+        }
+        if (pact != null && bot.id in pact.members && has("\\b(sorry|sry|my bad|mb|truce|peace)\\b"))
+            return say.truceRefused(player, teamUps?.killsOf(player.id, bot.id, now) ?: 0)
+        if (has(TEAMING)) {
             val attackers = hits.filter { it.victim == player.id && now - it.time < 15000 }.map { it.attacker }.distinct()
             topic("target")
             return if (!enemies(bot.id, player.id)) say.sameTeam(player)
@@ -480,6 +570,9 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
         const val ARGUMENT_GAP_MS = 18_000L
         /** The most lines a conversation between bots can queue up. */
         const val MAX_CONVERSATION = 7
+        /** A player asking why they are being targeted, or saying that they are being teamed on. */
+        private const val TEAMING = "\\b(stop|why|quit)\\b.*\\b(target|targeting|attack|attacking|chasing|chase|focus|focusing|hitting)\\b|" +
+            "\\b(teaming|teamers|teamer|teamed|team on|[2-9]v1|targeting me|ganging|gang up|all on me)\\b"
     }
 
     private fun prune(now: Long) {

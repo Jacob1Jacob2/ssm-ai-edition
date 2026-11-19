@@ -403,6 +403,153 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
         fun ganged(count: Int): String? = pick("ganged", listOf("teaming?? ok", "yall teaming is crazy", "${count}v1 nice", "wow ${count}v1 so brave",
             "reported for teaming $lol", "need $count of u to beat me $lol", "ok all of u come then", "teamers $lol"), BotPersonality.TOXIC)
 
+        // ------------------------------------------------------------ Team-Ups: the lobby turning on a player
+
+        /**
+         * Calling for everybody to go after [target], who has been asking for it ([reason]).
+         * [spammed] is the ability they keep pressing, [mine] how often they have killed this bot
+         * lately, [team] how many bots are in on it.
+         */
+        fun rallyOn(target: BotDialogue.Fighter, reason: TeamUps.Reason, spammed: String?, mine: Int, team: Int): String? {
+            val a = spammed?.let(::move)
+            val t = ref(target)
+            return when {
+                reason == TeamUps.Reason.SPAM && a != null -> say("teamup.spam",
+                    listOf("everyone get the $a spammer", "all on $t til the $a stops", "$t spams we team", "truce / everyone on $t",
+                        "$t only presses $a so all of us on $t", "ok whos sick of $a / get $t", "$a $a $a ok everybody on $t"),
+                    listOf("ok thats a lot of $a / lets all get $t", "sorry $t the $a has to stop $lol", "truce til $t stops with the $a?",
+                        "ok $t we coming for u and ur $a $lol"),
+                    listOf("pls everyone get $t i cant take the $a anymore", "team on $t til the $a stops pls", "im so tired of $a / all on $t",
+                        "can someone help me kill $t the $a is nonstop", "i cant move bc of $a / everybody get $t"))
+                reason == TeamUps.Reason.FARMING -> say("teamup.farm",
+                    listOf("ok $t thinks this is ez / everyone on $t", "$t keeps farming kills team up", "all on $t $lol", "can we all just kill $t first",
+                        "truce til $t loses a life", "$t is getting too comfy everyone on $t", "kill $t first then we fight", "$t has ${target.lives} lives still get them"),
+                    listOf("$t is too good we gotta team $lol", "ok $t is carrying / truce til we get them?", "lets even it out / all on $t",
+                        "ok $t ur too strong we teaming $lol"),
+                    listOf("ok thats it / everyone on $t", "$t keeps killing me help", "im not dying to $t again someone team with me",
+                        "why does $t only kill me / get them", "can we pls team on $t") +
+                        if (mine >= 2) listOf("$t killed me $mine times can we team on them", "$mine times $t has killed me / everybody get them") else emptyList())
+                reason == TeamUps.Reason.MOUTH -> say("teamup.mouth",
+                    listOf("$t talks too much everyone get $t", "ok $t has a lot to say / all on $t", "lets shut $t up real quick", "everyone on the loud one $lol",
+                        "$t typed their way into a ${team}v1", "ok $t said ez / everybody get $t"),
+                    listOf("ok $t asked for it $lol", "$t u kinda earned this one / all on $t", "ok lets humble $t real quick $lol"),
+                    listOf("$t wont stop talking / get them", "ok $t wants to talk / everyone on $t", "im so done with $t typing / team on them"))
+                else -> say("teamup.camp",
+                    listOf("ok everyone get $t", "truce til $t is dead", "all on $t $lol", "$t camps we team simple", "new plan everyone jump $t",
+                        "stop fighting each other and get $t", "who wants to gang up on the camper", "everyone on the camper",
+                        "$t wants to camp so we all go $t", "truce / everyone on $t", "yo forget each other get $t"),
+                    listOf("ok $t we gotta come get u now $lol", "truce til $t comes out of there?", "sorry $t but this is taking forever / all on $t",
+                        "ok lets all just go get $t", "$t ur making us team $lol"),
+                    listOf("can we pls all get $t", "im so sick of the camping / everyone get $t", "someone help me get $t out of there",
+                        "team on $t pls i cant reach them alone", "$t has been hiding all game can we team", "ok im done / all on $t"))
+            }
+        }
+
+        /** Telling [target] what is coming if they keep it up: the last thing a lobby says before it teams. */
+        fun warnTeam(target: BotDialogue.Fighter, reason: TeamUps.Reason, spammed: String?): String? {
+            val a = spammed?.let(::move)
+            val t = ref(target)
+            val doing = when {
+                reason == TeamUps.Reason.SPAM && a != null -> "spamming $a"
+                reason == TeamUps.Reason.FARMING -> "farming"
+                reason == TeamUps.Reason.MOUTH -> "talking"
+                else -> "camping"
+            }
+            return say("teamup.warn",
+                listOf("$t keep $doing and we all jump u", "$t ur about to get teamed on", "last warning $t", "one more minute of $doing and its all of us on u $t",
+                    "$t u really want a ${fighters.count { it.bot && it.lives > 0 }}v1?", "keep $doing $t see what happens", "$t ur making this a team game"),
+                listOf("$t come on dont make us team $lol", "$t careful ur making everyone mad $lol", "$t maybe ease up on the $doing $lol",
+                    "$t they gonna team on u if u keep $doing"),
+                listOf("$t if u dont stop $doing im getting everyone", "im this close to teaming on $t", "dont make me get the others $t",
+                    "$t stop $doing or i swear we team", "ok $t one more and im asking them to team"))
+        }
+
+        /** Taking another bot up on its call to go after [target]. */
+        fun joinTeam(target: BotDialogue.Fighter): String? {
+            val t = ref(target)
+            return say("teamup.join",
+                listOf("bet", "say less", "omw", "finally", "on it", "ya get $t", "been waiting for this $lol", "im in", "lets go", "$t is done", "ez"),
+                listOf("ok fine", "ok just this once $lol", "alright alright", "ok ya its been long enough", "sorry $t $lol", "ok im in but thats it", "fair enough"),
+                listOf("finally", "yes pls", "thank u", "ya im so done with $t", "about time", "im in", "fr get $t", "ok ya"))
+        }
+
+        /** A chill bot that wants no part in teaming on [target]. */
+        fun declineTeam(target: BotDialogue.Fighter): String? {
+            val t = ref(target)
+            return pick("teamup.decline", listOf("nah not teaming", "im good $lol", "teaming is lame tho", "nah let $t play", "ill fight $t 1v1",
+                "not my thing", "u do that im out", "nah thats weak", "no teaming for me gl tho", "nah id rather win fair", "not doing that sorry"),
+                BotPersonality.CHILL)
+        }
+
+        /** The team-up on [target] is over. */
+        fun teamDone(target: BotDialogue.Fighter, how: TeamUps.End): String? {
+            val t = ref(target)
+            return when (how) {
+                TeamUps.End.KILLED -> say("teamup.done",
+                    listOf("ez", "get teamed on $lol", "thats what u get $t", "ok truce over", "ok back to ffa", "stay out of that spot $t",
+                        "ok everyone for themselves again", "bye $t $lol"),
+                    listOf("ok thats enough", "ok we good now $t $lol", "sorry $t gf", "truce over gl all", "ok back to normal", "ok no more teaming"),
+                    listOf("finally", "ok now we fight normal", "that felt good", "truce over i guess", "dont do that again $t", "about time"))
+                TeamUps.End.TIMEOUT -> say("teamup.bored",
+                    listOf("ok forget it", "whatever truce over", "$t isnt worth it", "ok im bored / ffa again", "this is taking too long"),
+                    listOf("ok lets just play", "truce over $lol", "eh not worth it", "ok back to ffa"),
+                    listOf("this isnt working", "ok i give up on $t", "we cant even get $t together", "whatever im done"))
+                TeamUps.End.GONE -> say("teamup.gone", listOf("$t is out $lol", "bye $t", "gg $t $lol", "and $t is gone"), listOf("gg $t", "ok gl everyone"),
+                    listOf("finally $t is gone", "ok good"))
+                else -> null
+            }
+        }
+
+        /** A toxic bot turning on [partner] the moment the team-up is over. */
+        fun turnOn(partner: BotDialogue.Fighter): String? {
+            val x = ref(partner)
+            return pick("teamup.turn", listOf("and now ur next $x", "truce over $x $lol", "thx for the help $x / ur next", "never said i was ur friend $x",
+                "ok $x ur turn", "nothing personal $x", "$x u really thought $lol"), BotPersonality.TOXIC)
+        }
+
+        /** Finding the partner of a moment ago, [snake], has turned on this bot. */
+        fun turnedOn(snake: BotDialogue.Fighter): String? {
+            val s = ref(snake)
+            return say("teamup.turned",
+                listOf("knew it $lol", "wow ok", "bet come here", "snake", "$s u snake"),
+                listOf("lol ok fair", "saw that coming $lol", "ok ok gf", "that was fast $lol"),
+                listOf("are u serious", "we literally just teamed", "i helped u??", "this is why i dont team", "ofc u did"))
+        }
+
+        /** [player] complains about being teamed on, to a bot that is in on it. */
+        fun whyTeamed(player: BotDialogue.Fighter, reason: TeamUps.Reason, spammed: String?, mine: Int, team: Int): String? {
+            val a = spammed?.let(::move)
+            val t = ref(player)
+            val toxic = when {
+                reason == TeamUps.Reason.SPAM && a != null -> listOf("stop spamming $a then", "u spam we team", "$a spam gets u teamed $lol", "press another button then")
+                reason == TeamUps.Reason.FARMING -> listOf("u were winning too hard $lol", "get good at ${team}v1 then", "ur the one with all the kills", "ur too comfy thats why")
+                reason == TeamUps.Reason.MOUTH -> listOf("u talked ur way into it $lol", "less typing next time", "u said ez so", "u asked for it in chat")
+                else -> listOf("then stop camping", "come out and we stop $lol", "u camp we team", "cry about it", "thats what campers get", "should have fought us")
+            }
+            return say("teamup.why", toxic,
+                listOf("sorry $t its the only way to get u $lol", "ya sorry about that", "we stop when u come fight", "my bad it was getting old tho",
+                    "one life then we stop promise"),
+                listOf("u started it", "its the only way to get u", "now u know how it feels", "well stop then", "what did u expect") +
+                    if (mine >= 2) listOf("u killed me $mine times what did u expect") else emptyList())
+        }
+
+        /** [player] complains about being teamed on, to a bot that stayed out of it. */
+        fun notTeaming(player: BotDialogue.Fighter) = say("teamup.notme", listOf("im not even teaming thats them", "wasnt me $lol", "i didnt sign up for that"),
+            listOf("im not teaming on u thats them $lol", "i told them no", "not me ${ref(player)}"))
+
+        /** A chill bot letting [player] off after an apology. */
+        fun truceTaken(player: BotDialogue.Fighter): String? {
+            val t = ref(player)
+            return pick("teamup.forgive", listOf("ok all good", "ok im out of this", "np truce", "ok ok we cool", "ok im done chasing u $lol", "ok $t we good"),
+                BotPersonality.CHILL)
+        }
+
+        /** A bot that is not letting [player] off for saying sorry. [mine] is how often they have killed it lately. */
+        fun truceRefused(player: BotDialogue.Fighter, mine: Int) = say("teamup.nope",
+            listOf("too late $lol", "nah", "should have thought of that", "no", "sorry doesnt work here $lol"),
+            listOf("one life then we good ${ref(player)}", "almost done $lol"),
+            listOf("now ur sorry", "nope", "u had ur chance", "too late") + if (mine >= 2) listOf("after u killed me $mine times? no") else emptyList())
+
         /** A salty bot annoyed that [nice] is being friendly about a fight. */
         fun sneer(nice: BotDialogue.Fighter, about: String): String? {
             val n = ref(nice)

@@ -41,6 +41,11 @@ data class GameMapDef(
     val icon: String? = null,
     val size: String? = null,
     val isNew: Boolean = false,
+    /**
+     * Which of its layouts this is, when the map modifiers have made another arena of it
+     * (MapTransform.key: "rev", "left+small" ...). Empty for the map as it was built.
+     */
+    val layout: String = "",
 ) : MapDef()
 
 @Serializable
