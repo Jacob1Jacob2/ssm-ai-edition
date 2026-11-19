@@ -126,8 +126,9 @@ object ScoreboardService : KoinComponent {
 
     /** The mode as the sidebar words it, the numbers of a 3v1 or a 2v2 in the colours of their sides. */
     private fun modeText(mode: MatchMode, players: Int, random: Boolean = false): Component = when {
-        random && mode == MatchMode.TEAMS -> versus("Blue", NamedTextColor.BLUE, "Red", NamedTextColor.RED)
-        random && mode == MatchMode.BOTS_VS_YOU -> versus("All", NamedTextColor.RED, "1", NamedTextColor.GREEN)
+        // On Random players the sizes of the sides are not known until the match starts.
+        random && mode == MatchMode.TEAMS -> text("Teams", NamedTextColor.BLUE)
+        random && mode == MatchMode.BOTS_VS_YOU -> text("All", NamedTextColor.RED).append(text(" v ", NamedTextColor.WHITE)).append(text("1", NamedTextColor.GREEN))
         !random && players <= 1 -> text("Sandbox", NamedTextColor.AQUA)
         !random && (players == 2 || mode == MatchMode.BOTS_VS_YOU) -> versus("${players - 1}", NamedTextColor.RED, "1", NamedTextColor.GREEN)
         !random && mode == MatchMode.TEAMS && players >= 4 -> versus("${players / 2}", NamedTextColor.BLUE, "${players - players / 2}", NamedTextColor.RED)
