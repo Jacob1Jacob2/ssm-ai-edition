@@ -21,8 +21,9 @@ import org.koin.core.component.inject
  * Debug harness (/bots navgen): works out the long jumps of every map ahead of time.
  *
  * A map's long jumps are worked out the first time it is played in a given shape and kept on disk
- * ([ArenaJumps]). This plays an empty two-bot match on each map in turn, does all of that work at
- * once and saves it, so that no real match ever has to wait for it. The files it leaves in
+ * ([ArenaJumps]), once for each kind of air jump (standard, slime, wolf, goat, spider). This
+ * plays an empty two-bot match on each map in turn, does all of that work at once and saves it,
+ * so that no real match ever has to wait for it. The files it leaves in
  * plugins/<plugin>/nav are what gets copied to a server.
  *
  * A map is given as "aviation", or with the shape it is played in: "aviation@small", "ruins@big",
@@ -56,21 +57,30 @@ object BotNavGen : KoinComponent {
     private var current: String? = null
     private var bots: List<Player> = emptyList()
     private var game: BrawlMinigame? = null
-    private var jumps: ArenaJumps? = null
+    private var jumps: List<ArenaJumps> = emptyList()
     private var seeds: List<Location> = emptyList()
     private var waited = 0
     private var rest = 0
     private var began = 0L
     private var done = 0
     private var failed = ArrayList<String>()
+    /** The kinds of jump being worked out this time (all of [Mobility.HOMES], or some). */
+    private var kinds: List<Mobility> = Mobility.HOMES
 
     val running: Boolean get() = task != null
 
     private fun log(message: String) = plugin.logger.info("[navgen] $message")
 
-    /** [maps] are map names as [shapeOf] reads them; "all" is every map, and "all@small" every map in that shape. */
-    fun start(maps: List<String>): String {
+    /**
+     * [maps] are map names as [shapeOf] reads them; "all" is every map, and "all@small" every map
+     * in that shape. [jumps] are the kinds of jump to do it for (standard, bouncy, wolf, goat,
+     * spider), or "all".
+     */
+    fun start(maps: List<String>, jumps: List<String> = listOf("all")): String {
         if (running) return "The maps are already being worked out."
+        val chosen = if ("all" in jumps) Mobility.HOMES else Mobility.HOMES.filter { it.jumps.id in jumps }
+        if (chosen.isEmpty()) return "No such kind of jump: one or more of ${Mobility.HOMES.joinToString(", ") { it.jumps.id }}, or all."
+        kinds = chosen
         if (BotChaseTest.running) return "A chase test is running."
         val every = dataService.getAllGameMaps().map { it.id }.sorted()
         todo.clear()
@@ -86,7 +96,7 @@ object BotNavGen : KoinComponent {
         failed = ArrayList()
         rest = 0
         task = Bukkit.getScheduler().runTaskTimer(plugin, Runnable { tick() }, 1L, 1L)
-        return "Working out ${todo.size} maps."
+        return "Working out ${todo.size} maps for ${kinds.joinToString(", ") { it.jumps.id }}."
     }
 
     private fun tick() {
@@ -111,7 +121,7 @@ object BotNavGen : KoinComponent {
                 bots = started
                 current = next
                 game = null
-                jumps = null
+                jumps = emptyList()
                 waited = 0
                 return
             }
@@ -124,18 +134,19 @@ object BotNavGen : KoinComponent {
                 val world = found.worldManager.getWorld() ?: return
                 game = found
                 seeds = world.data.spawnPoints.map { Location(world.world, it.x, it.y, it.z) }
-                jumps = ArenaJumps.of(world.world, world.data.voidLevel.toInt(), world.data)
+                // One set for each kind of air jump there is.
+                jumps = kinds.map { ArenaJumps.of(world.world, world.data.voidLevel.toInt(), world.data, it) }
                 began = System.nanoTime()
                 return
             }
-            val store = jumps ?: return close()
+            if (jumps.isEmpty()) return close()
             if (match.getState() != MinigameState.IN_PROGRESS) { log("FAILED $spec: its match ended"); failed += spec; return close() }
-            // A good part of each tick, and never so long that the server looks hung.
-            if (!store.complete) store.work(WORK_NANOS, seeds, load = true)
-            if (!store.complete) return
-            log("DONE $spec: ${store.size} blocks, ${store.jumps} long jumps" +
-                (if (store.loaded) " (already on disk)" else ", ${(System.nanoTime() - began) / 1_000_000} ms") +
-                " -> ${match.worldManager.getWorld()?.data?.let { ArenaJumps.keyOf(it) }}.jumps")
+            // On every thread there is to spare, a slice at a time, so that the server never looks hung.
+            val store = jumps.firstOrNull { !it.complete }
+            if (store != null) { store.workTogether(seeds, pool); return }
+            log("DONE $spec: " + kinds.indices.joinToString(", ") { i ->
+                "${kinds[i].jumps.id} ${jumps[i].jumps} long jumps, ${jumps[i].struck} struck out${if (jumps[i].loaded) " (on disk)" else ""}" } +
+                ", ${(System.nanoTime() - began) / 1_000_000} ms -> ${match.worldManager.getWorld()?.data?.let { ArenaJumps.keyOf(it) }}*.jumps")
             done++
             close()
         } catch (e: Exception) {
@@ -151,7 +162,7 @@ object BotNavGen : KoinComponent {
         val old = bots
         current = null
         game = null
-        jumps = null
+        jumps = emptyList()
         bots = emptyList()
         rest = 80
         if (match != null && match.getState() == MinigameState.IN_PROGRESS) match.endMinigame("nav_gen")
@@ -164,5 +175,8 @@ object BotNavGen : KoinComponent {
         log("FINISHED $done maps worked out" + (if (failed.isEmpty()) "" else ", failed: ${failed.joinToString(" ")}"))
     }
 
-    private const val WORK_NANOS = 40_000_000L
+    /** The threads the jumps are flown on: all but a couple, which are left to the server and whoever is at the PC. */
+    val pool: java.util.concurrent.ForkJoinPool by lazy {
+        java.util.concurrent.ForkJoinPool((Runtime.getRuntime().availableProcessors() - 2).coerceAtLeast(1))
+    }
 }

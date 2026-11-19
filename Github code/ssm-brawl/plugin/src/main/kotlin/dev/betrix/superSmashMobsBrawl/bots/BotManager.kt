@@ -61,6 +61,8 @@ object BotManager : KoinComponent {
 
     /** /bots debug: log every bot jump, double jump and recovery decision. */
     @Volatile var debug = false
+    /** With [debug]: every tick of an air jump, held up against the flight that was picked for it in the head. */
+    @Volatile var debugFlights = false
     /** Debug: Sheep bots try their Wool Mine perch on any opponent well below them, reachable or not. */
     @Volatile var forcePerch = false
     /** Debug: bots forget how they died, the way they played before they learned from it. */

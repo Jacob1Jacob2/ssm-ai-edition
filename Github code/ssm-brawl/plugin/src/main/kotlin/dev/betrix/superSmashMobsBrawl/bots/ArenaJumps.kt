@@ -13,8 +13,9 @@ import org.bukkit.Location
 import org.bukkit.World
 
 /**
- * Every long jump of one arena: for each block at the rim of something, the landings a double
- * jump really reaches from it ([ArenaTerrain.longJumps]).
+ * Every long jump of one arena for one kind of fighter: for each block at the rim of something,
+ * the landings its air jump really reaches from it ([ArenaTerrain.longJumps]). A slime's bounce
+ * and a wolf's pounce are not a standard double jump, so each kind ([Mobility.home]) has its own.
  *
  * Working one block out means flying a few dozen jumps in the head, far too much to do in the
  * middle of a route search. So it is done here, a few milliseconds a tick, outward from the spawn
@@ -23,10 +24,10 @@ import org.bukkit.World
  * again a moment later, by which time it is.
  *
  * An arena is the same every time it is played, so the finished work is kept on disk, one file
- * for each map in each shape it is played in (mirrored, twice the size and so on). From the
- * second match on, every jump is known before the countdown ends.
+ * for each map in each shape it is played in (mirrored, twice the size and so on) and each kind of
+ * jump. From the second match on, every jump is known before the countdown ends.
  */
-class ArenaJumps private constructor(private val world: World, private val voidY: Int, private val file: File?) {
+class ArenaJumps private constructor(private val world: World, private val voidY: Int, private val file: File?, private val kind: Mobility) {
     private val found = HashMap<RouteNode, List<RouteEdge>>()
     /** Asked for by a search: worked out before anything else. */
     private val asked = ArrayDeque<RouteNode>()
@@ -53,6 +54,9 @@ class ArenaJumps private constructor(private val world: World, private val voidY
     private var loader: ArenaTerrain? = null
     private var spent = 0L
     private var announced = false
+    /** For [workTogether]: blocks whose jumps are next to be flown, and what the rules give from each. */
+    private val batch = ArrayList<RouteNode>()
+    private val based = HashMap<RouteNode, List<RouteEdge>>()
 
     /** Blocks worked out, and long jumps found from them. */
     val size: Int get() = found.size
@@ -63,7 +67,7 @@ class ArenaJumps private constructor(private val world: World, private val voidY
     var loaded = false
         private set
     /** Nothing left to work out. */
-    val complete: Boolean get() = pending == null && seeded && unseeded?.isEmpty() == true && asked.isEmpty() && sweep.isEmpty()
+    val complete: Boolean get() = pending == null && seeded && unseeded?.isEmpty() == true && asked.isEmpty() && sweep.isEmpty() && batch.isEmpty()
     /** Blocks a search is waiting for. */
     val waiting: Int get() = asked.size
     /** Milliseconds of work this arena has taken in this match. */
@@ -90,7 +94,7 @@ class ArenaJumps private constructor(private val world: World, private val voidY
         return reader.longJumps(node, reader.neighbours(node)).also { found[node] = it; seen.add(node) }
     }
 
-    private fun reader(): ArenaTerrain = loader ?: ArenaTerrain(world, voidY, Mobility.JUMPER, loadChunks = true).also { loader = it }
+    private fun reader(): ArenaTerrain = loader ?: ArenaTerrain(world, voidY, kind, loadChunks = true).also { loader = it }
 
     /**
      * Works on the arena for up to [nanos] nanoseconds. [seeds] are where to start from (the
@@ -101,7 +105,7 @@ class ArenaJumps private constructor(private val world: World, private val voidY
     fun work(nanos: Long, seeds: List<Location>, load: Boolean = false): Int {
         if (nanos <= 0) return 0
         val began = System.nanoTime()
-        val nav = ArenaNav.of(world, voidY, Mobility.JUMPER)
+        val nav = ArenaNav.of(world, voidY, kind)
         val reader = if (load) reader() else null
         pending?.let { read -> if (!check(read, reader ?: nav.terrainNow(), load)) return 0 }
         if (complete) return 0
@@ -161,20 +165,74 @@ class ArenaJumps private constructor(private val world: World, private val voidY
             val jumps = long ?: emptyList()
             if (incomplete) unsure += node
             if (found.put(node, jumps) == null) done++
-            for (e in merge(base, jumps, true)) if (seen.add(e.node)) sweep.addLast(e.node)
+            for (e in merge(base, jumps, kind.jumps.flown)) if (seen.add(e.node)) sweep.addLast(e.node)
         }
         stalledSince = if (stalled == 0) -1 else if (stalledSince < 0) tick else stalledSince
         spent += System.nanoTime() - began
-        if (complete && !saved) {
-            if (!announced && !loaded) {
-                announced = true
-                log("${file?.name ?: world.name}: ${found.size} blocks looked at, ${this.jumps} long jumps from ${found.values.count { it.isNotEmpty() }} of them, " +
-                    "$struck jumps of the rules struck out, " +
-                    "$millis ms of work" + (if (unsure.isEmpty()) "" else ", ${unsure.size} with part of the arena not loaded"))
-            }
-            save()
-        }
+        finished()
         return done
+    }
+
+    /** Once everything is worked out: says so, and keeps it. */
+    private fun finished() {
+        if (!complete || saved) return
+        if (!announced && !loaded) {
+            announced = true
+            log("${file?.name ?: world.name}: ${found.size} blocks looked at, ${this.jumps} long jumps from ${found.values.count { it.isNotEmpty() }} of them, " +
+                "$struck jumps of the rules struck out, " +
+                "$millis ms of work" + (if (unsure.isEmpty()) "" else ", ${unsure.size} with part of the arena not loaded"))
+        }
+        save()
+    }
+
+    /**
+     * The same work as [work] with loading, shared out over the threads of [pool]: for working
+     * whole maps out ahead of time, never for a match somebody is playing (it holds the server
+     * up while a slice is flown). The arena may only be read on the server's thread, so each call
+     * first reads, on this thread, everything the rules reach from what is known and everything a
+     * flight from there can touch; then [slice] blocks have their jumps flown on all the threads
+     * at once from what was read. Call it every tick until [complete].
+     */
+    fun workTogether(seeds: List<Location>, pool: java.util.concurrent.ForkJoinPool, slice: Int = 800) {
+        val began = System.nanoTime()
+        val reader = reader()
+        pending?.let { read -> if (!check(read, reader, true)) return }
+        if (unseeded == null) {
+            unseeded = ArrayList()
+            for (seed in seeds) reader.at(seed)?.let { if (seen.add(it)) sweep.addLast(it) }
+            seeded = true
+        }
+        // (A bot of the match may have asked for blocks meanwhile: they are part of the sweep here.)
+        while (asked.isNotEmpty()) asked.removeFirst().let { wanted.remove(it); seen.add(it); sweep.addLast(it) }
+        if (batch.isEmpty()) {
+            while (true) {
+                val node = sweep.removeFirstOrNull() ?: break
+                if (node in found || node in based) continue
+                val base = reader.neighbours(node)
+                based[node] = base
+                batch += node
+                for (e in base) if (seen.add(e.node)) sweep.addLast(e.node)
+            }
+            if (batch.isNotEmpty()) reader.prefetch(batch.minOf { it.x } - REACH, batch.minOf { it.z } - REACH, batch.maxOf { it.x } + REACH, batch.maxOf { it.z } + REACH)
+        }
+        if (batch.isNotEmpty()) {
+            val from = (batch.size - slice).coerceAtLeast(0)
+            val part = ArrayList(batch.subList(from, batch.size))
+            batch.subList(from, batch.size).clear()
+            reader.frozen = true
+            val flown = try {
+                pool.submit(java.util.concurrent.Callable {
+                    part.parallelStream().map { it to reader.longJumps(it, based.getValue(it)) }.collect(java.util.stream.Collectors.toList())
+                }).get()
+            } finally { reader.frozen = false }
+            for ((node, long) in flown) {
+                found[node] = long
+                for (e in merge(based.getValue(node), long, kind.jumps.flown)) if (seen.add(e.node)) sweep.addLast(e.node)
+            }
+        }
+        spent += System.nanoTime() - began
+        if (complete) { based.clear(); loader = null }
+        finished()
     }
 
     /** Works the whole arena out now, loading whatever it needs. Only where a stalled server does not matter. */
@@ -187,8 +245,7 @@ class ArenaJumps private constructor(private val world: World, private val voidY
     fun forget(x: Int, z: Int, radius: Int) {
         changed = true
         loader = null
-        val reach = radius + FORGET_EXTRA
-        found.keys.removeIf { abs(it.x - x) <= reach && abs(it.z - z) <= reach }
+        found.keys.removeIf { abs(it.x - x) <= radius && abs(it.z - z) <= radius }
     }
 
     /**
@@ -198,7 +255,8 @@ class ArenaJumps private constructor(private val world: World, private val voidY
     private fun save() {
         saved = true
         val target = file ?: return
-        if (changed || seedMissed || loaded) return
+        // (Or another match on the same map has written it meanwhile: it is the same file.)
+        if (changed || seedMissed || loaded || target.isFile) return
         try {
             target.parentFile?.mkdirs()
             val temp = File(target.parentFile, target.name + ".tmp")
@@ -213,6 +271,7 @@ class ArenaJumps private constructor(private val world: World, private val voidY
                     for (e in edges) {
                         out.writeInt(e.node.x); out.writeInt(e.node.y16); out.writeInt(e.node.z)
                         out.writeFloat(e.cost.toFloat())
+                        out.writeByte((e.charge * 100).toInt())
                     }
                 }
             }
@@ -235,7 +294,8 @@ class ArenaJumps private constructor(private val world: World, private val voidY
                     val node = RouteNode(input.readInt(), input.readInt(), input.readInt())
                     val count = input.readShort().toInt()
                     read[node] = if (count == 0) emptyList() else List(count) {
-                        RouteEdge(RouteNode(input.readInt(), input.readInt(), input.readInt()), true, input.readFloat().toDouble(), long = true)
+                        RouteEdge(RouteNode(input.readInt(), input.readInt(), input.readInt()), true, input.readFloat().toDouble(), long = true,
+                            charge = input.readByte() / 100f)
                     }
                 }
             }
@@ -284,25 +344,43 @@ class ArenaJumps private constructor(private val world: World, private val voidY
     companion object {
         private const val MAGIC = 0x53534D4A
         /** Goes up whenever what counts as a long jump changes: files written before are worked out again. */
-        private const val VERSION = 8
+        private const val VERSION = 12
         private const val CHECKS = 16
         /** How long a file waits for the chunks it is checked against, and a block for the chunks round it. */
         private const val CHECK_TICKS = 100
         private const val STALL_TICKS = 600
         private const val SEED_TICKS = 200
-        /** A jump passes over a good many blocks: a change this far beyond the forgotten area still matters. */
-        private const val FORGET_EXTRA = 6
+        /** How far round a block a flight from it can touch anything: what is read before its jumps are flown on other threads. */
+        private const val REACH = 36
         /** Where the files are kept (plugins/<plugin>/nav). Null: nothing is read or written. */
         @Volatile var folder: File? = null
-        private val stores = HashMap<UUID, ArenaJumps>()
+        private val stores = HashMap<Pair<UUID, String>, ArenaJumps>()
 
         private fun log(message: String) = Bukkit.getLogger().info("[super-smash-mobs-brawl] [jumps] $message")
 
-        /** The long jumps of [world], which is [map] as it is being played. */
-        fun of(world: World, voidY: Int, map: GameMapDef?): ArenaJumps = stores.getOrPut(world.uid) {
-            stores.keys.removeIf { Bukkit.getWorld(it) == null }
-            val file = if (map != null) folder?.let { File(it, "${keyOf(map)}.jumps") } else null
-            ArenaJumps(world, voidY, file).also { it.load() }
+        /** The long jumps of [world], which is [map] as it is being played, for a fighter that gets around like [mobility]. */
+        fun of(world: World, voidY: Int, map: GameMapDef?, mobility: Mobility): ArenaJumps {
+            // (Somebody with no air jump has no long jumps of their own. Asked on their behalf,
+            // these are the standard ones: never a set worked out with no jump at all, which
+            // would be an empty one filed under the standard name.)
+            val kind = mobility.home.takeIf { it.airborne } ?: Mobility.JUMPER
+            return stores.getOrPut(world.uid to kind.jumps.id) {
+                stores.keys.removeIf { Bukkit.getWorld(it.first) == null }
+                val file = if (map != null) folder?.let { File(it, fileName(map, kind)) } else null
+                ArenaJumps(world, voidY, file, kind).also { it.load() }
+            }
+        }
+
+        /** The file a map's long jumps are kept in for one kind of jump (the standard one has the plain name). */
+        fun fileName(map: GameMapDef, kind: Mobility): String =
+            keyOf(map) + (if (kind.home.jumps.id == JumpKind.STANDARD.id) "" else "-" + kind.home.jumps.id) + ".jumps"
+
+        /** How many sets of jumps of [world] are still being worked out. */
+        fun unfinished(world: World): Int = stores.count { it.key.first == world.uid && !it.value.complete }
+
+        /** The arena changed around ([x], [z]): every kind of jump there is looked at again when next wanted. */
+        fun forgetAll(world: World, x: Int, z: Int, radius: Int) {
+            for ((key, store) in stores) if (key.first == world.uid) store.forget(x, z, radius)
         }
 
         /**
@@ -313,8 +391,8 @@ class ArenaJumps private constructor(private val world: World, private val voidY
          */
         fun merge(base: List<RouteEdge>, long: List<RouteEdge>, strike: Boolean): List<RouteEdge> = withLongJumps(base, long, strike)
 
-        /** The long jumps of [world], if anybody has asked for them yet. */
-        fun find(world: World): ArenaJumps? = stores[world.uid]
+        /** The long jumps of [world] for a fighter that gets around like [mobility], if anybody has asked for them yet. */
+        fun find(world: World, mobility: Mobility): ArenaJumps? = stores[world.uid to (mobility.home.takeIf { it.airborne } ?: Mobility.JUMPER).jumps.id]
 
         /**
          * One name for each map in each shape it is played in. Mirroring, reflecting and

@@ -32,6 +32,16 @@ object RouteWorkBudget {
     private var jumpNanos = 0L
     private var jumpBudget = JUMPS_LEAST
 
+    /**
+     * Nanoseconds the long-jump work may still use this tick, when it is shared between [sets]
+     * sets of jumps still being worked out (a match with a slime, a wolf and a skeleton in it has
+     * three): each asks in turn and none is given the lot.
+     */
+    fun jumpSlice(sets: Int): Long {
+        val left = jumpSlice()
+        return if (sets <= 1) left else minOf(left, jumpBudget / sets)
+    }
+
     /** Nanoseconds the long-jump work may still use this tick. */
     fun jumpSlice(): Long {
         val now = Bukkit.getCurrentTick()

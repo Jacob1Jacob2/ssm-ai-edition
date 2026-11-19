@@ -57,9 +57,20 @@ class ArenaTerrain(private val world: World, private val voidY: Int, private val
      */
     var sawUnloaded = false
 
+    /**
+     * While set, nothing is read from the world: a column not read yet counts as empty air. The
+     * world may only be read on the server's own thread; with what a flight can touch read first
+     * ([prefetch]) and this set, the jumps of many blocks can be flown on other threads at once.
+     */
+    @Volatile var frozen = false
+
+    /** Reads every column of a rectangle now (loading its chunks if this reader does that). */
+    fun prefetch(x1: Int, z1: Int, x2: Int, z2: Int) { for (x in x1..x2) for (z in z1..z2) column(x, z) }
+
     private fun column(x: Int, z: Int): Column {
         val key = (x.toLong() shl 32) or (z.toLong() and 0xffffffffL)
         columns[key]?.let { return it }
+        if (frozen) return EMPTY
         if (!world.isChunkLoaded(x shr 4, z shr 4)) {
             // Not stored, so the column is looked at again once its chunk is there.
             if (!loadChunks) { sawUnloaded = true; return UNLOADED }
@@ -135,12 +146,13 @@ class ArenaTerrain(private val world: World, private val voidY: Int, private val
      * Is there room for a body standing with its feet at ([x], [y], [z])? [foot] is how much of
      * the very bottom of the body is left out of the question: a little, so that standing on a
      * block is not being inside it. A jump flown in the head ([JumpSim]) asks with next to none.
+     * (Touching is not being inside, to the same ten millionth of a block the game goes by.)
      */
     fun clear(x: Double, y: Double, z: Double, foot: Double = .025): Boolean {
-        val minX = x - .3
-        val maxX = x + .3
-        val minZ = z - .3
-        val maxZ = z + .3
+        val minX = x - .3 + JumpSim.TOUCH
+        val maxX = x + .3 - JumpSim.TOUCH
+        val minZ = z - .3 + JumpSim.TOUCH
+        val maxZ = z + .3 - JumpSim.TOUCH
         val minY = y + foot
         val maxY = y + 1.8
         for (bx in floor(minX).toInt()..floor(maxX).toInt()) for (bz in floor(minZ).toInt()..floor(maxZ).toInt()) {
@@ -392,7 +404,8 @@ class ArenaTerrain(private val world: World, private val voidY: Int, private val
     }
 
     /**
-     * Every other landing a double jump really reaches from [a]: the ones the rules in
+     * Every other landing this kind of fighter's air jump really reaches from [a] (a slime's
+     * bounce and a wolf's pounce go where a standard double jump does not): the ones the rules in
      * [neighbours] do not offer, because they stop at six blocks, look in eight directions, or
      * judge a jump by a parabola with room over it. Each is flown in the head first ([JumpSim]),
      * through whatever is really in the way: the long jump between two islands, the hop across a
@@ -427,13 +440,16 @@ class ArenaTerrain(private val world: World, private val voidY: Int, private val
         fun take(sector: Int, y: Double) { if (count[sector] < LONG_PER_SECTOR) taken[sector * LONG_PER_SECTOR + count[sector]++] = y }
         val result = ArrayList<RouteEdge>(4)
         val space = JumpSim.Space { x, y, z, foot -> clear(x, y, z, foot) }
+        val launch = mobility.jumps.launch
+        val reach = JumpSim.reachOf(launch)
+        val charged = mobility.jumps.charged
         // Wherever the fighter can already go from here is a direction that needs no long jump.
         for (e in base) {
             known += e.node
             val dx = e.node.x - a.x
             val dz = e.node.z - a.z
             if (dx == 0 && dz == 0) continue
-            if (jumped(a, e) && !JumpSim.jump(space,JumpSim.STANDARD,a.x+.5,a.y,a.z+.5,e.node.x+.5,e.node.y,e.node.z+.5)) {
+            if (jumped(a, e) && !JumpSim.jump(space,launch,a.x+.5,a.y,a.z+.5,e.node.x+.5,e.node.y,e.node.z+.5)) {
                 result.add(RouteEdge(e.node,true,STRUCK,long = true))
                 continue
             }
@@ -454,17 +470,34 @@ class ArenaTerrain(private val world: World, private val voidY: Int, private val
                 if (beside && dy <= 1.25) break
                 if (!rim && dy <= 1.25) break
                 // With a block in hand: a jump at the very end of what the physics allows is not one to promise.
-                if (o.dist > JumpSim.reach(dy) - LONG_MARGIN) continue
+                var with = launch
+                var charge = 0f
+                if (o.dist > reach.at(dy) - LONG_MARGIN) {
+                    // Out of reach of the jump as it comes. A goat that crouches first goes higher: the least
+                    // crouching that gets there. (For a landing overhead. A charged leap goes further
+                    // across as well, but three seconds of standing still buys nothing a walk round does not.)
+                    if (dy <= 1.25) continue
+                    val more = charged.firstOrNull { o.dist <= JumpSim.reachOf(it.second).at(dy) - LONG_MARGIN } ?: continue
+                    charge = more.first
+                    with = more.second
+                }
                 val b = RouteNode(a.x+o.dx,(y*16).roundToInt(),a.z+o.dz)
                 if (b in known || !fresh(o.sector,y)) continue
                 if (abs(dy) <= 1.25 && flooredBetween(a,b)) continue
                 if (++tried[o.sector] > LONG_SECTOR_TRIES) continue
                 if (++tries > (if (rim) LONG_TRIES else LEDGE_TRIES)) return result
-                if (!JumpSim.promised(space,JumpSim.STANDARD,a.x+.5,a.y,a.z+.5,b.x+.5,y,b.z+.5)) continue
+                if (!JumpSim.promised(space,with,a.x+.5,a.y,a.z+.5,b.x+.5,y,b.z+.5)) {
+                    // (Something in the way of it as it comes may not be in the way of a higher one.)
+                    if (dy <= 1.25) continue
+                    val more = charged.firstOrNull { it.first > charge && o.dist <= JumpSim.reachOf(it.second).at(dy) - LONG_MARGIN } ?: continue
+                    if (!JumpSim.promised(space,more.second,a.x+.5,a.y,a.z+.5,b.x+.5,y,b.z+.5)) continue
+                    charge = more.first
+                }
                 known += b
                 take(o.sector,y)
                 // Dearer than a jump the rules are sure of: where there is a safer way of about the same length, that is the one.
-                result.add(RouteEdge(b,true,a.distance(b)*LONG_COST+LONG_EXTRA,long = true))
+                // (And dearer again by the time spent crouching for it.)
+                result.add(RouteEdge(b,true,a.distance(b)*LONG_COST+LONG_EXTRA+charge*CHARGE_COST,long = true,charge = charge))
             }
         }
         return result
@@ -509,8 +542,10 @@ class ArenaTerrain(private val world: World, private val voidY: Int, private val
         /** What a block of a long jump costs a route, against a block walked, and what it costs just to take one. */
         private const val LONG_COST = 1.5
         private const val LONG_EXTRA = 5.0
+        /** What a full charge of a goat's leap costs a route: three seconds of standing still. */
+        private const val CHARGE_COST = 14.0
         /** The highest landing a long jump is offered for, and how far short of the furthest possible it stops. */
-        private const val LONG_RISE = 5.5
+        private const val LONG_RISE = JumpSim.HIGHEST
         private const val LONG_MARGIN = 1.0
         /** The deepest fall a route will take on purpose. */
         private const val MAX_DROP = 32.0
@@ -521,9 +556,9 @@ class ArenaTerrain(private val world: World, private val voidY: Int, private val
         private const val PER_SECTOR = 3
         private val SIDES = listOf(1 to 0, -1 to 0, 0 to 1, 0 to -1)
         private val GRIP_HEIGHTS = doubleArrayOf(0.1, 0.9)
-        /** Every column within twelve blocks (as far as a jump with a long way to fall gets), nearest first. */
-        private val OFFSETS: Array<Offset> = (-12..12).flatMap { dx -> (-12..12).map { dz -> Offset(dx, dz) } }
-            .filter { it.dist > 0.0 && it.dist <= 12.0 }.sortedBy { it.dist }.toTypedArray()
+        /** Every column within fifteen blocks (as far as the strongest jump with a long way to fall gets), nearest first. */
+        private val OFFSETS: Array<Offset> = (-15..15).flatMap { dx -> (-15..15).map { dz -> Offset(dx, dz) } }
+            .filter { it.dist > 0.0 && it.dist <= 15.0 }.sortedBy { it.dist }.toTypedArray()
 
         /**
          * Blocks that are water (or lava) to a fighter. Touching the liquid itself is death in the

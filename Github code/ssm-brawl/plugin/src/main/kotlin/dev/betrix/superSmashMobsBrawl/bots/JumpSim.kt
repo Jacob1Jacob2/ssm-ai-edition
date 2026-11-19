@@ -21,13 +21,15 @@ import kotlin.math.sqrt
  * with [aim] as well: what the planner promised is what the bot then does.
  *
  * The game's own numbers, per tick: the controls push 0.02 (0.026 sprinting), then the move, up or
- * down first and across second, then gravity (vy = (vy - 0.08) * 0.98) and drag (x 0.91 in the air).
+ * down first and then across one axis at a time, then gravity (vy = (vy - 0.08) * 0.98) and drag
+ * (x 0.91 in the air). Flown that way a jump in the head is the jump in the game to the millimetre
+ * (bots debug with bots flights puts the two side by side, tick for tick), and that is the
+ * standard to keep it to: every time the two were a few centimetres apart, some bot somewhere
+ * clipped a corner its jump had been seen to clear.
  *
- * A promise has to hold when the real jump is a little off the one flown here, so wherever a
- * centimetre decides, the answer is no: going across, whatever is underfoot has to be cleared by
- * [OVER]; a landing has to hold with the body [EDGE] further out any way ([firm]); and a jump is
- * only promised if it also comes off from a little to each side of the middle of its block
- * ([promised]).
+ * What a promise still has to allow for is where the bot stands when it jumps: a landing has to
+ * hold with the body [EDGE] further out any way ([firm]), and a jump is only promised if it also
+ * comes off from a little to each side of the middle of its block ([promised]).
  */
 object JumpSim {
     /**
@@ -41,9 +43,9 @@ object JumpSim {
     fun interface Launch { fun speeds(pitch: Double): Pair<Double, Double> }
 
     /**
-     * The standard double jump. Every kit's own air jump goes at least as far and as high as
-     * this one in every direction (a wolf's, a spider's and a goat's a good deal further), so a
-     * jump that this makes, they all make.
+     * The standard double jump (DoubleJumpPassive with 0.9 across and 0.9 up): the look is
+     * flattened onto a fixed lift, so flatter is further and steeper is higher, and even looking
+     * level it goes up at 0.6.
      */
     val STANDARD = Launch { pitch ->
         val h = cos(Math.toRadians(pitch))
@@ -51,11 +53,56 @@ object JumpSim {
         (0.9 * h / n) to min(0.9, 0.81 / n)
     }
 
+    /**
+     * The slime's and the magma cube's (the same passive with 1.2 across and 1.0 up). Further and
+     * higher than the standard one, and never low: looking level it still goes up at 0.92, five
+     * blocks of rise, so under a ceiling it is the worse jump of the two.
+     */
+    val BOUNCY = Launch { pitch ->
+        val h = cos(Math.toRadians(pitch))
+        val n = sqrt(h * h + 1.44)
+        (1.2 * h / n) to min(1.0, 1.44 / n)
+    }
+
+    /** The wolf's pounce (WolfJumpPassive): exactly where it looks, at 1.1. Level is all speed across and no lift. */
+    val WOLF = Launch { pitch ->
+        val r = Math.toRadians(pitch)
+        (1.1 * cos(r)) to (-1.1 * kotlin.math.sin(r))
+    }
+
+    /** The spider's leap (SpiderLeapPassive): exactly where it looks, at 1.0. */
+    val SPIDER = Launch { pitch ->
+        val r = Math.toRadians(pitch)
+        cos(r) to -kotlin.math.sin(r)
+    }
+
+    /**
+     * The goat's leap with nothing charged (GoatedLeapPassive): always the full 0.9 up, whatever
+     * it looks at, and 0.9 across when it looks level. (Charge only adds lift.)
+     */
+    val GOAT = Launch { pitch -> (0.9 * cos(Math.toRadians(pitch))) to 0.9 }
+
+    /**
+     * The goat's leap half charged and fully charged (a second and a half, and three seconds, of
+     * crouching on the ground): 1.45 and 2.0 up, which is eleven and twenty blocks of rise.
+     */
+    val GOAT_HALF = Launch { pitch -> (0.9 * cos(Math.toRadians(pitch))) to (0.9 + 0.5 * 1.1) }
+    val GOAT_FULL = Launch { pitch -> (0.9 * cos(Math.toRadians(pitch))) to (0.9 + 1.1) }
+
     const val GRAVITY = 0.08
     const val FALL_DRAG = 0.98
     const val AIR_DRAG = 0.91
-    /** The push of a running jump from a standing start: the sprint-jump boost and one tick of running. */
-    const val TAKEOFF = 0.2 + 0.13 * 1.3274 * 0.98
+    /** A fighter's speed on the ground as the game has it, walking and sprinting. */
+    const val WALK = 0.1
+    const val SPRINT = 0.13
+    /**
+     * The push of a running jump: the sprint-jump boost, and the tick of running it leaves the
+     * ground on. [run] is the speed the game moves it on the ground with that tick, which is still
+     * its walking speed if it was not sprinting the tick before (the game is a tick late with that).
+     * [boost] is whether the game gives the sprint-jump boost at all: this server gives a player
+     * none within a quarter of a second of its last jump (a bot waits that out: BotBrain.startGapJump).
+     */
+    fun takeoff(run: Double, boost: Boolean = true): Double = (if (boost) 0.2 else 0.0) + run * 0.98
     /** The tick it leaves the ground the fighter is still on it: the floor's drag, not the air's. */
     const val GROUND_DRAG = 0.546
     /** An air jump still covering this much a tick as it comes down is a flat, fast one. */
@@ -69,10 +116,15 @@ object JumpSim {
      */
     private const val TRIES = 6
     private const val MORE = 10
-    /** The game's own answer to "is this body inside that block": no slack to speak of. */
+    /**
+     * The game's own answer to "is this body inside that block": no slack to speak of. (A jump
+     * clears the block it is jumping onto by a millimetre and a third, and that is a jump every
+     * player makes without a thought: asking for more room than the game does is as wrong as
+     * asking for less.)
+     */
     const val EXACT = 0.001
-    /** Going across, a block underfoot has to be cleared by this much (it is passed to [Space.clear] as a negative foot). */
-    const val OVER = -0.05
+    /** What the game itself lets two things overlap by before it calls it touching. */
+    const val TOUCH = 1.0e-7
     /** A landing has to hold with the body this much further out in any direction. */
     const val EDGE = 0.15
     /** A bot lines up for a long jump this near the middle of its block; the jump has to come off from anywhere that near. */
@@ -123,7 +175,7 @@ object JumpSim {
      * The controls for one tick: the push that brings the speed across to "the speed that coasts
      * to a stop at the target". In the air that is all anybody can do.
      */
-    private fun steer(f: Flight, tx: Double, ty: Double, tz: Double) {
+    private fun steer(f: Flight, tx: Double, ty: Double, tz: Double, faceX: Double = tx, faceZ: Double = tz) {
         val dx = tx - f.x
         val dz = tz - f.z
         val r = hypot(dx, dz)
@@ -134,41 +186,116 @@ object JumpSim {
         val ex = ux * desired - f.vx
         val ez = uz * desired - f.vz
         val e = hypot(ex, ez)
+        // (The fighter decides on the speed it sees. The game then forgets a speed too small to
+        // matter before it moves anything: under 0.003 across, and the same up or down.)
+        if (f.vx * f.vx + f.vz * f.vz < 9.0e-6) { f.vx = 0.0; f.vz = 0.0 }
+        if (abs(f.vy) < 0.003) f.vy = 0.0
         if (e < 0.02) return
-        // Pushing the way it faces (at the landing) a fighter sprints; pulling back it does not.
-        val push = (if ((ex * ux + ez * uz) / e > 0.8) 0.026 else 0.02) * 0.98
+        // Pushing the way it faces a fighter sprints; any other way it does not. And it faces its
+        // landing all the way ([faceX], [faceZ]), also while it is holding the column it took off in.
+        val fx = faceX - f.x
+        val fz = faceZ - f.z
+        val fr = hypot(fx, fz)
+        val forward = if (fr > 1e-3) (ex * fx + ez * fz) / (e * fr) else 0.0
+        val push = (if (forward > 0.8) 0.026 else 0.02) * 0.98
         f.vx += ex / e * push
         f.vz += ez / e * push
     }
 
-    /** As far along a blocked move up or down as the body gets. */
-    private fun settle(space: Space, f: Flight) {
-        var free = 0.0
-        var stuck = 1.0
-        repeat(8) {
-            val mid = (free + stuck) / 2
-            if (space.clear(f.x, f.y + f.vy * mid, f.z, EXACT)) free = mid else stuck = mid
+    /**
+     * Moves the body along one axis by ([dx], [dy], [dz]) as far as there is room for, the way
+     * the game does: up to what is in the way, and no further. True if the whole of it was made.
+     */
+    private fun go(space: Space, f: Flight, dx: Double, dy: Double, dz: Double): Boolean {
+        if (space.clear(f.x + dx, f.y + dy, f.z + dz, EXACT)) {
+            f.x += dx; f.y += dy; f.z += dz
+            return true
         }
-        f.y += f.vy * free
+        // As far as it gets. (Up against it already, that is nowhere: one question settles that.)
+        val whole = abs(dx) + abs(dy) + abs(dz)
+        var free = 0.001 / whole
+        if (free < 1.0 && space.clear(f.x + dx * free, f.y + dy * free, f.z + dz * free, EXACT)) {
+            var stuck = 1.0
+            repeat(12) {
+                val mid = (free + stuck) / 2
+                if (space.clear(f.x + dx * mid, f.y + dy * mid, f.z + dz * mid, EXACT)) free = mid else stuck = mid
+            }
+            f.x += dx * free; f.y += dy * free; f.z += dz * free
+        }
+        return false
     }
 
-    /** One tick's move: up or down first, then across. True if it came down on something. */
+    /**
+     * One tick's move, made the way the game makes it: up or down first, then across one axis at
+     * a time, the one it is going faster along first, each as far as there is room for. Whatever
+     * stops it takes its speed along that axis and no other. True if it came down on something.
+     *
+     * (It used to go across both ways at once, and so slipped diagonally past the corner of a
+     * block the game runs it into: a wolf promised a ledge that way lost its speed across on a
+     * corner at head height, and fell.)
+     */
     private fun move(space: Space, f: Flight): Boolean {
         var landed = false
-        if (space.clear(f.x, f.y + f.vy, f.z, EXACT)) f.y += f.vy
-        else {
-            settle(space, f)
+        if (f.vy != 0.0 && !go(space, f, 0.0, f.vy, 0.0)) {
             // Something overhead only ends the rise. Something underfoot is a landing.
             if (f.vy <= 0) landed = true
             f.vy = 0.0
         }
-        val nx = f.x + f.vx
-        val nz = f.z + f.vz
-        if (space.clear(nx, f.y, nz, OVER)) { f.x = nx; f.z = nz }
-        else if (space.clear(nx, f.y, f.z, OVER)) { f.x = nx; f.vz = 0.0 }
-        else if (space.clear(f.x, f.y, nz, OVER)) { f.z = nz; f.vx = 0.0 }
-        else { f.vx = 0.0; f.vz = 0.0 }
+        across(space, f)
         return landed
+    }
+
+    /** The part of a tick's move that goes across. */
+    private fun across(space: Space, f: Flight) {
+        val xFirst = abs(f.vx) >= abs(f.vz)
+        if (!xFirst && f.vz != 0.0 && !go(space, f, 0.0, 0.0, f.vz)) f.vz = 0.0
+        if (f.vx != 0.0 && !go(space, f, f.vx, 0.0, 0.0)) f.vx = 0.0
+        if (xFirst && f.vz != 0.0 && !go(space, f, 0.0, 0.0, f.vz)) f.vz = 0.0
+    }
+
+    /**
+     * The move of the tick a fighter leaves the ground. As any other ([move]), but for one thing
+     * the game does for whoever was standing: run into something across, it tries the same move
+     * from each height up to 0.6 that a block's top can be at, and if one of those gets it
+     * further, that is the move it makes. So a jump at the foot of a slab or a stair is a step up
+     * onto it and no jump at all, and a jump into a doorway two blocks high goes through along
+     * the floor. (The rise is lost with it: it stands on the step the tick after.) True if that
+     * is what became of the jump.
+     */
+    private fun pushOff(space: Space, f: Flight): Boolean {
+        val x0 = f.x
+        val y0 = f.y
+        val z0 = f.z
+        val vx = f.vx
+        val vz = f.vz
+        move(space, f)
+        if (f.vx == vx && f.vz == vz) return false
+        val reached = (f.x - x0) * (f.x - x0) + (f.z - z0) * (f.z - z0)
+        // (Every block's top is a sixteenth of something.)
+        for (sixteenths in 0..9) {
+            val step = Flight(x0, y0, z0, vx, 0.0, vz)
+            if (sixteenths > 0) go(space, step, 0.0, sixteenths / 16.0, 0.0)
+            across(space, step)
+            if ((step.x - x0) * (step.x - x0) + (step.z - z0) * (step.z - z0) > reached + 1e-9) {
+                f.x = step.x; f.y = step.y; f.z = step.z
+                f.vx = step.vx; f.vz = step.vz; f.vy = 0.0
+                return true
+            }
+        }
+        return false
+    }
+
+    /**
+     * Would the game make a step of a running jump from ([sx], [ay], [sz]) at ([bx], [by], [bz]),
+     * and not a jump at all ([pushOff])? A bot that knows walks onto the step instead: that is
+     * all the game was going to let it do, and a walk does not send it on over the far side.
+     */
+    fun stepsUp(space: Space, sx: Double, ay: Double, sz: Double, bx: Double, by: Double, bz: Double,
+                vx0: Double = 0.0, vz0: Double = 0.0, run: Double = WALK, boost: Boolean = true): Boolean {
+        val r0 = hypot(bx - sx, bz - sz)
+        if (r0 < 0.01) return false
+        val push = takeoff(run, boost)
+        return pushOff(space, Flight(sx, ay, sz, vx0 + (bx - sx) / r0 * push, 0.42, vz0 + (bz - sz) / r0 * push))
     }
 
     /** Is there something to stand on (or lean against) under a body at this point? */
@@ -187,10 +314,13 @@ object JumpSim {
      * ledge ([high]) the fighter holds the column it took off in ([holdX], [holdZ]) and only goes
      * across once it is over it. True if it comes down on the landing; [f] is where it ended.
      */
-    private fun fly(space: Space, f: Flight, tx: Double, ty: Double, tz: Double, high: Boolean, holdX: Double, holdZ: Double): Boolean {
+    private fun fly(space: Space, f: Flight, tx: Double, ty: Double, tz: Double, high: Boolean, holdX: Double, holdZ: Double,
+                    seen: MutableList<Flight>? = null): Boolean {
         for (t in 1..70) {
-            if (high && f.y < ty - 0.15) steer(f, holdX, f.y - 1.0, holdZ) else steer(f, tx, ty, tz)
-            if (move(space, f)) return onTarget(space, f, tx, ty, tz)
+            if (high && f.y < ty - 0.15) steer(f, holdX, f.y - 1.0, holdZ, tx, tz) else steer(f, tx, ty, tz)
+            val landed = move(space, f)
+            seen?.add(f.copy())
+            if (landed) return onTarget(space, f, tx, ty, tz)
             f.vy = (f.vy - GRAVITY) * FALL_DRAG
             f.vx *= AIR_DRAG
             f.vz *= AIR_DRAG
@@ -198,6 +328,16 @@ object JumpSim {
         }
         return false
     }
+
+    /**
+     * Does a body in the air at [from] come down on ([tx], [ty], [tz]) as it is going, steered at
+     * it all the way and with no air jump? This is what decides whether a jump takes its air
+     * jump: a guess at it (so far to go, so fast, so long to fall) left out what steering makes
+     * up, and spent the air jump on hops the plain jump was making anyway, under a low roof for one.
+     */
+    fun lands(space: Space, from: Flight, tx: Double, ty: Double, tz: Double,
+              high: Boolean = false, holdX: Double = from.x, holdZ: Double = from.z): Boolean =
+        fly(space, from.copy(), tx, ty, tz, high, holdX, holdZ)
 
     /** The old test of an air jump's arc: does it get to [tx], [tz] without coming up underneath something? */
     private fun arcClear(space: Space, from: Flight, tx: Double, ty: Double, tz: Double, horizontal: Double, vertical: Double): Boolean {
@@ -281,17 +421,11 @@ object JumpSim {
             // Straight into something on the very first tick, the jump loses its speed across and
             // what is left is what the controls alone can do. Where that is nowhere near enough
             // there is no need to fly it to know: the way over is a steeper jump.
-            if (!high && space.clear(from.x, from.y + v, from.z, EXACT)) {
-                val y1 = from.y + v
-                val nx = from.x + ux * h
-                val nz = from.z + uz * h
-                val kept = when {
-                    space.clear(nx, y1, nz, OVER) -> 1.0
-                    space.clear(nx, y1, from.z, OVER) -> abs(ux)
-                    space.clear(from.x, y1, nz, OVER) -> abs(uz)
-                    else -> 0.0
-                }
-                if (kept < 1.0 && kept * dists[i] + steerGain(falls[i] - 1) < r - 0.8) continue
+            if (!high && h > 1e-6 && space.clear(from.x, from.y + v, from.z, EXACT)) {
+                val first = Flight(from.x, from.y + v, from.z, ux * h, v, uz * h)
+                across(space, first)
+                val kept = hypot(first.vx, first.vz) / h
+                if (kept < 1.0 - 1e-9 && kept * dists[i] + steerGain(falls[i] - 1) < r - 0.8) continue
             }
             flown++
             val f = from.copy()
@@ -310,6 +444,23 @@ object JumpSim {
         return Aim(if (bestErr == Double.MAX_VALUE) highestPitch else bestPitch, false)
     }
 
+    /**
+     * Debug: the air jump at [pitch] from where [from] is, as it is flown in the head toward
+     * ([tx], [ty], [tz]): where it is after each tick, to hold up against what the fighter then does.
+     */
+    fun path(space: Space, launch: Launch, from: Flight, pitch: Double, tx: Double, ty: Double, tz: Double,
+             high: Boolean = false, holdX: Double = from.x, holdZ: Double = from.z): List<Flight> {
+        val r = hypot(tx - from.x, tz - from.z)
+        val (h, v) = launch.speeds(pitch)
+        val f = from.copy()
+        f.vx = if (r > 1e-6) (tx - from.x) / r * h else 0.0
+        f.vz = if (r > 1e-6) (tz - from.z) / r * h else 0.0
+        f.vy = v
+        val seen = ArrayList<Flight>()
+        fly(space, f, tx, ty, tz, high, holdX, holdZ, seen)
+        return seen
+    }
+
     /** Is ([x], [y], [z]) somewhere to stand: room for the body, and something under its feet? */
     private fun standable(space: Space, x: Double, y: Double, z: Double) = space.clear(x, y, z, EXACT) && !space.clear(x, y - 0.1, z, EXACT)
 
@@ -322,10 +473,12 @@ object JumpSim {
      * a running jump at it (or straight up first, for a ledge well overhead and close by: [high]),
      * the air jump from the top of the arc if the plain jump will not get there, steering all the way.
      * [launch] is the air jump in hand (null: none, the jump has to do it alone); [vx0], [vz0]
-     * the speed the fighter already has along the ground as it pushes off.
+     * the speed the fighter already has along the ground as it pushes off, and [run] and [boost]
+     * what the game gives it to push off with (see [takeoff]).
      */
     fun jump(space: Space, launch: Launch?, sx: Double, ay: Double, sz: Double, bx: Double, by: Double, bz: Double,
-             high: Boolean = highLedge(sx, ay, sz, bx, by, bz), runOut: Boolean = false, vx0: Double = 0.0, vz0: Double = 0.0): Boolean {
+             high: Boolean = highLedge(sx, ay, sz, bx, by, bz), runOut: Boolean = false, vx0: Double = 0.0, vz0: Double = 0.0,
+             seen: MutableList<Flight>? = null, run: Double = WALK, steps: Int = 0, boost: Boolean = true): Boolean {
         val r0 = hypot(bx - sx, bz - sz)
         if (r0 < 0.01) return false
         val ux = (bx - sx) / r0
@@ -341,30 +494,47 @@ object JumpSim {
         f.vy = 0.42
         f.vx = vx0
         f.vz = vz0
-        if (!high) { f.vx += ux * TAKEOFF; f.vz += uz * TAKEOFF }
-        move(space, f)
+        if (!high) { val push = takeoff(run, boost); f.vx += ux * push; f.vz += uz * push }
+        if (pushOff(space, f)) {
+            seen?.add(f.copy())
+            // The game made a step of it. The fighter is standing on what it ran into, and goes
+            // on from there the same way: another step (that is a flight of stairs), or the jump.
+            if (onTarget(space, f, bx, by, bz)) return end(true, "stepped up")
+            if (steps >= 2) return end(false, "stepped up, and no nearer")
+            return jump(space, launch, f.x, f.y, f.z, bx, by, bz, runOut = runOut,
+                vx0 = f.vx * GROUND_DRAG * AIR_DRAG, vz0 = f.vz * GROUND_DRAG * AIR_DRAG, run = run, steps = steps + 1)
+        }
+        seen?.add(f.copy())
         f.vy = (f.vy - GRAVITY) * FALL_DRAG
         f.vx *= GROUND_DRAG
         f.vz *= GROUND_DRAG
         var jumped = false
         for (age in 2..90) {
-            // The air jump only if the plain jump will not make it, from the top of the arc on.
+            // The air jump only if the plain jump will not make it. From the top of the arc on,
+            // the jump as it is going is flown on to its end: if that comes down on the landing
+            // there is nothing more to decide, and if not, this is the moment for the air jump.
+            // (The bot decides it the same way, tick by tick: see [lands].)
             if (launch != null && !jumped && age >= 3 && f.vy < 0.05) {
-                val remaining = hypot(bx - f.x, bz - f.z)
-                val fall = ticksUntilBelow(by, f.vy, f.y)
-                val reach = coastDistance(hypot(f.vx, f.vz), fall)
-                val steering = if (fall >= 12) min(1.5, 0.006 * fall * fall) else 0.0
-                if (reach + steering < remaining - 0.3 || f.y < by - 0.3) {
-                    pitch = aim(space, launch, f, bx, by, bz, runOut, high, sx, sz).pitch
-                    val (h, v) = launch.speeds(pitch)
-                    f.vx = if (remaining > 1e-6) (bx - f.x) / remaining * h else 0.0
-                    f.vz = if (remaining > 1e-6) (bz - f.z) / remaining * h else 0.0
-                    f.vy = v
-                    jumped = true
+                val rest = f.copy()
+                val more = if (seen != null) ArrayList<Flight>() else null
+                if (fly(space, rest, bx, by, bz, high, sx, sz, more)) {
+                    if (more != null) seen?.addAll(more)
+                    f.x = rest.x; f.y = rest.y; f.z = rest.z
+                    return end(true, "came down")
                 }
+                val remaining = hypot(bx - f.x, bz - f.z)
+                pitch = aim(space, launch, f, bx, by, bz, runOut, high, sx, sz).pitch
+                val (h, v) = launch.speeds(pitch)
+                f.vx = if (remaining > 1e-6) (bx - f.x) / remaining * h else 0.0
+                f.vz = if (remaining > 1e-6) (bz - f.z) / remaining * h else 0.0
+                f.vy = v
+                jumped = true
             }
-            if (high && f.y < by - 0.15) steer(f, sx, f.y - 1.0, sz) else steer(f, bx, by, bz)
-            if (move(space, f)) return end(onTarget(space, f, bx, by, bz), "came down")
+            if (high && f.y < by - 0.15) steer(f, sx, f.y - 1.0, sz, bx, bz) else steer(f, bx, by, bz)
+            val landed = move(space, f)
+            // (Debug: the jump as far as its air jump. From there on the bot aims again, from where it really is.)
+            if (!jumped) seen?.add(f.copy())
+            if (landed) return end(onTarget(space, f, bx, by, bz), "came down")
             f.vy = (f.vy - GRAVITY) * FALL_DRAG
             f.vx *= AIR_DRAG
             f.vz *= AIR_DRAG
@@ -401,34 +571,53 @@ object JumpSim {
 
     /** Heights a landing may be at relative to the take-off, in half blocks from [LOWEST] up to [HIGHEST]. */
     const val LOWEST = -32.0
-    const val HIGHEST = 6.5
+    const val HIGHEST = 21.5
     /** Further than a jump is ever looked for. */
-    private const val FURTHEST = 14.0
+    const val FURTHEST = 16.0
 
     /**
-     * In open air with nothing in the way: the furthest a jump gets and still comes down on a
-     * block [dy] above (or below) where it started. Worked out once, by flying it.
+     * How far one kind of air jump goes: in open air with nothing in the way, the furthest a jump
+     * gets and still comes down on a block so much above (or below) where it started. Worked out
+     * once for each kind of jump, by flying it.
      */
-    private val reaches: DoubleArray by lazy {
-        DoubleArray(((HIGHEST - LOWEST) * 2).toInt() + 1) { i ->
-            val dy = LOWEST + i * 0.5
-            var r = FURTHEST
-            while (r >= 1.0 && !promised(twoBlocks(r, dy), STANDARD, 0.5, 0.0, 0.5, r + 0.5, dy, 0.5)) r -= 0.25
-            r
+    class Reach internal constructor(private val launch: Launch) {
+        private val table: DoubleArray by lazy {
+            DoubleArray(((HIGHEST - LOWEST) * 2).toInt() + 1) { i ->
+                val dy = LOWEST + i * 0.5
+                var r = FURTHEST
+                while (r >= 1.0 && !promised(twoBlocks(r, dy), launch, 0.5, 0.0, 0.5, r + 0.5, dy, 0.5)) r -= 0.25
+                r
+            }
+        }
+
+        /** The furthest across it lands on something [dy] higher (negative: lower) than its take-off. */
+        fun at(dy: Double): Double {
+            if (dy > HIGHEST || dy < LOWEST) return 0.0
+            // The next height up on the table: the harder of the two jumps either side.
+            return table[kotlin.math.ceil((dy - LOWEST) * 2 - 1e-9).toInt().coerceIn(0, table.size - 1)]
+        }
+
+        /** The highest landing it gets onto at all, from at least a block away. */
+        val rise: Double by lazy {
+            var top = 0.0
+            var dy = 0.5
+            while (dy <= HIGHEST) { if (at(dy) >= 1.0) top = dy; dy += 0.5 }
+            top
         }
     }
+
+    private val reaches = java.util.concurrent.ConcurrentHashMap<Launch, Reach>()
+
+    /** The reach of the air jump [launch] (one of the kinds above: they are looked up by which one it is). */
+    fun reachOf(launch: Launch): Reach = reaches.getOrPut(launch) { Reach(launch) }
 
     /** Nothing in the world but the block taken off from and the block to land on, [r] away and [dy] up. */
     private fun twoBlocks(r: Double, dy: Double) = Space { x, y, z, foot ->
         fun hits(bx: Double, top: Double) =
-            x + 0.3 > bx && x - 0.3 < bx + 1.0 && z + 0.3 > 0.0 && z - 0.3 < 1.0 && y + foot < top && y + 1.8 > top - 1.0
+            x + 0.3 - TOUCH > bx && x - 0.3 + TOUCH < bx + 1.0 && z + 0.3 - TOUCH > 0.0 && z - 0.3 + TOUCH < 1.0 && y + foot < top && y + 1.8 > top - 1.0
         !hits(0.0, 0.0) && !hits(r, dy)
     }
 
     /** The furthest across a standard double jump lands on something [dy] higher (negative: lower) than its take-off. */
-    fun reach(dy: Double): Double {
-        if (dy > HIGHEST || dy < LOWEST) return 0.0
-        // The next height up on the table: the harder of the two jumps either side.
-        return reaches[kotlin.math.ceil((dy - LOWEST) * 2 - 1e-9).toInt().coerceIn(0, reaches.size - 1)]
-    }
+    fun reach(dy: Double): Double = reachOf(STANDARD).at(dy)
 }

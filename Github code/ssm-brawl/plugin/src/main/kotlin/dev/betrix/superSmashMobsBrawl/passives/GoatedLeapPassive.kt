@@ -7,6 +7,8 @@ import org.bukkit.entity.Player
 class GoatedLeapPassive(player:Player) : DoubleJumpPassive("goated_leap",player) {
     private var charge=0f
     fun refill() { charge=1f }
+    /** How much of the leap is charged, 0 to 1 (the XP bar shows it, unless a Smash power has the bar). */
+    fun charged(): Float = charge
     private var airborne = false
     override fun setup() {
         super.setup()

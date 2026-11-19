@@ -12,9 +12,10 @@ data class RouteNode(val x: Int, val y16: Int, val z: Int) {
 /**
  * [climb] marks a wall climb: straight up the wall beside the block the edge starts from, then onto [node].
  * [long] marks a long jump flown in the head for this arena ([ArenaJumps]): the bot lines up for it.
+ * [charge] is how much of its leap a goat has to have charged before it (0: none).
  */
-data class RouteEdge(val node: RouteNode, val jump: Boolean, val cost: Double, val climb: Boolean = false, val long: Boolean = false)
-data class RouteStep(val node: RouteNode, val jump: Boolean, val climb: Boolean = false, val long: Boolean = false)
+data class RouteEdge(val node: RouteNode, val jump: Boolean, val cost: Double, val climb: Boolean = false, val long: Boolean = false, val charge: Float = 0f)
+data class RouteStep(val node: RouteNode, val jump: Boolean, val climb: Boolean = false, val long: Boolean = false, val charge: Float = 0f)
 
 /**
  * What a fighter can do from a block: what the rules give ([base]) and the long jumps flown in
@@ -95,7 +96,7 @@ class ArenaRoute(
         var at = best
         while (at != start) {
             val prev = parent[at] ?: break
-            result.add(RouteStep(at, prev.second.jump, prev.second.climb, prev.second.long)); at = prev.first
+            result.add(RouteStep(at, prev.second.jump, prev.second.climb, prev.second.long, prev.second.charge)); at = prev.first
         }
         return result.asReversed()
     }

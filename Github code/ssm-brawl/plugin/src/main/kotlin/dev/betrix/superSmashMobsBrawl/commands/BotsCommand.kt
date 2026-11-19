@@ -423,10 +423,10 @@ class BotsCommand : KoinComponent {
     }
 
     @Execute(name = "navgen")
-    @Description("Debug: works out the long jumps of maps ahead of time and saves them (all, all@small, aviation,ruins@big ...)")
-    fun navGen(@Context sender: CommandSender, @Arg maps: String) {
+    @Description("Debug: works out the long jumps of maps ahead of time and saves them: maps (all, all@small, aviation,ruins@big ...) and kinds of jump (all, or standard,bouncy,wolf,goat,spider)")
+    fun navGen(@Context sender: CommandSender, @Arg maps: String, @Arg jumps: String) {
         if (!allowed(sender)) return
-        val answer = dev.betrix.superSmashMobsBrawl.bots.BotNavGen.start(maps.split(',').filter { it.isNotBlank() })
+        val answer = dev.betrix.superSmashMobsBrawl.bots.BotNavGen.start(maps.split(',').filter { it.isNotBlank() }, jumps.split(',').filter { it.isNotBlank() })
         plugin.logger.info("[navgen] $answer")
         sender.sendMessage(answer)
     }
@@ -443,37 +443,55 @@ class BotsCommand : KoinComponent {
         val nav = dev.betrix.superSmashMobsBrawl.bots.ArenaNav.of(bot.world, voidY, dev.betrix.superSmashMobsBrawl.bots.Mobility.of(kit, true))
         val node = nav.nearest(org.bukkit.Location(bot.world, x, y, z), 5.0)
             ?: run { plugin.logger.info("[edges] nowhere to stand at $x $y $z"); return }
-        val jumps = dev.betrix.superSmashMobsBrawl.bots.ArenaJumps.of(bot.world, voidY, data)
+        val jumps = dev.betrix.superSmashMobsBrawl.bots.ArenaJumps.of(bot.world, voidY, data, dev.betrix.superSmashMobsBrawl.bots.Mobility.of(kit, true))
         fun show(edges: List<dev.betrix.superSmashMobsBrawl.bots.RouteEdge>) = edges.joinToString(" ") {
             "${it.node.x},${"%.2f".format(it.node.y)},${it.node.z}${if (it.climb) "c" else if (it.jump) "j" else ""}(${"%.1f".format(it.cost)})" }
         plugin.logger.info("[edges] from ${node.x},${"%.2f".format(node.y)},${node.z} as $kit: " + show(nav.base(node)))
         val long = jumps.of(node) ?: jumps.now(node)
-        plugin.logger.info("[edges] long jumps (${jumps.size} blocks known, ${jumps.jumps} jumps, complete=${jumps.complete}, from disk=${jumps.loaded}): " +
+        plugin.logger.info("[edges] long jumps (${jumps.size} blocks known, ${jumps.jumps} jumps, complete=${jumps.complete}, waiting=${jumps.waiting}, misses=${jumps.misses}, from disk=${jumps.loaded}): " +
             show(long.filter { it.cost >= 0 }))
         plugin.logger.info("[edges] jumps of the rules struck out: " + show(long.filter { it.cost < 0 }))
     }
 
     @Execute(name = "jumptest")
-    @Description("Debug: flies the jump from the block at x1 y1 z1 to the block at x2 y2 z2 of the running match in the head, and says how each try ended")
-    fun jumpTest(@Context sender: CommandSender, @Arg x1: Double, @Arg y1: Double, @Arg z1: Double, @Arg x2: Double, @Arg y2: Double, @Arg z2: Double) {
+    @Description("Debug: flies the jump from the block at x1 y1 z1 to the block at x2 y2 z2 of the running match in the head with a kit's air jump, and says how each try ended")
+    fun jumpTest(@Context sender: CommandSender, @Arg x1: Double, @Arg y1: Double, @Arg z1: Double, @Arg x2: Double, @Arg y2: Double, @Arg z2: Double, @Arg kit: String) {
         if (!allowed(sender)) return
         val bot = BotManager.onlineBots().firstOrNull { it.world.key.value().startsWith("ssmbworld") }
             ?: run { plugin.logger.info("[jumptest] no match world"); return }
         val data = minigameService.getMinigameForPlayer(bot)?.worldManager?.getWorld()?.data
             ?: run { plugin.logger.info("[jumptest] no match"); return }
-        val terrain = dev.betrix.superSmashMobsBrawl.bots.ArenaTerrain(bot.world, data.voidLevel.toInt(), dev.betrix.superSmashMobsBrawl.bots.Mobility.JUMPER, loadChunks = true)
+        val mobility = dev.betrix.superSmashMobsBrawl.bots.Mobility.of(kit, true)
+        val launch = mobility.jumps.launch
+        val terrain = dev.betrix.superSmashMobsBrawl.bots.ArenaTerrain(bot.world, data.voidLevel.toInt(), mobility, loadChunks = true)
         val a = terrain.surface(kotlin.math.floor(x1).toInt(), kotlin.math.floor(z1).toInt(), y1, 1.25, 3.0)
         val b = terrain.surface(kotlin.math.floor(x2).toInt(), kotlin.math.floor(z2).toInt(), y2, 1.25, 3.0)
         if (a == null || b == null) { plugin.logger.info("[jumptest] nowhere to stand at ${if (a == null) "the first" else "the second"} spot"); return }
         val sim = dev.betrix.superSmashMobsBrawl.bots.JumpSim
         val space = dev.betrix.superSmashMobsBrawl.bots.JumpSim.Space { x, y, z, foot -> terrain.clear(x, y, z, foot) }
+        // (Worked out before the trace is on: building the table of how far the jump goes flies hundreds of jumps.)
+        val reach = sim.reachOf(launch).at(b.y - a.y)
         sim.trace = { plugin.logger.info("[jumptest] $it") }
         try {
-            val ok = sim.promised(space, sim.STANDARD, a.x + .5, a.y, a.z + .5, b.x + .5, b.y, b.z + .5)
+            val ok = sim.promised(space, launch, a.x + .5, a.y, a.z + .5, b.x + .5, b.y, b.z + .5)
             val across = kotlin.math.hypot((b.x - a.x).toDouble(), (b.z - a.z).toDouble())
-            plugin.logger.info("[jumptest] ${a.x},${"%.2f".format(a.y)},${a.z} -> ${b.x},${"%.2f".format(b.y)},${b.z}: ${"%.2f".format(across)} across, " +
-                "${"%.2f".format(b.y - a.y)} up, open-air reach at that height ${sim.reach(b.y - a.y)}, promised=$ok")
+            plugin.logger.info("[jumptest] ${a.x},${"%.2f".format(a.y)},${a.z} -> ${b.x},${"%.2f".format(b.y)},${b.z} as $kit (${mobility.jumps.id}): ${"%.2f".format(across)} across, " +
+                "${"%.2f".format(b.y - a.y)} up, open-air reach at that height $reach, promised=$ok")
+            // A kit that can charge its jump (the goat): the same with each amount charged.
+            for ((charge, charged) in mobility.jumps.charged) {
+                plugin.logger.info("[jumptest] with ${(charge * 100).toInt()}% charged:")
+                val works = sim.promised(space, charged, a.x + .5, a.y, a.z + .5, b.x + .5, b.y, b.z + .5)
+                plugin.logger.info("[jumptest] with ${(charge * 100).toInt()}% charged: promised=$works")
+            }
         } finally { sim.trace = null }
+    }
+
+    @Execute(name = "flights")
+    @Description("Debug: with bot debug logging on, logs every tick of an air jump next to the flight picked for it in the head")
+    fun flights(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        BotManager.debugFlights = !BotManager.debugFlights
+        plugin.logger.info("[bots] logging air jumps tick by tick: ${if (BotManager.debugFlights) "on" else "off"}")
     }
 
     @Execute(name = "nolearn")

@@ -57,12 +57,12 @@ class ArenaNav private constructor(private val world: World, private val voidY: 
     fun neighbours(node: RouteNode): List<RouteEdge> {
         val base = base(node)
         if (!mobility.airborne) return base
-        val jumps = ArenaJumps.find(world) ?: return base
+        val jumps = ArenaJumps.find(world, mobility) ?: return base
         val long = jumps.of(node)
         if (long == null) { jumps.want(node); return base }
         if (long.isEmpty()) return base
         merged[node]?.takeIf { it.base === base && it.long === long }?.let { return it.all }
-        return ArenaJumps.merge(base, long, mobility == Mobility.JUMPER).also { merged[node] = Merged(base, long, it) }
+        return ArenaJumps.merge(base, long, mobility.jumps.flown).also { merged[node] = Merged(base, long, it) }
     }
 
     /** What the rules of walking, hopping and jumping give from [node], without the long jumps. */
@@ -181,7 +181,11 @@ class ArenaNav private constructor(private val world: World, private val voidY: 
         /** The arena changed around a block: every kind of fighter's graph of this world looks again. */
         fun invalidateAll(world: World, x: Int, z: Int) {
             navs[world.uid]?.values?.forEach { it.invalidate(x, z) }
-            ArenaJumps.find(world)?.forget(x, z, 7)
+            // (Only the long jumps of the blocks right there. A bot calls this whenever a jump does
+            // not come off, which is usually the jump and not the arena; forgetting the long jumps
+            // of every block within a jump's reach, for every kind of jump, left bots with nothing
+            // to plan on for the twenty seconds it took to work them out again.)
+            ArenaJumps.forgetAll(world, x, z, 2)
         }
     }
 }

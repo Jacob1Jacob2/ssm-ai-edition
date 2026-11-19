@@ -127,11 +127,11 @@ object BotChaseTest : KoinComponent {
             val found = minigameService.getMinigameForPlayer(pair.chaser)?.takeIf { it.getState() == MinigameState.IN_PROGRESS } ?: return
             val world = found.worldManager.getWorld() ?: return
             val spawns = world.data.spawnPoints.map { Location(world.world, it.x, it.y, it.z) }
-            val jumps = ArenaJumps.of(world.world, world.data.voidLevel.toInt(), world.data)
+            val jumps = ArenaJumps.of(world.world, world.data.voidLevel.toInt(), world.data, Mobility.of(kitId, true))
             if (explicit == null && plan == null && !jumps.complete) {
                 // The survey reads every long jump of the arena: have them all worked out first
-                // (a good part of each tick until they are, which is a while on a map new to this server).
-                jumps.work(40_000_000L, spawns, load = true)
+                // (a slice each tick until they are, on every thread there is).
+                jumps.workTogether(spawns, BotNavGen.pool)
                 if (!jumps.complete) return
             }
             pair.game = found
@@ -273,7 +273,7 @@ object BotChaseTest : KoinComponent {
         val mobility = Mobility.of(kitId, true)
         val terrain = ArenaTerrain(world, voidY, mobility, loadChunks = true)
         // The chaser's own graph: the rules, and the long jumps flown in the head for this arena.
-        val (planned, plannedFrom) = graph(terrain, jumps.takeIf { mobility.airborne }, mobility == Mobility.JUMPER)
+        val (planned, plannedFrom) = graph(terrain, jumps.takeIf { mobility.airborne }, mobility.jumps.flown)
         val plannedMs = (System.nanoTime() - began) / 1_000_000
         val queue = ArrayDeque<RouteNode>()
 
@@ -370,6 +370,7 @@ object BotChaseTest : KoinComponent {
             val loose = LinkedHashSet<RouteNode>()
             for (x in minX..maxX) for (z in minZ..maxZ) for (n in column(x, z)) if (n !in reachable) loose += n
             val counted = HashSet<RouteNode>()
+            val reach = JumpSim.reachOf(mobility.jumps.launch)
             var islands = 0
             var within = 0
             for (first in loose) {
@@ -393,7 +394,7 @@ object BotChaseTest : KoinComponent {
                     if (across < 1.0 || across > 12.0) continue
                     for (p in column(t.x + dx, t.z + dz)) {
                         if (p !in planned) continue
-                        val s = JumpSim.reach(t.y - p.y) - across
+                        val s = reach.at(t.y - p.y) - across
                         if (s > spare) { spare = s; from = p; onto = t }
                     }
                 }

@@ -24,6 +24,14 @@ class BotPlayer(private val mcServer: MinecraftServer, level: ServerLevel, profi
 
     override fun isClientAuthoritative(): Boolean = false
 
+    /**
+     * Nanoseconds since the game last timed one of this player's jumps. This server gives a
+     * player the push of a sprint jump (a fifth of a block a tick) only if that is more than a
+     * quarter of a second: see LivingEntity.jumpFromGround. Jump again sooner and the jump is a
+     * good deal shorter than the one a bot planned.
+     */
+    fun sinceTimedJump(): Long = System.nanoTime() - lastJumpTime
+
     override fun tick() {
         // Keep chunk tracking in sync, as a real client's movement packets would.
         if (mcServer.tickCount % 10 == 0) {
