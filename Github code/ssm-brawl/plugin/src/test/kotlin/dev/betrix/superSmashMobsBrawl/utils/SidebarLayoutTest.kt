@@ -1,6 +1,7 @@
 package dev.betrix.superSmashMobsBrawl.utils
 
 import dev.betrix.superSmashMobsBrawl.services.EnergyHud
+import dev.betrix.superSmashMobsBrawl.services.SidebarOverflow
 import io.kotest.core.spec.style.StringSpec
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.ints.shouldBeLessThanOrEqual
@@ -9,48 +10,55 @@ import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.TextComponent
 import net.kyori.adventure.text.format.NamedTextColor
 
-/** The match sidebar with many fighters: everything stays on it, and the names stand in straight columns. */
+/** The match sidebar with many fighters: one to a line, the settings on top, and nobody left off. */
 class SidebarLayoutTest : StringSpec({
-    "every number of fighters fits the fifteen lines with the settings and everybody on it" {
+    "room is made step by step, and only what is over fifteen lines goes under the box" {
+        for (fighters in 1..6) SidebarLayout.of(fighters) shouldBe SidebarLayout.Shape(4, true, 0)
+        for (fighters in 7..8) SidebarLayout.of(fighters) shouldBe SidebarLayout.Shape(2, true, 0)
+        for (fighters in 9..10) SidebarLayout.of(fighters) shouldBe SidebarLayout.Shape(2, false, 0)
+        for (fighters in 11..16) SidebarLayout.of(fighters) shouldBe SidebarLayout.Shape(2, false, fighters - 10)
+    }
+
+    "every fighter has a line of their own at every size, and the box never holds more than fifteen" {
         for (fighters in 0..16) {
             val shape = SidebarLayout.of(fighters)
-            val fighterLines = if (shape.columns == 1) fighters else (fighters + 1) / 2
-            fighterLines shouldBeLessThanOrEqual SidebarLayout.FIGHTER_LINES
-            (shape.head + fighterLines + shape.foot) shouldBeLessThanOrEqual SidebarLayout.LINES
+            // settings, divider, heading, one line a fighter, footer (and two blanks while there is room)
+            shape.rows(fighters) shouldBe shape.settingsLines + 2 + fighters + 1 + if (shape.blanks) 2 else 0
+            (shape.rows(fighters) - shape.overflow) shouldBeLessThanOrEqual SidebarLayout.LINES
+            shape.overflow shouldBeLessThanOrEqual SidebarLayout.MAX_OVERFLOW
         }
     }
 
-    "a small match keeps its four lines of settings and one fighter to a line" {
-        for (fighters in 1..6) SidebarLayout.of(fighters) shouldBe SidebarLayout.Shape(1, false)
-        for (fighters in 7..8) SidebarLayout.of(fighters) shouldBe SidebarLayout.Shape(1, true)
-        for (fighters in 9..16) SidebarLayout.of(fighters) shouldBe SidebarLayout.Shape(2, true)
+    "lines under the box start where the box's lines start, on a strip exactly as wide as the box" {
+        val names = listOf("3 Butterbloom", "3 Charlie_Skirk", "2 _EternalHorror_", "2 iii", "AI Edition J9IhcC0r")
+        val box = 133
+        val own = Component.text("3 blufuffydragons", NamedTextColor.GREEN)
+        val rows = names.mapIndexed { i, name -> SidebarOverflow.Row(Component.text(name), EnergyHud.widthOf(Component.text(name)), names.size - i) }
+        val advance = box - SidebarOverflow.NUMBER_GAP - SidebarOverflow.numberWidth(6)
+        val (drawn, width) = SidebarOverflow.trace(SidebarOverflow.host(own, EnergyHud.widthOf(own), advance, box, rows))
+        // To the client the line is as wide as it was told to be, wherever the drawing went.
+        width shouldBe advance
+        drawn.first().let { it.below shouldBe 0; it.from shouldBe 0; it.text shouldBe "3 blufuffydragons" }
+        for (below in 1..names.size) {
+            val line = drawn.filter { it.below == below }
+            val strip = line.filter { it.what == "strip" }
+            // From two pixels before the text to two past the widest line, with no gap and no overlap.
+            strip.first().from shouldBe -SidebarOverflow.EDGE
+            strip.last().to shouldBe box + SidebarOverflow.EDGE
+            strip.zipWithNext().forEach { (a, b) -> b.from shouldBe a.to }
+            line.single { it.what == "text" }.let { it.from shouldBe 0; it.text shouldBe names[below - 1] }
+            line.single { it.what == "number" }.let { it.to shouldBe box + SidebarOverflow.EDGE; it.text shouldBe "${names.size - below + 1}" }
+        }
+        drawn.map { it.below }.distinct() shouldContainExactly (0..names.size).toList()
     }
 
-    "two teams of eight are a column each" {
-        // A side is a column, so a column is as long as the bigger side still has fighters.
-        val shape = SidebarLayout.of(16)
-        (shape.head + 8 + shape.foot) shouldBeLessThanOrEqual SidebarLayout.LINES
-        val lopsided = SidebarLayout.of(9)
-        lopsided.columns shouldBe 2
-        (lopsided.head + 8 + lopsided.foot) shouldBeLessThanOrEqual SidebarLayout.LINES
-    }
-
-    "the two columns read left to right and down, in the order of the list" {
-        val (left, right) = SidebarLayout.columns(7)
-        left shouldContainExactly listOf(0, 2, 4, 6)
-        right shouldContainExactly listOf(1, 3, 5)
-    }
-
-    "the second column starts at the same place on every line, whatever stands in the first" {
-        // The first column of the sixteen-player match this was reported from.
-        val names = listOf("3 Achot", "3 AnIdiotInATree", "3 Atoximed", "3 blufuffydragons", "3 Butterbloom", "3 Jacob1Jacob2", "2 AGentleAura", "2 iii")
-        val cells = names.map { Component.text(it, NamedTextColor.GREEN) }
-        val column = cells.maxOf(EnergyHud::widthOf) + 9
-        val starts = cells.map { cell ->
-            val line = EnergyHud.beside(cell, Component.text("3 Alex12Y"), column, pack = true)
+    "the two halves of a settings line start at the same place on both lines" {
+        val firsts = listOf(Component.text("Items: Off"), Component.text("Difficulty: Expert"))
+        val column = firsts.maxOf(EnergyHud::widthOf) + 9
+        val starts = firsts.map { first ->
+            val line = EnergyHud.beside(first, Component.text("Mode: FFA"), column, pack = true)
             // What the spacer glyph moves the pen by: its place in the pack's table of gaps.
-            val spacer = (line.children()[1] as TextComponent).content().single().code - 0xF000 - 512
-            EnergyHud.widthOf(cell) + spacer
+            EnergyHud.widthOf(first) + (line.children()[1] as TextComponent).content().single().code - 0xF000 - 512
         }
         starts.distinct() shouldContainExactly listOf(column)
         // Letters are measured, not counted: three narrow ones are a third of three wide ones.
@@ -59,8 +67,8 @@ class SidebarLayoutTest : StringSpec({
     }
 
     "without the pack the gap is made of spaces, never fewer than one" {
-        val cell = Component.text("3 blufuffydragons")
-        val line = EnergyHud.beside(cell, Component.text("3 BobLeeSwagger"), EnergyHud.widthOf(cell) + 9, pack = false)
+        val cell = Component.text("Difficulty: Expert")
+        val line = EnergyHud.beside(cell, Component.text("Mode: FFA"), EnergyHud.widthOf(cell) + 9, pack = false)
         (line.children()[1] as TextComponent).content() shouldBe "   "
         val tight = EnergyHud.beside(cell, Component.text("x"), 0, pack = false)
         (tight.children()[1] as TextComponent).content() shouldBe " "

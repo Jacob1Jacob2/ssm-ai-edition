@@ -61,6 +61,15 @@ object EnergyHud {
     fun widthOf(text: Component): Int = width(text)
 
     /**
+     * How wide the sidebar's divider of [count] double lines is: each is the game's own, stretched
+     * from eight pixels to nine (SidebarAssets), and the line ends with a gap of eight back.
+     */
+    fun dividerWidth(count: Int): Int {
+        val drawn = (8 downTo 0).firstOrNull { x -> (0 until 8).any { y -> ascii.getRGB(13 * 8 + x * 8 / 9, 12 * 8 + y).ushr(24) != 0 } } ?: -1
+        return count * (drawn + 2) - 8
+    }
+
+    /**
      * [left] and [right] on one line, [right] starting exactly [column] pixels in, so that a
      * run of such lines makes two straight columns. A client without the pack has no spacer
      * glyphs: there the gap is made of spaces, to the nearest four pixels.

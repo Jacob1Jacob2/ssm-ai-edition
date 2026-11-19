@@ -26,6 +26,7 @@ object SidebarAssets {
             {"type":"space","advances":{"\uefff":-8}},
             {"type":"bitmap","file":"ssm:font/sidebar_divider.png","ascent":7,"height":8,"chars":["═"]},
             {"type":"reference","id":"minecraft:default"}]}""".toByteArray()
+        SidebarOverflow.addAssets(files)
     }
     private fun png(image: BufferedImage) = ByteArrayOutputStream().also {ImageIO.write(image,"png",it)}.toByteArray()
 }

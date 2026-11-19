@@ -250,11 +250,18 @@ object ScoreboardService : KoinComponent {
                 text(FOOTER, NamedTextColor.GOLD).append(text(" ${game.displayCode}", NamedTextColor.DARK_GRAY))))
             return
         }
-        writeLines(board, matchLines(game, ResourcePackService.hasPack(viewer)))
+        val (lines, top) = matchLines(game, ResourcePackService.hasPack(viewer))
+        writeLines(board, lines, top)
     }
 
-    /** The lines of the sidebar of a match that is on, top to bottom, for a client with or without the pack. */
-    internal fun matchLines(game: BrawlMinigame, pack: Boolean): List<Component> {
+    /** A line of the match sidebar: its text, how wide the client draws it, and the font it stands in for a client with the pack. */
+    private data class Line(val text: Component, val width: Int, val font: net.kyori.adventure.key.Key? = null)
+
+    /**
+     * The lines of the sidebar of a match that is on, top to bottom, for a client with or without
+     * the pack, and the number the first of them carries (they count down from it, one a line).
+     */
+    internal fun matchLines(game: BrawlMinigame, pack: Boolean): Pair<List<Component>, Int> {
         val everyone = game.allPlayers()
         // The game's settings are whatever its (first) real player picked in the hub.
         val setup = game.settings
@@ -272,9 +279,9 @@ object ScoreboardService : KoinComponent {
                 }
                 .sortedWith(ROW_ORDER)
 
-        // A sidebar holds fifteen lines. The settings and everyone still alive are always on it: a
-        // crowded match puts the settings two to a line, then the fighters in two columns, each
-        // column starting at the same place on every line (see SidebarLayout).
+        // The settings and everyone still alive are always on it, one fighter to a line. The client
+        // draws fifteen lines: a crowded match first puts the settings two to a line and drops the
+        // blank lines, and what is still over is drawn under the box (SidebarLayout, SidebarOverflow).
         val shape = SidebarLayout.of(rows.size)
 
         val items = ClassicSidebar.spawnSetting("Items", setup.items, setup.itemIntervalSeconds, GameSetupService.ITEM_INTERVALS, false)
@@ -286,66 +293,79 @@ object ScoreboardService : KoinComponent {
             if (game.sides.isNotEmpty()) MatchMode.TEAMS else setup.matchMode.takeIf { it != MatchMode.TEAMS } ?: MatchMode.FFA, everyone.size))
 
         fun entry(row: Row): Component = cell(row, Bukkit.getPlayerExact(row.name)?.let { BotManager.displayNameOf(it) } ?: row.name)
-        // In a match of two teams a column is a side, Blue on the left; otherwise the list runs
-        // left to right and down, most lives first, as a single column would.
-        val (left, right) =
-            if (shape.columns == 1) rows to emptyList()
-            else if (game.sides.isNotEmpty()) rows.partition { it.side == dev.betrix.superSmashMobsBrawl.minigames.TeamSide.BLUE }
-            else SidebarLayout.columns(rows.size).let { (l, r) -> l.map(rows::get) to r.map(rows::get) }
-        val cells = left.map(::entry)
-        // One place for the second column to start, for the settings and the fighters alike:
-        // just past the widest thing that stands in the first.
-        val column = COLUMN_GAP + maxOf(
-            if (shape.compactSettings) maxOf(EnergyHud.widthOf(items), EnergyHud.widthOf(difficulty)) else 0,
-            if (shape.columns == 2) cells.maxOfOrNull(EnergyHud::widthOf) ?: 0 else 0)
-
-        val lines = mutableListOf<Component>()
-        if (!shape.compactSettings) lines += listOf(items, smash, difficulty, mode)
+        val all = ArrayList<Line>()
+        if (shape.settingsLines == 4) listOf(items, smash, difficulty, mode).forEach { all += Line(it, EnergyHud.widthOf(it)) }
         else {
-            lines += EnergyHud.beside(items, smash, column, pack)
-            lines += EnergyHud.beside(difficulty, mode, column, pack)
+            // Two to a line, the second of each starting at the same place.
+            val column = COLUMN_GAP + maxOf(EnergyHud.widthOf(items), EnergyHud.widthOf(difficulty))
+            for ((first, second) in listOf(items to smash, difficulty to mode))
+                all += Line(EnergyHud.beside(first, second, column, pack), column + EnergyHud.widthOf(second))
         }
-        lines += text(ClassicSidebar.DIVIDER, NamedTextColor.GREEN).let {
-            if (pack) it.append(Component.text("\uEFFF")).font(ResourcePackService.SIDEBAR_DIVIDER_FONT) else it
+        all += Line(text(ClassicSidebar.DIVIDER, NamedTextColor.GREEN).let { if (pack) it.append(Component.text("\uEFFF")) else it },
+            EnergyHud.dividerWidth(ClassicSidebar.DIVIDER.length), ResourcePackService.SIDEBAR_DIVIDER_FONT)
+        val heading = text("Players", NamedTextColor.YELLOW, bold = true)
+        all += Line(heading, EnergyHud.widthOf(heading), ResourcePackService.SIDEBAR_HEADING_FONT)
+        if (shape.blanks) all += Line(Component.empty(), 0)
+        for (row in rows) entry(row).let { all += Line(it, EnergyHud.widthOf(it), ResourcePackService.SIDEBAR_PLAYER_FONT) }
+        if (shape.blanks) all += Line(Component.empty(), 0)
+        val footer = text(FOOTER, NamedTextColor.GOLD).append(text(" ${game.displayCode}", NamedTextColor.DARK_GRAY))
+        all += Line(footer, EnergyHud.widthOf(footer), ResourcePackService.SIDEBAR_FOOTER_FONT)
+
+        fun shown(line: Line) = if (pack && line.font != null) line.text.font(line.font) else line.text
+        if (all.size <= SidebarLayout.LINES) return all.map(::shown) to all.size
+        if (!pack) {
+            // Without the pack there is nothing to draw under the box with: as many as fit, and how many more there are.
+            val kept = all.take(SidebarLayout.LINES - 1)
+            return (kept.map(::shown) + text("+${all.size - kept.size} more", NamedTextColor.GRAY)) to SidebarLayout.LINES
         }
-        lines += text("Players", NamedTextColor.YELLOW, bold = true).let {
-            if (pack) it.font(ResourcePackService.SIDEBAR_HEADING_FONT) else it
+        // The lines count down from the top one, the ones under the box included.
+        fun number(index: Int) = all.size - index
+        // As wide as the client will make the box: the widest line with its number, or the title.
+        val box = maxOf(EnergyHud.widthOf(ClassicSidebar.title(0)),
+            all.withIndex().maxOf { (index, line) -> line.width + SidebarOverflow.NUMBER_GAP + SidebarOverflow.numberWidth(number(index)) })
+        val last = SidebarLayout.LINES - 1
+        val under = all.drop(SidebarLayout.LINES).mapIndexed { index, line ->
+            SidebarOverflow.Row(line.text, line.width, number(SidebarLayout.LINES + index), when (line.font) {
+                ResourcePackService.SIDEBAR_PLAYER_FONT -> SidebarOverflow.FIGHTER_ASCENT
+                ResourcePackService.SIDEBAR_FOOTER_FONT -> SidebarOverflow.FOOTER_ASCENT
+                else -> SidebarOverflow.PLAIN_ASCENT
+            })
         }
-        lines += Component.empty()
-        fun playerLine(line: Component) = if (pack) line.font(ResourcePackService.SIDEBAR_PLAYER_FONT) else line
-        if (shape.columns == 1) cells.forEach { lines += playerLine(it) }
-        else for (i in 0 until minOf(maxOf(left.size, right.size), SidebarLayout.FIGHTER_LINES)) lines += playerLine(
-            EnergyHud.beside(cells.getOrNull(i) ?: Component.empty(), right.getOrNull(i)?.let(::entry) ?: Component.empty(), column, pack))
-        lines += Component.empty()
-        lines += text(FOOTER, NamedTextColor.GOLD)
-            .append(text(" ${game.displayCode}", NamedTextColor.DARK_GRAY)).let {
-            if (pack) it.font(ResourcePackService.SIDEBAR_FOOTER_FONT) else it
-        }
-        return lines
+        // The fifteenth line is told to be as wide as it takes for the box to be [box] wide, whichever line is the widest.
+        val host = SidebarOverflow.host(shown(all[last]), all[last].width,
+            box - SidebarOverflow.NUMBER_GAP - SidebarOverflow.numberWidth(number(last)), box, under)
+        return (all.take(last).map(::shown) + host) to all.size
     }
 
     /**
-     * Debug: the sidebar of [game] as text, one string per line. A gap made with the pack's spacer
-     * glyphs is written as the pixel the text after it starts at, in angle brackets: the same
-     * number down a column is that column standing straight.
+     * Debug: the sidebar of [game] as text, one string per line with the number the line carries.
+     * A gap made with the pack's spacer glyphs is written as the pixel the text after it starts at,
+     * in angle brackets. Lines drawn under the box follow the fifteenth, with the pixels their
+     * strip of background runs between: the same on every one is the box standing straight.
      */
     fun describe(game: BrawlMinigame): List<String> {
-        val plain = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
-        return matchLines(game, pack = true).map { line ->
-            val parts = line.children()
-            val spacer = parts.getOrNull(1)?.takeIf { it.font() == EnergyHud.FONT }
-            if (parts.size == 3 && spacer != null) {
-                val gap = plain.serialize(spacer).single().code - 0xF000 - 512
-                "${plain.serialize(parts[0])} <${EnergyHud.widthOf(parts[0]) + gap}> ${plain.serialize(parts[2])}"
-            } else plain.serialize(line)
+        val (lines, top) = matchLines(game, pack = true)
+        return lines.flatMapIndexed { index, line ->
+            val (drawn, width) = SidebarOverflow.trace(line)
+            val own = drawn.filter { it.below == 0 }
+            val head = "${"%2d".format(top - index)} | " + own.mapIndexed { i, piece ->
+                (if (i > 0 && piece.from != own[i - 1].to) "<${piece.from}> " else "") + piece.text }.joinToString("") + "   (${width} wide)"
+            listOf(head) + drawn.filter { it.below > 0 }.groupBy { it.below }.toSortedMap().map { (below, pieces) ->
+                val strip = pieces.filter { it.what == "strip" }
+                val gaps = strip.zipWithNext().count { (a, b) -> a.to != b.from }
+                "${"%2d".format(pieces.first { it.what == "number" }.text.toInt())} | under the box, line $below: '" +
+                    pieces.filter { it.what == "text" }.joinToString("") { it.text } + "' from ${pieces.first { it.what == "text" }.from}, " +
+                    "strip ${strip.first().from}..${strip.last().to}" + (if (gaps > 0) " WITH $gaps GAPS" else "") +
+                    ", number ends at ${pieces.first { it.what == "number" }.to}"
+            }
         }
     }
 
-    private fun writeLines(board: Scoreboard, lines: List<Component>) {
+    private fun writeLines(board: Scoreboard, lines: List<Component>, top: Int = lines.size) {
         val obj = board.getObjective("ssm") ?: return
         lines.forEachIndexed { i, line ->
             val score = obj.getScore("line$i")
-            score.score = lines.size - i
+            score.score = top - i
             score.customName(line)
         }
         (lines.size until 20).forEach { i -> board.resetScores("line$i") }
