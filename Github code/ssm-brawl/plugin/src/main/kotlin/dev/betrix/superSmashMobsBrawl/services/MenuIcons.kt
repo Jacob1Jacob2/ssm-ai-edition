@@ -42,7 +42,7 @@ object MenuIcons {
     }
     fun star(item:ItemStack,index:Int) {SmashItems.styleStar(item,index)}
     /** The materials the pack has a dark copy of (see [MenuAssets]): a button that is there but cannot be used yet. */
-    private val darkIcons=setOf(Material.COPPER_CHEST,Material.PLAYER_HEAD)
+    private val darkIcons=setOf(Material.COPPER_CHEST,Material.PLAYER_HEAD,Material.IRON_SWORD)
     /** The same icon with the light off. It lights up again by being the plain item. */
     fun dark(item:ItemStack):ItemStack=item.apply {
         if(type in darkIcons)editMeta { it.itemModel=NamespacedKey("ssm","dark_${type.key.key}") }
@@ -121,12 +121,21 @@ object MenuAssets {
             val elements=boxes.joinToString(",") {(from,to) -> """{"from":[${from.joinToString(",")}],"to":[${to.joinToString(",")}],"shade":false,"faces":{$sides}}"""}
             return """{"parent":"$parent","textures":{"veil":"ssm:item/dark_veil","particle":"ssm:item/dark_veil"},"elements":[$elements]}""".toByteArray()
         }
+        // The veil stands a fiftieth of a pixel off the surface it covers: enough for the two not to
+        // lie in one plane, far too little to see. (Anything more shows: a veil a fifth of a pixel
+        // out made the dark chest and head look bigger than the lit ones.)
+        val gap=VEIL_GAP
         // A shut chest is 14 wide, deep and high, with its lock one further to the south.
         files["assets/ssm/models/item/dark_chest_veil.json"] = veilModel("minecraft:item/copper_chest",
-            listOf(0.8,-0.2,0.8) to listOf(15.2,14.2,15.2), listOf(6.8,6.8,15.2) to listOf(9.2,11.2,16.2))
-        // A head is 8 each way and stands on the floor of its block; its hat layer is a quarter more all round.
+            listOf(1-gap,-gap,1-gap) to listOf(15+gap,14+gap,15+gap), listOf(7-gap,7-gap,15.0) to listOf(9+gap,11+gap,16+gap))
+        // A head is 8 each way and stands on the floor of its block. (Its hat layer, a quarter more
+        // all round, is empty on the plain head this is used for.)
         files["assets/ssm/models/item/dark_head_veil.json"] = veilModel("minecraft:item/template_skull",
-            listOf(3.5,-0.5,3.5) to listOf(12.5,8.5,12.5))
+            listOf(4-gap,-gap,4-gap) to listOf(12+gap,8+gap,12+gap))
+        // A flat icon needs no veil: its picture is drawn darker, and is the very same size.
+        val shade=-0x1000000 or (Math.round(DARK_ICON_LIGHT*255).toInt()*0x010101)
+        for(flat in DARK_FLAT_ICONS)files["assets/ssm/items/dark_$flat.json"] =
+            """{"model":{"type":"minecraft:model","model":"minecraft:item/$flat","tints":[{"type":"minecraft:constant","value":$shade}]}}""".toByteArray()
         files["assets/ssm/items/dark_copper_chest.json"] = """{"model":{"type":"minecraft:composite","models":[{"type":"minecraft:special","base":"minecraft:item/copper_chest","model":{"type":"minecraft:chest","texture":"minecraft:copper"}},{"type":"minecraft:model","model":"ssm:item/dark_chest_veil"}]}}""".toByteArray()
         files["assets/ssm/items/dark_player_head.json"] = """{"model":{"type":"minecraft:composite","models":[$head,{"type":"minecraft:model","model":"ssm:item/dark_head_veil"}]}}""".toByteArray()
         // Shadow Walk keeps the vanilla skeleton skull, with an animated glint when enabled.
@@ -268,6 +277,10 @@ object MenuAssets {
     }
     /** How much of an icon's own colour is left under the dark veil. */
     const val DARK_ICON_LIGHT = 0.26
+    /** How far a veil stands off the surface it darkens, in pixels of the model. */
+    const val VEIL_GAP = 0.02
+    /** Flat icons (one picture, no block shape) that have a dark copy, by their item model name. */
+    val DARK_FLAT_ICONS = listOf("iron_sword")
     /** One flat see-through black: what a veiled icon is darkened with. */
     internal fun veil(): ByteArray {
         val image=java.awt.image.BufferedImage(16,16,java.awt.image.BufferedImage.TYPE_INT_ARGB)

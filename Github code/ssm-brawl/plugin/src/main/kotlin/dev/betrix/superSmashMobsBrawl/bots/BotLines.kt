@@ -550,6 +550,67 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
             listOf("one life then we good ${ref(player)}", "almost done $lol"),
             listOf("now ur sorry", "nope", "u had ur chance", "too late") + if (mine >= 2) listOf("after u killed me $mine times? no") else emptyList())
 
+        // ------------------------------------------------------------ Two teams: a player on this bot's side asked for something
+
+        /**
+         * This bot says it heard what [player], who is on its side, asked of it ([TeamTalk]) and is
+         * doing it. [target] is the opponent a FOCUS is on, when one could be made out.
+         */
+        fun teamAck(player: BotDialogue.Fighter, ask: TeamTalk.Ask, target: BotDialogue.Fighter?): String? {
+            val p = ref(player)
+            val t = target?.let(::ref)
+            return when (ask) {
+                TeamTalk.Ask.COME -> say("team.come",
+                    listOf("omw", "coming", "ok omw", "on my way", "k coming", "bet omw", "1 sec omw", "ok coming to u", "omw dont die"),
+                    listOf("omw", "coming", "ok on my way", "got u omw", "be right there", "ok coming $lol", "on my way $p", "ok 1 sec"),
+                    listOf("ok ok omw", "fine coming", "omw", "coming hold on", "ok 1 sec", "k omw dont die", "ya ya coming"))
+                TeamTalk.Ask.FOCUS -> if (t == null) say("team.who",
+                    listOf("who", "which one", "who tho", "get who"), listOf("who do u mean", "which one", "who $lol"), listOf("who", "which one tho"))
+                else say("team.focus",
+                    listOf("ok im on $t", "bet $t is done", "on $t", "k going $t", "$t first got it", "say less im on $t", "ok $t then"),
+                    listOf("ok going for $t", "on $t", "got it $t first", "ok ill help with $t", "ok $t it is", "k im on $t"),
+                    listOf("ok on $t", "fine $t first", "k $t", "ok ok going $t", "finally ya get $t"))
+                TeamTalk.Ask.RETREAT -> say("team.retreat",
+                    listOf("ok backing up", "k falling back", "fine im out", "ok ok running", "k pulling out", "bet backing off"),
+                    listOf("ok backing off", "good call falling back", "ok im out", "ok running", "k backing up"),
+                    listOf("ok ok im running", "ya lets back up", "k backing up", "finally ok", "ok im out of there"))
+                TeamTalk.Ask.HOLD -> say("team.hold",
+                    listOf("ok holding", "k staying here", "ok ill wait", "holding here", "ok not moving", "bet ill hold"),
+                    listOf("ok ill hold here", "got it staying", "ok waiting", "k holding", "ok ill stay put"),
+                    listOf("fine ill stay", "ok holding", "k waiting here", "ok ok not moving"))
+                TeamTalk.Ask.PUSH -> say("team.push",
+                    listOf("lets go", "bet going in", "ok pushing", "say less", "k going in", "ok we go"),
+                    listOf("ok lets go", "going in", "ok pushing with u", "k lets get them", "ok im with u"),
+                    listOf("ok going in", "finally lets go", "k pushing", "ok ok im going"))
+                TeamTalk.Ask.FREE -> say("team.free",
+                    listOf("ok", "k", "aight", "bet"), listOf("ok np", "all good", "ok", "k np"), listOf("ok", "k", "fine"))
+                TeamTalk.Ask.UNCLEAR -> say("team.unclear",
+                    listOf("wdym", "what do u need", "huh", "say that again", "what u want me to do"),
+                    listOf("what do u need", "wdym", "whats the plan", "say again", "what should i do $p"),
+                    listOf("what", "wdym", "what do u want me to do", "huh"))
+            }
+        }
+
+        /** Asked for something by a teammate while dead: it will do it once it is back. */
+        fun teamDead(ask: TeamTalk.Ask): String? = say("team.dead",
+            listOf("im dead rn 1 sec", "respawning gimme a sec", "dead rn", "1 sec im respawning", "just died hold on") +
+                if (ask == TeamTalk.Ask.COME) listOf("dead rn omw after", "respawning then omw") else emptyList(),
+            listOf("just died 1 sec", "respawning 1 sec", "im dead rn $lol give me a sec", "back in a sec") +
+                if (ask == TeamTalk.Ask.COME) listOf("respawning then omw") else emptyList(),
+            listOf("im dead rn", "i just died give me a sec", "dead again 1 sec", "respawning"))
+
+        /** Asked to come to a teammate it has found no way to: it says so and fights on where it is. */
+        fun teamCant(): String? = say("team.cant",
+            listOf("cant get to u", "no way to u from here", "cant reach u there", "how do i even get there", "theres no way up there for me"),
+            listOf("cant get to u from here sorry", "no way up there for me", "cant reach u there $lol", "i cant get there come to me"),
+            listOf("i cant get there", "theres no way to u", "cant reach u", "how am i supposed to get there"))
+
+        /** Asked for something by a teammate with no lives left to do it with. */
+        fun teamOut(): String? = say("team.out",
+            listOf("im out of lives", "cant im out", "im out $lol", "no lives left its on u"),
+            listOf("im out sorry", "no lives left gl tho", "im out u got this", "cant im out gl"),
+            listOf("im out", "i have no lives left", "cant im dead dead", "im out its all u"))
+
         /** A salty bot annoyed that [nice] is being friendly about a fight. */
         fun sneer(nice: BotDialogue.Fighter, about: String): String? {
             val n = ref(nice)

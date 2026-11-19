@@ -13,7 +13,8 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
                   private val reactions: Double = 0.65) {
     data class Fighter(val id: UUID, val name: String, val kit: String, val lives: Int,
                        val bot: Boolean, val fighting: Boolean = true)
-    data class Reply(val speaker: UUID, val text: String)
+    /** [urgent]: somebody asked for this answer and is waiting for it, so it is typed now, not after the lines before it. */
+    data class Reply(val speaker: UUID, val text: String, val urgent: Boolean = false)
     data class Death(val victim: UUID, val killer: UUID?, val ability: String, val time: Long)
     private data class Cast(val player: UUID, val ability: String, val time: Long)
     private data class Hit(val attacker: UUID, val victim: UUID, val time: Long)
@@ -27,7 +28,9 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
      * When it is sent, [speaker] and [allies] start going after [grudge] in the actual fight.
      */
     private data class Followup(val speaker: UUID, val text: String, val due: Long,
-                                val grudge: UUID? = null, val allies: List<UUID> = emptyList())
+                                val grudge: UUID? = null, val allies: List<UUID> = emptyList(),
+                                /** An answer somebody is waiting for (a teammate who asked for something): it does not queue behind other lines. */
+                                val urgent: Boolean = false)
     private val lines = BotLines(random, memory)
     private val casts = ArrayDeque<Cast>()
     private val hits = ArrayDeque<Hit>()
@@ -145,7 +148,7 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
             val speaker = fighters.find { it.id == next.speaker && it.bot }
             if (speaker != null && now - next.due < 6000) {
                 next.grudge?.let { foe -> (next.allies + speaker.id).forEach { grudges[it] = foe to now + GRUDGE_MS } }
-                return send(speaker, next.text, now)
+                return send(speaker, next.text, now)?.copy(urgent = next.urgent)
             }
             // The conversation stalled (its speaker left, or the server hung): drop the rest of it.
             followups.clear()
@@ -403,6 +406,39 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
         val speaker = fighters.find { it.id == bot && it.bot && talks(it.id) } ?: return
         val player = fighters.find { it.id == target } ?: return
         teamLine(speaker, lines.speaker(speaker, fighters, personalityOf(speaker.id)).warnTeam(player, reason, teamUps?.spammed(target, now)), now)
+    }
+
+    /**
+     * Two teams: the bot [bot] answers [player], who is on its side and asked something of it
+     * ([TeamTalk]). It goes out next, ahead of whatever else was about to be said and without the
+     * usual pause between lines: a teammate is waiting for it. False when the bot does not talk
+     * (it does what was asked all the same).
+     */
+    fun teamAnswer(bot: UUID, player: UUID, ask: TeamTalk.Ask, target: UUID?, fighters: List<Fighter>, now: Long): Boolean {
+        if (mode == BotPersonality.SILENT) return false
+        enroll(fighters)
+        val speaker = fighters.find { it.id == bot && it.bot && talks(it.id) } ?: return false
+        val asker = fighters.find { it.id == player } ?: return false
+        val say = lines.speaker(speaker, fighters, personalityOf(speaker.id))
+        val text = when {
+            speaker.lives <= 0 -> say.teamOut()
+            !speaker.fighting && ask != TeamTalk.Ask.UNCLEAR && ask != TeamTalk.Ask.FREE -> say.teamDead(ask)
+            else -> say.teamAck(asker, ask, fighters.find { it.id == target })
+        } ?: return false
+        // Whatever the line would otherwise have set off (a comeback to the word "spam" in it, say) is dropped.
+        if (pending?.kind == "chat" && pending?.actor == player) pending = null
+        followups.addFirst(Followup(speaker.id, text, now + random.nextLong(600, 1500), urgent = true))
+        return true
+    }
+
+    /** Two teams: [bot] was asked to come to a teammate and has found no way there. It says so, once. */
+    fun teamCant(bot: UUID, fighters: List<Fighter>, now: Long): Boolean {
+        if (mode == BotPersonality.SILENT) return false
+        enroll(fighters)
+        val speaker = fighters.find { it.id == bot && it.bot && talks(it.id) } ?: return false
+        val text = lines.speaker(speaker, fighters, personalityOf(speaker.id)).teamCant() ?: return false
+        followups.addFirst(Followup(speaker.id, text, now + random.nextLong(400, 1200), urgent = true))
+        return true
     }
 
     /** Bots that took the player's apology and left the pact ([TeamUps.Left]) say so. */

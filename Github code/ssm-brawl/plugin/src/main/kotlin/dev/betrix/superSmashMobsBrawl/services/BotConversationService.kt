@@ -58,6 +58,8 @@ object BotConversationService : KoinComponent, Listener {
         /** Server tick at which the line being typed now will have been sent; the next one starts after it. */
         var chatFreeAt = 0
         var castLogged = false
+        /** Two teams: what each bot was asked to do by a player on its own side, while that still stands ([TeamTalk]). */
+        val orders = HashMap<UUID, TeamTalk.Standing>()
     }
     /** The pause between one chat line landing and the next bot starting to type. */
     private const val READING_TICKS = 14
@@ -107,15 +109,107 @@ object BotConversationService : KoinComponent, Listener {
             if (!running) return@Runnable
             val player = Bukkit.getPlayer(id) ?: return@Runnable
             if (BotManager.isBot(player)) return@Runnable
-            val game = game(player) ?: return@Runnable
-            if (game.allPlayers().none { it.uniqueId in audience && BotManager.isBot(it.uniqueId) }) return@Runnable
-            val s = session(game)
-            s.dialogue.mode = game.settings.botPersonality
-            // What a player types counts with the lobby too: trash talk heats it up, an apology cools it.
-            s.teamUps.said(id, body.take(256).lowercase(), now())
-            if (s.dialogue.chat(id, body, now())) s.chatAudience = audience
+            heard(player, body, audience)
         })
     }
+
+    /** A line [player] typed reaches the bots of their match. On the main thread. */
+    private fun heard(player: Player, body: String, audience: Set<UUID>) {
+        val id = player.uniqueId
+        val game = game(player) ?: return
+        if (game.allPlayers().none { it.uniqueId in audience && BotManager.isBot(it.uniqueId) }) return
+        val s = session(game)
+        s.dialogue.mode = game.settings.botPersonality
+        // Two teams: what a player says to the bots on their own side is first of all something they want done.
+        if (teamOrder(game, s, player, body, audience)) return
+        // What a player types counts with the lobby too: trash talk heats it up, an apology cools it.
+        s.teamUps.said(id, body.take(256).lowercase(), now())
+        if (s.dialogue.chat(id, body, now())) s.chatAudience = audience
+    }
+
+    /** Debug: [player] (a bot standing in for a player) says [body] to its match, as if typed. */
+    fun say(player: Player, body: String) {
+        val game = game(player) ?: return
+        heard(player, body, game.allPlayers().map { it.uniqueId }.toSet())
+    }
+
+    // ------------------------------------------------------------------ two teams: doing what a teammate asks
+
+    private fun kitName(player: Player) = plain.serialize(lang.t("kits.${KitService.getKitForPlayer(player)?.id ?: KitService.currentSelectedKitForPlayer(player).id}.name"))
+
+    /**
+     * Reads [body] as something [leader] wants of the bots on their side ([TeamTalk]) and, if it is,
+     * has them do it and one of them say so. False when the line asks nothing of the team, and it
+     * is ordinary chat.
+     */
+    private fun teamOrder(game: BrawlMinigame, s: Session, leader: Player, body: String, audience: Set<UUID>): Boolean {
+        val side = game.sideOf(leader) ?: return false
+        val present = game.allPlayers().mapNotNull { it.player }.filter { it.isOnline && !game.connectionManager.isDisconnected(it) }
+        fun named(p: Player) = TeamTalk.Named(p.uniqueId, BotManager.displayNameOf(p), kitName(p))
+        val mates = present.filter { it != leader && game.sideOf(it) == side && BotManager.isBot(it) && it.uniqueId !in BotManager.standIns }
+        val foes = present.filter { other -> game.sideOf(other).let { it != null && it != side } }
+        val order = TeamTalk.parse(body, mates.map(::named), foes.map(::named)) ?: return false
+        val time = now()
+        // "Him", "that one": whoever the player hit last, or failing that whoever is nearest to them.
+        val standing = foes.filter { it.gameMode == GameMode.SURVIVAL && it.world == leader.world && !game.respawnManager.isRespawning(it) }
+        val target = order.target ?: if (order.ask != TeamTalk.Ask.FOCUS) null else
+            standing.filter { leader.uniqueId in CombatLogService.recentAttackers(it, 8000) }.ifEmpty { standing }
+                .minByOrNull { it.location.distanceSquared(leader.location) }?.uniqueId
+        val told = mates.filter { it.uniqueId in order.to }
+        for (bot in told) when (order.ask) {
+            TeamTalk.Ask.FREE, TeamTalk.Ask.PUSH -> s.orders.remove(bot.uniqueId)
+            TeamTalk.Ask.UNCLEAR -> {}
+            TeamTalk.Ask.FOCUS -> if (target != null) s.orders[bot.uniqueId] =
+                TeamTalk.Standing(order.ask, leader.uniqueId, target, time + TeamTalk.lasts(order.ask))
+            else -> {
+                // "Stay here" is where the player is when the bot is with them, and else where the bot stands.
+                val spot = if (order.ask != TeamTalk.Ask.HOLD) null
+                    else (if (bot.world == leader.world && bot.location.distanceSquared(leader.location) < 144) leader else bot).location
+                s.orders[bot.uniqueId] = TeamTalk.Standing(order.ask, leader.uniqueId, null, time + TeamTalk.lasts(order.ask),
+                    spot?.let { Triple(it.x, it.y, it.z) })
+            }
+        }
+        // One of them says so: the one nearest to the player among those that talk at all.
+        val facts = fighters(game)
+        val answered = told.sortedBy { if (it.world == leader.world) it.location.distanceSquared(leader.location) else Double.MAX_VALUE }
+            .any { s.dialogue.teamAnswer(it.uniqueId, leader.uniqueId, order.ask, target, facts, time) }
+        if (answered) s.chatAudience = audience
+        // Bots that do not talk do it all the same, and the player is told that they heard.
+        else if (told.isNotEmpty() && order.ask != TeamTalk.Ask.UNCLEAR && !BotManager.isBot(leader)) {
+            val who = if (told.size <= 2) told.joinToString(" and ") { BotManager.displayNameOf(it) } else "Your team"
+            val does = when (order.ask) {
+                TeamTalk.Ask.COME -> "coming to you"
+                TeamTalk.Ask.FOCUS -> present.find { it.uniqueId == target }?.let { "going for ${BotManager.displayNameOf(it)}" } ?: "not sure who you mean"
+                TeamTalk.Ask.RETREAT -> "falling back"
+                TeamTalk.Ask.HOLD -> "holding here"
+                TeamTalk.Ask.PUSH -> "going in"
+                else -> "back to fighting freely"
+            }
+            leader.sendMessage(Component.text("Team> ", NamedTextColor.BLUE).append(Component.text("$who ${if (told.size == 1) "is" else "are"} $does.", NamedTextColor.GRAY)))
+        }
+        if (BotManager.debug) plugin.logger.info("[team] ${BotManager.displayNameOf(leader)} said \"${body.take(80)}\": ${order.ask}" +
+            (present.find { it.uniqueId == target }?.let { " on ${BotManager.displayNameOf(it)}" } ?: "") +
+            " for ${told.joinToString { BotManager.displayNameOf(it) }.ifEmpty { "nobody" }}" + if (answered) "" else " (no spoken answer)")
+        return true
+    }
+
+    /** Two teams: what [bot] was asked to do by a player on its side and is still doing, if anything. For the bot's own decisions. */
+    fun orderFor(game: BrawlMinigame, bot: UUID): TeamTalk.Standing? {
+        val orders = sessions[game]?.orders ?: return null
+        val order = orders[bot] ?: return null
+        if (now() >= order.until) { orders.remove(bot); return null }
+        return order
+    }
+
+    /** Two teams: [bot] was asked to come to a teammate and has found no way there. It tells them. */
+    fun cannotReach(game: BrawlMinigame, bot: UUID) {
+        val s = sessions[game] ?: return
+        if (s.dialogue.teamCant(bot, fighters(game), now()) && BotManager.debug)
+            plugin.logger.info("[team] ${Bukkit.getPlayer(bot)?.let { BotManager.displayNameOf(it) }} has no way to where it was asked to be")
+    }
+
+    /** [bot] has done what it was asked (the opponent it was sent after is dead, say). */
+    fun orderDone(game: BrawlMinigame, bot: UUID) { sessions[game]?.orders?.remove(bot) }
     @EventHandler fun ended(event: MinigameEndAnalyticsEvent) {
         val game = event.minigame
         // Administrative aborts don't get a victory taunt.
@@ -247,10 +341,11 @@ object BotConversationService : KoinComponent, Listener {
         val s = sessions[game]
         if (!typed || s == null) return deliver()
         val tick = Bukkit.getCurrentTick()
-        val startIn = (s.chatFreeAt - tick).coerceIn(0, 100)
+        // (An answer a teammate is waiting for is typed now, not after whatever else is being said.)
+        val startIn = if (reply.urgent) 0 else (s.chatFreeAt - tick).coerceIn(0, 100)
         val typing = BotSlang.typingTicks(reply.text)
         // Whoever answers has to read this line first, so the next one starts a beat after it lands.
-        s.chatFreeAt = tick + startIn + typing + READING_TICKS
+        s.chatFreeAt = maxOf(s.chatFreeAt, tick + startIn + typing + READING_TICKS)
         BotManager.brainOf(speaker)?.typeFor(startIn, typing)
         Bukkit.getScheduler().runTaskLater(plugin, Runnable { if (running) deliver() }, (startIn + typing).toLong())
     }

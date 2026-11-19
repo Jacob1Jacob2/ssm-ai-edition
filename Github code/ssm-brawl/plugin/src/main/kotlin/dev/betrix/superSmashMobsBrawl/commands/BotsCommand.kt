@@ -339,16 +339,55 @@ class BotsCommand : KoinComponent {
 
     @Execute(name = "sidegame")
     @Description("Debug: a bots-only game of two teams (4 bots 2v2, 8 4v4, 16 8v8); the sides, every life lost and the side that wins are written to the log as [sides]")
-    fun sideGame(@Context sender: CommandSender, @Arg count: Int, @Arg difficulty: String, @Arg map: String) {
+    fun sideGame(@Context sender: CommandSender, @Arg count: Int, @Arg difficulty: String, @Arg map: String, @Arg personality: String, @Arg lives: Int) {
         if (!allowed(sender)) return
         val def = dataService.getMinigame("super_smash_mobs") ?: return
+        val mode = dev.betrix.superSmashMobsBrawl.bots.BotPersonality.entries.find { it.name.equals(personality, true) }
+            ?: return sender.sendMessage("Personality is one of toxic, salty, chill, silent, random")
         BotManager.debug = true
         val size = count.coerceIn(4, 16)
         val setup = dev.betrix.superSmashMobsBrawl.bots.BotNavGen.shapeOf(map).apply(dev.betrix.superSmashMobsBrawl.services.GameSetupService.Setup(
             difficulty = if (difficulty == "any") null else BotDifficulty.parse(difficulty),
-            players = size, items = false, crystals = false, teams = true, lives = 2))
+            players = size, items = false, crystals = false, teams = true, lives = lives.coerceIn(1, 8), botPersonality = mode))
         val bots = BotManager.startBotGame(def, size, setup.difficulty, map.substringBefore('@'), setup = setup)
         sender.sendMessage("Two teams game: ${bots.joinToString { it.name }}")
+    }
+
+    @Execute(name = "sidehost")
+    @Description("Debug: in every bots-only game of two teams, makes the first Blue bot stand in for a player (it is talked to as one and the Blue bots take what it says as coming from their teammate)")
+    fun sideHost(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        BotManager.standIns.clear()
+        for (game in minigameService.activeMinigames().filter { it.sides.isNotEmpty() }) {
+            val host = game.allPlayers().mapNotNull { it.player }.firstOrNull { game.sideOf(it) == dev.betrix.superSmashMobsBrawl.minigames.TeamSide.BLUE } ?: continue
+            BotManager.standIns += host.uniqueId
+            plugin.logger.info("[team] ${BotManager.displayNameOf(host)} stands in for the player on the Blue Team")
+        }
+    }
+
+    @Execute(name = "sidesay")
+    @Description("Debug: the stand-in player of a two teams game says this in chat (bots sidehost first); what its teammates make of it is logged as [team], with how far each is from it every two seconds")
+    fun sideSay(@Context sender: CommandSender, @dev.rollczi.litecommands.annotations.join.Join("text") text: String) {
+        if (!allowed(sender)) return
+        for (id in BotManager.standIns) {
+            val host = org.bukkit.Bukkit.getPlayer(id) ?: continue
+            val game = minigameService.getMinigameForPlayer(host) ?: continue
+            dev.betrix.superSmashMobsBrawl.services.BotConversationService.say(host, text)
+            // How far its teammates are from it for the next half minute: the proof that they came (or stayed away).
+            var left = 15
+            object : org.bukkit.scheduler.BukkitRunnable() {
+                override fun run() {
+                    if (left-- <= 0 || !host.isOnline || game.getState() != dev.betrix.superSmashMobsBrawl.minigames.MinigameState.IN_PROGRESS) return cancel()
+                    val mates = game.allPlayers().mapNotNull { it.player }.filter { it != host && game.sideOf(it) == game.sideOf(host) }
+                    plugin.logger.info("[team] from ${BotManager.displayNameOf(host)}: " + mates.joinToString { mate ->
+                        val order = dev.betrix.superSmashMobsBrawl.services.BotConversationService.orderFor(game, mate.uniqueId)
+                        val target = BotManager.brainOf(mate)?.targetId?.let { id -> org.bukkit.Bukkit.getPlayer(id) }?.let { BotManager.displayNameOf(it) } ?: "nobody"
+                        "${BotManager.displayNameOf(mate)} ${if (mate.gameMode != org.bukkit.GameMode.SURVIVAL) "dead" else "%.0f blocks".format(mate.location.distance(host.location))}" +
+                            ", on $target" + (order?.let { ", asked to ${it.ask.name.lowercase()}" } ?: "")
+                    })
+                }
+            }.runTaskTimer(plugin, 40L, 40L)
+        }
     }
 
     @Execute(name = "menutest")

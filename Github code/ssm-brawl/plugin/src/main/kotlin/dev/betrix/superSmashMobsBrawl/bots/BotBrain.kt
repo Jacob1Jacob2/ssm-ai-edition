@@ -143,6 +143,21 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
 
     /** A rooted bot fights from where it stands and never takes a step: the stand-in for a camping player in tests. */
     @Volatile var rooted = false
+    /** Who this bot is fighting right now, for the bots on its side (two teams fight the same opponent where they can). */
+    val targetId: java.util.UUID? get() = target?.uniqueId
+    /** Two teams: what a player on this bot's side asked of it and it is still doing ([TeamTalk]); read afresh every time it decides. */
+    private var teamOrderNow: TeamTalk.Standing? = null
+    /** Until this tick the place it was asked to go to counts as out of reach, and it fights where it is. */
+    private var teamUnreachableUntil = 0L
+    /** The tick it last set off for somewhere a teammate asked it to be (debug). */
+    private var teamTravelTick = -1000L
+    /** The asking (by when it runs out) for which it has already said it cannot get there. */
+    private var teamCantFor = -1L
+    /** How many searches for a way there have come up empty during the asking [teamMissFor]. */
+    private var teamMisses = 0
+    private var teamMissFor = -1L
+    /** Where the player it was asked to come to last stood on something. */
+    private var teamLeaderAt: Location? = null
 
     /** Counts of navigation events since the last reset, read by the chase test. */
     class NavStats {
@@ -885,6 +900,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             opponents=emptyList();healthLosses.clear();lastHealth=0.0
             itemGoal=null;ignoredItems.clear();fleeFailedUntil=0;trackedId=null
             crystalGoal=null;crystalIgnoredUntil=0
+            teamOrderNow=null;teamUnreachableUntil=0
             releaseInputs()
             return
         }
@@ -919,6 +935,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         val decide = tick % d.reactionTicks == 0L
         trackHealth()
         if (decide) {
+            teamOrderNow = if (game.sides.isEmpty()) null
+                else dev.betrix.superSmashMobsBrawl.services.BotConversationService.orderFor(game, player.uniqueId)
             chooseTarget(game)
             yawError = (rng.nextGaussian() * d.aimErrorDegrees).toFloat()
             pitchError = (rng.nextGaussian() * d.aimErrorDegrees * 0.5).toFloat()
@@ -1030,6 +1048,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
 
         val t = target?.takeIf { it.isOnline && it.world == player.world }
         if (decide || states.state == CombatState.IDLE || states.state == CombatState.RECOVER) updateState(t)
+        // Two teams: where a player on this bot's side asked it to be comes before its own plan.
+        if (obeyTeam(game, t, decide, map)) return
         when (states.state) {
             // Starving, running away only finishes the job: the one cure is to hit somebody.
             CombatState.FLEE -> if (t == null) wander(map) else if (player.foodLevel > 0) flee(t, decide, map) else fight(t, decide, map)
@@ -1753,6 +1773,107 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         return true
     }
 
+    // ------------------------------------------------------------------ two teams
+
+    /** The fighters on this bot's own side who are in the fight right now, in a match of two teams. */
+    private fun teammates(game: BrawlMinigame): List<Player> {
+        val side = game.sideOf(player) ?: return emptyList()
+        return game.allPlayers().mapNotNull { it.player }.filter {
+            it != player && it.world == player.world && it.gameMode == GameMode.SURVIVAL &&
+                game.sideOf(it) == side && !game.respawnManager.isRespawning(it)
+        }
+    }
+
+    /** Where a teammate asked this bot to be: with them (COME), or at a spot (HOLD). */
+    private fun teamAnchor(order: TeamTalk.Standing?): Location? = when (order?.ask) {
+        TeamTalk.Ask.COME -> org.bukkit.Bukkit.getPlayer(order.leader)
+            ?.takeIf { it.world == player.world && it.gameMode == GameMode.SURVIVAL }?.let { leader ->
+                // Where they last had something under their feet: a player in mid jump (or mid fall)
+                // is not at a place anybody can walk to, and is not there a moment later either.
+                val at = leader.location
+                if (teamLeaderAt?.world != at.world || hasSolidBelow(at.clone().add(0.0, -0.05, 0.0), 2)) teamLeaderAt = at
+                teamLeaderAt
+            }
+        TeamTalk.Ask.HOLD -> order.spot?.let { Location(player.world, it.first, it.second, it.third) }
+        else -> null
+    }
+
+    /**
+     * Two teams: how much each opponent is worth going after for the side's sake, in blocks of
+     * distance. Two on one wins fights, so somebody a teammate is fighting, or who is on a
+     * teammate (a player above all: the bots are there to play with them), comes before somebody
+     * merely closer. A bot asked to stay with a player or at a spot fights what is there.
+     */
+    private fun teamPulls(game: BrawlMinigame, candidates: List<Player>): Map<java.util.UUID, Double> {
+        if (game.sides.isEmpty()) return emptyMap()
+        val mates = teammates(game)
+        val anchor = teamAnchor(teamOrderNow)
+        if (mates.isEmpty() && anchor == null) return emptyMap()
+        val hurting = mates.associateWith { CombatLogService.recentAttackers(it, 4000) }
+        return candidates.associate { foe ->
+            val hitBy = CombatLogService.recentAttackers(foe, 4000)
+            var pull = 0.0
+            for (mate in mates) {
+                val person = !BotManager.isBot(mate) || mate.uniqueId in BotManager.standIns
+                if (mate.uniqueId in hitBy) pull += if (person) 8.0 else 4.0
+                if (foe.uniqueId in hurting.getValue(mate)) pull += if (person) 6.0 else 4.0
+                if (BotManager.brainOf(mate)?.targetId == foe.uniqueId) pull += 2.0
+            }
+            pull = pull.coerceAtMost(14.0)
+            if (anchor != null) {
+                val far = foe.location.distance(anchor)
+                pull += if (far < 10.0) 12.0 else if (far > 24.0) -20.0 else 0.0
+            }
+            foe.uniqueId to pull
+        }
+    }
+
+    /**
+     * Two teams: does what a player on this bot's side asked of it ([TeamTalk]) where that means
+     * going somewhere rather than fighting on. True when this tick's movement was decided here.
+     *
+     * Asked to come, it goes to the player and then stays within a few blocks of them, fighting
+     * whoever turns up there; asked to hold, the same around a spot; asked to fall back, it runs.
+     * Somebody right on top of it is dealt with first: nobody walks away from a fight at arm's length.
+     */
+    private fun obeyTeam(game: BrawlMinigame, t: Player?, decide: Boolean, map: GameMapDef): Boolean {
+        val order = teamOrderNow ?: return false
+        val here = player.location
+        val pressed = t != null && t.location.distanceSquared(here) < 16.0
+        if (order.ask == TeamTalk.Ask.RETREAT) {
+            // Running needs somebody to run from; starving, running only finishes the job.
+            if (t == null || player.foodLevel <= 0) return false
+            flee(t, decide, map)
+            return true
+        }
+        if (tick < teamUnreachableUntil) return false
+        val goal = teamAnchor(order) ?: return false
+        val gap = goal.distance(here)
+        val near = if (order.ask == TeamTalk.Ask.HOLD) 3.0 else TEAM_NEAR
+        // There already, or busy with somebody who is at the place it is meant to be.
+        if (gap <= near || pressed) return false
+        if (gap <= TEAM_FAR && t != null && t.location.distance(goal) <= TEAM_FAR) return false
+        if (tick - teamTravelTick > 60) dbg("team: ${order.ask.name.lowercase()}, ${"%.0f".format(gap)} blocks to go")
+        teamTravelTick = tick
+        travel(goal, map) {
+            // One search coming up empty may be the moment it was made in (the player was moving, the
+            // bot was in the air): it tries again shortly. Twice running, there is no way, and it
+            // says so: once per asking, not every time it has another look.
+            if (order.until != teamMissFor) { teamMissFor = order.until; teamMisses = 0 }
+            teamMisses++
+            if (teamMisses < 2) teamUnreachableUntil = tick + 30
+            else {
+                dbg("team: no way to where it was asked to be, fighting from here")
+                if (order.until != teamCantFor) {
+                    teamCantFor = order.until
+                    dev.betrix.superSmashMobsBrawl.services.BotConversationService.cannotReach(game, player.uniqueId)
+                }
+                teamUnreachableUntil = tick + 200
+            }
+        }
+        return true
+    }
+
     // ------------------------------------------------------------------ targeting
 
     private fun chooseTarget(game: BrawlMinigame) {
@@ -1771,12 +1892,24 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         val candidates = alive.filter { !besieging(it) && standingOff(it) == null }.ifEmpty { alive }
         // Only the smarter selector reads edges and attackers, so only it pays for them.
         val attackers = if (d.smartTargeting) CombatLogService.recentAttackers(player, 4000) else emptySet()
+        // Two teams: the opponent a player on this bot's side sent it after ("get cqsey") comes first,
+        // for as long as they are in the match.
+        val order = teamOrderNow
+        if (order?.ask == TeamTalk.Ask.FOCUS && game.allPlayers().none { it.uniqueId == order.target && it.isOnline &&
+                !game.connectionManager.isDisconnected(it) && (game.teamManager.findTeamOf(it)?.metadata?.get("stocks") as? Int ?: 0) > 0 }) {
+            dbg("team: the one it was sent after is out of the match")
+            dev.betrix.superSmashMobsBrawl.services.BotConversationService.orderDone(game, player.uniqueId)
+            teamOrderNow = null
+        }
         // Whoever this bot told the lobby it is going after ("lets team on him").
-        val wanted = dev.betrix.superSmashMobsBrawl.services.BotConversationService.grudge(game, player.uniqueId)
+        val wanted = teamOrderNow?.takeIf { it.ask == TeamTalk.Ask.FOCUS }?.target
+            ?: dev.betrix.superSmashMobsBrawl.services.BotConversationService.grudge(game, player.uniqueId)
+        val pulls = teamPulls(game, candidates)
         val chosen = selector.choose(
             candidates.map {
                 TargetCandidate(it.uniqueId, it.location.distance(me), it.health,
-                    d.smartTargeting && !hasGroundNear(it.location, 2), it.uniqueId in attackers, it.uniqueId == wanted)
+                    d.smartTargeting && !hasGroundNear(it.location, 2), it.uniqueId in attackers, it.uniqueId == wanted,
+                    pulls[it.uniqueId] ?: 0.0)
             },
             target?.uniqueId,
         )
@@ -4370,6 +4503,10 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     private companion object {
         /** Enough to search a whole arena; the cached graph makes each step cheap. */
         const val ROUTE_LIMIT = 20000
+        /** Two teams: asked to come to a player, a bot within this many blocks of them is with them. */
+        const val TEAM_NEAR = 5.0
+        /** ... and further than this it goes back to them even from a fight (unless somebody is right on top of it). */
+        const val TEAM_FAR = 13.0
         /** An opponent who has kept within this many blocks of one spot for [CAMP_TICKS] is holding it. */
         /** Kits whose air jump turned out not to be the one the planner has for them (said once each). */
         val warnedJumps = HashSet<String>()
