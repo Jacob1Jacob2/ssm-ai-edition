@@ -37,7 +37,9 @@ class ElementalSmashes(private val s:SmashSession) {
         "chicken:2" -> {
             if(!p.active) {
                 p.active=true;p.uses--;s.refreshTool(p);p.nextUse=arena.tick+s.moves.cooldown(p)
-                c.loop(20,finish={p.active=false}) {
+                // A second of eggs at most, and only for as long as the button is held: letting go
+                // stops the stream, as it does for the Egg Blaster this is built on.
+                c.loop(20,finish={p.active=false},whilst={s.holding(p)}) {
                     egg {target -> if(target is Player && target in s.enemies())
                         c.mob(p,EntityType.CHICKEN,target.location.clone().add(0.0,.2,0.0),seconds=10,baby=true,damage=1.5,target=target)}
                 }

@@ -65,6 +65,26 @@ class ItemCatalogTest : StringSpec({
         listOf("ink_shotgun", "blizzard", "inferno").map(rules::uses) shouldBe listOf(7, 50, 75)
         listOf("ink_shotgun", "slime_rocket", "blizzard").map(rules::cooldownScale) shouldBe listOf(0.5, 1.0, 0.5)
     }
+    "an item thrown away sounds like what it is" {
+        // Nothing to eat or drink makes the sound of a tool breaking.
+        listOf(ArenaItem.FOOD, ArenaItem.GILDED_APPLE, ArenaItem.AWESOME_SOUP).map { it.dropFeel } shouldBe listOf(DropFeel.FOOD, DropFeel.FOOD, DropFeel.SPILL)
+        ArenaItem.entries.filter { it.dropFeel == DropFeel.TOOL }.all { Regex(".*_(AXE|SHOVEL|SWORD|PICKAXE|HOE)|BOW").matches(it.material.name) } shouldBe true
+        listOf(ArenaItem.CLOUD_IN_A_BOTTLE, ArenaItem.POCKET_TRAMPOLINE, ArenaItem.MYSTERY_ABILITY, ArenaItem.FRAG_GRENADE).map { it.dropFeel } shouldBe
+            listOf(DropFeel.GLASS, DropFeel.SLIME, DropFeel.BAG, DropFeel.FUSE)
+        // A Mystery Ability's tool is not in the catalogue: a copper tool is a tool, a pumpkin is not.
+        listOf("COPPER_AXE", "COPPER_SWORD", "BOW", "CARVED_PUMPKIN", "FEATHER").map(DropFeel::of) shouldBe
+            listOf(DropFeel.TOOL, DropFeel.TOOL, DropFeel.TOOL, DropFeel.PLAIN, DropFeel.PLAIN)
+    }
+    "an enlarged egg is not drawn bigger than the thrower's view of it allows" {
+        val sprite = dev.betrix.superSmashMobsBrawl.projectiles.ProjectileSprite
+        // Right at the eyes it is an ordinary egg; a couple of blocks out it is most of the way; then full size.
+        sprite.scale(1.5, 0.3) shouldBe 1.0
+        (sprite.scale(1.5, 2.1) in 1.05..1.15) shouldBe true
+        sprite.scale(1.5, 3.9) shouldBe 1.5
+        // The 20% of a diamond upgrade is there from the first block it is seen at.
+        sprite.scale(1.2, 2.46) shouldBe 1.2
+        sprite.scale(1.0, 0.3) shouldBe 1.0
+    }
     "the click that opens a mystery ability does not use the tool that comes out of it" {
         val rules = dev.betrix.superSmashMobsBrawl.abilities.MysteryRules
         fun tool() = dev.betrix.superSmashMobsBrawl.abilities.Borrowed("slime", 7, 7, 0.5, 4).also { rules.open(it, 100) }

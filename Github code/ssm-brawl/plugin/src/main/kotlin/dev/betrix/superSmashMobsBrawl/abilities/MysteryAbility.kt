@@ -119,7 +119,6 @@ object MysteryAbility : KoinComponent {
         player.sendMessage(Component.text("Item> ", NamedTextColor.BLUE)
             .append(Component.text("Dropped ", NamedTextColor.GRAY))
             .append(lang.t("abilities.$id.name").color(NamedTextColor.GOLD)))
-        player.playSound(player.location, org.bukkit.Sound.ENTITY_ITEM_BREAK, .6f, 1.3f)
         return true
     }
 

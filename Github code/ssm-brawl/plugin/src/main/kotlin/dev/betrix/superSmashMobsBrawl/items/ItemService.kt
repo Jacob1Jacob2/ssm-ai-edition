@@ -240,6 +240,35 @@ object ItemService : KoinComponent {
         return spots.any { arena.effects.placeCrafty(player, it) } && consume(player, 1)
     }
 
+    /** The sound of an item thrown away with the drop key, heard by the player who dropped it. */
+    fun dropSound(player: Player, feel: DropFeel) {
+        val (sound, pitch) = when (feel) {
+            DropFeel.TOOL -> Sound.ENTITY_ITEM_BREAK to 1.3f
+            DropFeel.METAL -> Sound.BLOCK_METAL_BREAK to 1.2f
+            DropFeel.FOOD -> Sound.ENTITY_ITEM_PICKUP to .6f
+            DropFeel.SPILL -> Sound.ITEM_BUCKET_EMPTY to 1.4f
+            DropFeel.GLASS -> Sound.BLOCK_GLASS_BREAK to 1.2f
+            DropFeel.FUSE -> Sound.BLOCK_FIRE_EXTINGUISH to 1.5f
+            DropFeel.POWDER -> Sound.BLOCK_SAND_BREAK to 1.2f
+            DropFeel.SLIME -> Sound.BLOCK_SLIME_BLOCK_BREAK to 1.1f
+            DropFeel.SNOW -> Sound.BLOCK_SNOW_BREAK to 1.1f
+            DropFeel.REEL -> Sound.ENTITY_FISHING_BOBBER_RETRIEVE to 1.2f
+            DropFeel.PLANT -> Sound.BLOCK_GRASS_BREAK to 1.2f
+            DropFeel.WOOD -> Sound.BLOCK_WOOD_BREAK to 1.3f
+            DropFeel.EGG -> Sound.ENTITY_TURTLE_EGG_BREAK to 1.1f
+            DropFeel.CLOTH -> Sound.BLOCK_WOOL_BREAK to 1f
+            DropFeel.ENDER -> Sound.ENTITY_ENDER_EYE_DEATH to 1.1f
+            DropFeel.GEM -> Sound.BLOCK_AMETHYST_BLOCK_BREAK to 1.2f
+            DropFeel.BONE -> Sound.BLOCK_BONE_BLOCK_BREAK to 1.2f
+            DropFeel.PAPER -> Sound.ITEM_BOOK_PAGE_TURN to 1.1f
+            DropFeel.FISH -> Sound.ENTITY_PUFFER_FISH_FLOP to 1f
+            DropFeel.BAG -> Sound.ITEM_BUNDLE_REMOVE_ONE to .9f
+            DropFeel.PLAIN -> Sound.ENTITY_ITEM_PICKUP to .6f
+        }
+        player.playSound(player.location, sound, if (feel == DropFeel.FUSE) .45f else .7f, pitch)
+        if (dev.betrix.superSmashMobsBrawl.bots.BotManager.debug) plugin.logger.info("[drop] ${player.name}: ${feel.name.lowercase()}")
+    }
+
     fun consume(player: Player, amount: Int): Boolean {
         val item = player.inventory.itemInMainHand
         val kind = kind(item) ?: return false
@@ -361,6 +390,7 @@ object ItemService : KoinComponent {
                     dev.betrix.superSmashMobsBrawl.abilities.MysteryAbility.discard(player, itemDrop.itemStack)) {
                     isCancelled = false
                     itemDrop.remove()
+                    dropSound(player, DropFeel.of(itemDrop.itemStack.type.name))
                 } else isCancelled = true
                 return@event
             }
@@ -374,6 +404,7 @@ object ItemService : KoinComponent {
             isCancelled = false
             itemDrop.remove()
             if (discarded == ArenaItem.SHOTBOW) clearShotbowAmmo(player)
+            dropSound(player, discarded.dropFeel)
         }
         event<PlayerItemDamageEvent> {
             if (kind(item) != null || item.itemMeta?.persistentDataContainer?.has(abilityKey) == true) isCancelled = true

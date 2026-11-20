@@ -222,9 +222,10 @@ class SmashCombat(val session:SmashSession) {
         repeat(count) { val direction=if(it==0)player.eyeLocation.direction else spread(player.eyeLocation.direction,.15)
             shot(power,material,damage,kb,speed,scale,homing,direction=direction,onHit=onHit,creatureVisual=creatureVisual) }
     }
-    fun loop(ticks:Int,every:Int=1,finish:()->Unit={},body:(Int)->Unit) {
+    /** Runs [body] every tick for [ticks] ticks, or until [whilst] says no (a button let go of, say). */
+    fun loop(ticks:Int,every:Int=1,finish:()->Unit={},whilst:()->Boolean={true},body:(Int)->Unit) {
         arena.effect(object:SmashEffect {var age=0
-            override fun step():Boolean {if(!session.alive || age>=ticks)return false;if(age%every==0)body(age);age++;return true}
+            override fun step():Boolean {if(!session.alive || age>=ticks || !whilst())return false;if(age%every==0)body(age);age++;return true}
             override fun close() {finish()}
         })
     }

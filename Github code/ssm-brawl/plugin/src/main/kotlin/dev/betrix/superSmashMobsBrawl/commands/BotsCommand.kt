@@ -232,6 +232,32 @@ class BotsCommand : KoinComponent {
             "ability ${if (id in kit.abilityIds()) "STILL ON THE KIT" else "gone"}, lying in the world: $items")
     }
 
+    @Execute(name = "droptest")
+    @Description("Debug: in a running bots game, hands a bot every item that can be thrown away, one a tick, and has it press the drop key; logs the sound each one makes and whether it left the hand")
+    fun dropTest(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        BotManager.debug = true
+        val kinds = dev.betrix.superSmashMobsBrawl.items.ArenaItem.entries.filter { !it.tool && it != dev.betrix.superSmashMobsBrawl.items.ArenaItem.DIAMOND_HELMET }
+        var index = 0
+        object : org.bukkit.scheduler.BukkitRunnable() {
+            override fun run() {
+                if (index >= kinds.size) { plugin.logger.info("[drop] DONE"); cancel(); return }
+                val bot = BotManager.onlineBots().firstOrNull {
+                    it.gameMode == org.bukkit.GameMode.SURVIVAL && it.world.name.startsWith("ssmbworld_") &&
+                        (0..8).any { slot -> it.inventory.getItem(slot) == null }
+                } ?: return
+                val kind = kinds[index++]
+                val slot = (0..8).first { bot.inventory.getItem(it) == null }
+                bot.inventory.heldItemSlot = slot
+                bot.inventory.setItem(slot, dev.betrix.superSmashMobsBrawl.items.ItemService.stack(kind))
+                val dropped = bot.dropItem(false)
+                plugin.logger.info("[drop] ${kind.id} (${kind.material.name.lowercase()}): expected ${kind.dropFeel.name.lowercase()}, drop went through=$dropped, " +
+                    "slot now ${bot.inventory.getItem(slot)?.type ?: "empty"}")
+                bot.inventory.setItem(slot, null)
+            }
+        }.runTaskTimer(plugin, 1L, 2L)
+    }
+
     @Execute(name = "clear")
     @Description("Remove all AI bots")
     fun clear(@Context sender: CommandSender) {

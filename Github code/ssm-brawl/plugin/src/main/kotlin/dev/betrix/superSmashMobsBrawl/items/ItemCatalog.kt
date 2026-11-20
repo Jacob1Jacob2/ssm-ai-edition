@@ -13,6 +13,41 @@ enum class ItemRarity(val label: String, val weight: Int, val color: NamedTextCo
     ULTIMATE("Ultimate", 2, NamedTextColor.AQUA);
 }
 
+/**
+ * The kinds of sound an item makes when it is thrown away with the drop key. (Which sound each one
+ * is, is up to [ItemService]: this is only what the item is made of.)
+ */
+enum class DropFeel {
+    /** A tool or weapon: the snap of one breaking. */
+    TOOL,
+    /** Something of metal: a clank. */
+    METAL,
+    /** Something to eat: a soft pop, nothing breaking. */
+    FOOD,
+    /** A bowl of something: poured out. */
+    SPILL,
+    /** A bottle, or ice: it shatters. */
+    GLASS,
+    /** Something with a fuse or a flame: put out. */
+    FUSE,
+    POWDER, SLIME, SNOW,
+    /** A fishing line reeled in. */
+    REEL,
+    PLANT, WOOD, EGG, CLOTH, ENDER, GEM, BONE, PAPER, FISH, BAG,
+    /** Anything else (a Mystery Ability's pumpkin or feather): the pop of an item leaving the hand. */
+    PLAIN;
+
+    companion object {
+        /** For an item that is not in the catalogue, by what it is: the copper tools of a Mystery Ability, mostly. */
+        fun of(material: String): DropFeel = when {
+            Regex(".*_(SWORD|AXE|SHOVEL|PICKAXE|HOE)").matches(material) || material in setOf("BOW", "CROSSBOW", "TRIDENT", "MACE", "SHEARS") -> TOOL
+            material == "FISHING_ROD" -> REEL
+            material.endsWith("_BUNDLE") || material == "BUNDLE" -> BAG
+            else -> PLAIN
+        }
+    }
+}
+
 enum class ArenaItem(val label: String, val material: Material, val uses: Int,
                      val rarity: ItemRarity, val description: String) {
     DIAMOND_AXE("Axe Ability Upgrade", Material.DIAMOND_AXE, 4, ItemRarity.EPIC,
@@ -90,6 +125,30 @@ enum class ArenaItem(val label: String, val material: Material, val uses: Int,
 
     val id get() = name.lowercase()
     val tool get() = this in setOf(DIAMOND_AXE, DIAMOND_SHOVEL, DIAMOND_SWORD)
+
+    /** What throwing this item away sounds like: the thing it is, not one sound for everything. */
+    val dropFeel: DropFeel get() = when (this) {
+        DIAMOND_AXE, DIAMOND_SHOVEL, DIAMOND_SWORD, SMASHER, SHOTBOW, ROCKET_LAUNCHER, MISSILE_BATTERY, RAIN_STAFF -> DropFeel.TOOL
+        DIAMOND_HELMET, JETPACK, EXTRA_LIFE -> DropFeel.METAL
+        FOOD, GILDED_APPLE -> DropFeel.FOOD
+        AWESOME_SOUP -> DropFeel.SPILL
+        ICE_CUBE, CLOUD_IN_A_BOTTLE -> DropFeel.GLASS
+        AIR_STRIKE, CRAFTY_BOMB, FRAG_GRENADE -> DropFeel.FUSE
+        SINGULARITY_GRENADE, SPEED -> DropFeel.POWDER
+        CLUSTER_GRENADE, POCKET_TRAMPOLINE -> DropFeel.SLIME
+        HOMING_SNOWBALL -> DropFeel.SNOW
+        PLAYER_GRAPPLE -> DropFeel.REEL
+        FIRE_FLOWER -> DropFeel.PLANT
+        PROXIMITY_MINE, KNOCKBACK_ROD -> DropFeel.WOOD
+        MONSTER_EGG -> DropFeel.EGG
+        SINGULARITY_NUKE -> DropFeel.CLOTH
+        INSTANT_TELEPORTER -> DropFeel.ENDER
+        REGENERATE -> DropFeel.GEM
+        SHADOW_WALK -> DropFeel.BONE
+        FIRST_AID_KIT -> DropFeel.PAPER
+        POISON_MIST -> DropFeel.FISH
+        MYSTERY_ABILITY -> DropFeel.BAG
+    }
     val useLabel get() = if (this == DIAMOND_HELMET) "hits" else "uses"
 
     companion object {

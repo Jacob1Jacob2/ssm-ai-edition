@@ -10,6 +10,21 @@ import org.bukkit.util.Transformation
 import org.joml.Quaternionf
 import org.joml.Vector3f
 
+/** How big the picture of an enlarged thrown item is drawn, with nothing of the server in it. */
+object ProjectileSprite {
+    /** A thrown item's picture is half a block wide at its normal size. */
+    const val WIDTH = 0.5
+    /** The widest the picture gets, as a share of its distance from the thrower's eyes (about 15 degrees of the view). */
+    const val FILL = 0.26
+
+    /**
+     * The size to draw a picture of size [full] at, [away] blocks from the eyes of whoever threw
+     * it: its full size once it has room, less right in front of them, never less than an
+     * ordinary egg (or than [full], if that is smaller still).
+     */
+    fun scale(full: Double, away: Double): Double = minOf(full, maxOf(1.0, FILL * away / WIDTH))
+}
+
 /** Vanilla projectile geometry, scaled without changing its travel or collision entity. */
 internal object ProjectileUpgradeVisual {
     fun create(entity: Entity, scale: Double): ItemDisplay? {
@@ -34,7 +49,7 @@ internal object ProjectileUpgradeVisual {
         val late = HashSet<java.util.UUID>()
         entity.world.players.filter { entity !is Arrow || ResourcePackService.hasPack(it) }.forEach {
             it.hideEntity(ItemService.plugin, entity)
-            if (entity is ThrowableProjectile && inFace(it, entity.location, scale)) late += it.uniqueId
+            if (entity is ThrowableProjectile && inFace(it, entity.location)) late += it.uniqueId
             else it.showEntity(ItemService.plugin, display)
         }
         if (late.isNotEmpty()) unseen[display] = late
@@ -46,29 +61,37 @@ internal object ProjectileUpgradeVisual {
      * not draw its own for the first moment of the flight for exactly that reason. The enlarged
      * picture is a separate entity the game knows nothing about, so it was drawn from the first
      * tick: a sprite bigger than the screen, in the face of whoever threw it, once for every egg.
-     * So it is shown to a player only when it is this far from their eyes (times its size), or
-     * has been flying for [LATEST] ticks. Nothing about the flight itself changes.
+     * So it is shown to a player only when it is [NEAR] blocks from their eyes (one tick into an
+     * egg's flight), or has been flying for [LATEST] ticks. And for the first few blocks it is
+     * drawn no bigger than [ProjectileSprite.FILL] of its distance from the thrower's eyes, so
+     * what the thrower sees of a big egg is a big egg and not a wall. Nothing about the flight
+     * itself changes.
      */
-    private const val CLEAR = 2.5
+    private const val NEAR = 1.6
     private const val LATEST = 6
     private val unseen = java.util.WeakHashMap<ItemDisplay, MutableSet<java.util.UUID>>()
 
-    private fun inFace(viewer: Player, at: Location, scale: Double) =
-        viewer.world == at.world && viewer.eyeLocation.distanceSquared(at) < (CLEAR * scale) * (CLEAR * scale)
+    private fun inFace(viewer: Player, at: Location) =
+        viewer.world == at.world && viewer.eyeLocation.distanceSquared(at) < NEAR * NEAR
 
     fun update(display: ItemDisplay, arrow: Entity, scale: Double, direction: org.bukkit.util.Vector = arrow.velocity) {
         if (arrow !is Arrow) {
-            display.transformation = Transformation(Vector3f(), Quaternionf(), Vector3f(scale.toFloat()), Quaternionf())
+            val at = arrow.location
+            val thrower = ((arrow as? Projectile)?.shooter as? Player)?.takeIf { it.isOnline && it.world == at.world }
+            val drawn = if (thrower == null) scale else ProjectileSprite.scale(scale, thrower.eyeLocation.distance(at))
+            display.transformation = Transformation(Vector3f(), Quaternionf(), Vector3f(drawn.toFloat()), Quaternionf())
             display.teleport(arrow.location.apply { yaw = 0f; pitch = 0f })
             val late = unseen[display] ?: return
-            val at = arrow.location
             late.removeIf { id ->
                 val viewer = Bukkit.getPlayer(id)?.takeIf { it.isOnline } ?: return@removeIf true
-                if (arrow.ticksLived < LATEST && inFace(viewer, at, scale)) return@removeIf false
+                if (arrow.ticksLived < LATEST && inFace(viewer, at)) return@removeIf false
                 viewer.showEntity(ItemService.plugin, display)
-                if (dev.betrix.superSmashMobsBrawl.bots.BotManager.debug && (arrow as? Projectile)?.shooter == viewer)
+                if (dev.betrix.superSmashMobsBrawl.bots.BotManager.debug && (arrow as? Projectile)?.shooter == viewer) {
+                    val away = viewer.eyeLocation.distance(at)
                     ItemService.plugin.logger.info("[sprite] ${display.itemStack.type.name.lowercase()} x$scale shown to its thrower ${viewer.name} " +
-                        "after ${arrow.ticksLived} ticks, ${"%.1f".format(viewer.eyeLocation.distance(at))} blocks away")
+                        "after ${arrow.ticksLived} ticks, ${"%.1f".format(away)} blocks away, drawn x${"%.2f".format(drawn)} " +
+                        "(${"%.0f".format(100 * ProjectileSprite.WIDTH * drawn / away)}% of its distance wide)")
+                }
                 true
             }
             if (late.isEmpty()) unseen.remove(display)
