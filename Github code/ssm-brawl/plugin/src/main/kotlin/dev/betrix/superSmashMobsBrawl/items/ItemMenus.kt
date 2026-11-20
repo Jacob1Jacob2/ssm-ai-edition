@@ -68,13 +68,22 @@ object ItemMenus {
             }
 
         })
+        cycleFood(player, 9 + items.indexOf(ArenaItem.FOOD))
+    }
+    /**
+     * Food is one item with several pictures (steak, pork, chicken, apple). In the menu the player
+     * has just been shown, its icon at [slot] steps through them, one a second, until the menu closes.
+     */
+    private fun cycleFood(player: Player, slot: Int) {
         val inventory=player.openInventory.topInventory
-        var frame=0
+        // Carry on from the picture it opened with, so the first second does not show the same one twice.
+        var frame=ItemPresentation.foods.indexOf(inventory.getItem(slot)?.type)+1
         object: org.bukkit.scheduler.BukkitRunnable() {
             override fun run() {
                 if (!player.isOnline || player.openInventory.topInventory !== inventory) { cancel(); return }
-                val slot=9+items.indexOf(ArenaItem.FOOD)
                 inventory.getItem(slot)?.let { it.type=ItemPresentation.foods[frame++ % ItemPresentation.foods.size]; inventory.setItem(slot,it) }
+                if (dev.betrix.superSmashMobsBrawl.bots.BotManager.debug)
+                    ItemService.plugin.logger.info("[menu] ${player.name}: food icon in slot $slot is now ${inventory.getItem(slot)?.type}")
             }
         }.runTaskTimer(ItemService.plugin,20L,20L)
     }
@@ -101,6 +110,7 @@ object ItemMenus {
             }
             set(49, GuideMenus.item(Material.REDSTONE_BLOCK, "Close", color = RED)) { player.closeInventory() }
         })
+        cycleFood(player, 9 + items.indexOf(ArenaItem.FOOD))
     }
     private fun click(player: Player) = player.playSound(player.location, Sound.BLOCK_WOODEN_BUTTON_CLICK_ON, .5f, 1f)
 }

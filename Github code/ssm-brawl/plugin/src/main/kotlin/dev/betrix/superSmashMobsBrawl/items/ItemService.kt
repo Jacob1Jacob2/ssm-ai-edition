@@ -240,6 +240,15 @@ object ItemService : KoinComponent {
         return spots.any { arena.effects.placeCrafty(player, it) } && consume(player, 1)
     }
 
+    /** Debug: a Shotbow volley from [player] as if the bow had been held drawn for [ticks] ticks. */
+    fun debugShotbow(player: Player, ticks: Int): Boolean {
+        val arena = arena(player) ?: return false
+        val force = ShotbowRules.force(ticks)
+        if (player !in arena.players() || force < ShotbowRules.LEAST) return false
+        arena.effects.shotbow(player, force)
+        return true
+    }
+
     /** The sound of an item thrown away with the drop key, heard by the player who dropped it. */
     fun dropSound(player: Player, feel: DropFeel) {
         val (sound, pitch) = when (feel) {
@@ -358,9 +367,9 @@ object ItemService : KoinComponent {
             // vanilla shooting sound. End native use here; only our wooden volley runs.
             (player as org.bukkit.craftbukkit.entity.CraftPlayer).handle.stopUsingItem()
             val arena = arena(player) ?: return@event
-            val force = net.minecraft.world.item.BowItem.getPowerForTime(ticksHeldFor)
-            if (player in arena.players() && kind(player.inventory.itemInMainHand) == ArenaItem.SHOTBOW && force >= .1f) {
-                arena.effects.shotbow(player, force.toDouble())
+            val force = ShotbowRules.force(ticksHeldFor)
+            if (player in arena.players() && kind(player.inventory.itemInMainHand) == ArenaItem.SHOTBOW && force >= ShotbowRules.LEAST) {
+                arena.effects.shotbow(player, force)
                 consume(player, 1)
             }
         }

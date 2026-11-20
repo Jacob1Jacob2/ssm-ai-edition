@@ -14,6 +14,41 @@ enum class ItemRarity(val label: String, val weight: Int, val color: NamedTextCo
 }
 
 /**
+ * How a Shotbow volley flies, with nothing of the server in it. Each of its arrows is an arrow off
+ * an ordinary bow: as fast as the bow was drawn, slowing a little, and falling. (They used to fly
+ * dead level for ever, and never slower than 40% of full speed, so a bow barely drawn threw its
+ * arrows as far as one drawn all the way.)
+ */
+object ShotbowRules {
+    /** An ordinary bow's arrow leaves at three blocks a tick fully drawn, and in proportion below that. */
+    const val FULL_SPEED = 3.0
+    /** Percent of a full health bar a fully drawn volley takes; less in proportion, as an arrow's damage follows its speed. */
+    const val FULL_DAMAGE = 6.25
+    /** What every arrow loses to the air each tick, and to the ground. */
+    const val DRAG = 0.99
+    const val GRAVITY = 0.05
+    /** A bow drawn less than this does not loose at all. */
+    const val LEAST = 0.1
+
+    /** How far a bow is drawn after being held for [ticks] ticks: 0 to 1, full after one second. */
+    fun force(ticks: Int): Double { val drawn = ticks.coerceAtLeast(0) / 20.0; return minOf(1.0, (drawn * drawn + drawn * 2) / 3) }
+    fun speed(force: Double) = FULL_SPEED * force.coerceIn(0.0, 1.0)
+    fun damage(force: Double) = FULL_DAMAGE * force.coerceIn(0.0, 1.0)
+    /** Only a fully drawn bow leaves the sparkling trail. */
+    fun trail(force: Double) = force >= 1.0
+
+    /** Blocks an arrow shot level has covered by the time it has fallen [fall] blocks (eye height, by default). */
+    fun reach(force: Double, fall: Double = 1.62): Double {
+        var along = 0.0; var down = 0.0; var forward = speed(force); var sink = 0.0
+        while (down < fall && forward > 1e-6) {
+            along += forward; down += sink
+            forward *= DRAG; sink = sink * DRAG + GRAVITY
+        }
+        return along
+    }
+}
+
+/**
  * The kinds of sound an item makes when it is thrown away with the drop key. (Which sound each one
  * is, is up to [ItemService]: this is only what the item is made of.)
  */

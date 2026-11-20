@@ -426,12 +426,23 @@ class ItemEffects(private val arena: ItemArena) {
         }
         // All arrows in this volley share a per-target damage limit.
         val hitTargets = mutableSetOf<UUID>()
+        // Where the volley came down, for the log: a bow half drawn must not reach as far as one fully drawn.
+        val from = p.eyeLocation
+        val landed = if (dev.betrix.superSmashMobsBrawl.bots.BotManager.debug) mutableListOf<Double>() else null
+        if (landed != null) org.bukkit.Bukkit.getScheduler().runTaskLater(ItemService.plugin, Runnable {
+            val reach = if (landed.isEmpty()) "none came down" else
+                "${landed.size} of 16 came down %.1f to %.1f blocks out (%.1f on average)".format(landed.min(), landed.max(), landed.average())
+            ItemService.plugin.logger.info("[shotbow] ${p.name} drawn %.0f%%: arrows leave at %.2f blocks a tick, $reach, hit ${hitTargets.size}, %.2f%% damage, trail ${ShotbowRules.trail(force)}"
+                .format(force * 100, ShotbowRules.speed(force), ShotbowRules.damage(force)))
+        }, 105L)
         repeat(16) {
             val forward=p.eyeLocation.direction
             val direction=forward.clone().add(Vector(kotlin.random.Random.nextDouble(-.16,.16),
                 kotlin.random.Random.nextDouble(-.16,.16),kotlin.random.Random.nextDouble(-.16,.16))).normalize()
-            arena.shot(p,ArenaItem.SHOTBOW,direction=direction,material=Material.ARROW,speed=1.0+2.0*force) { at,hit ->
-                if (hit != null && hitTargets.add(hit.uniqueId) && arena.hit(p,hit,6.25*force,.25,at,ArenaItem.SHOTBOW))
+            arena.shot(p,ArenaItem.SHOTBOW,direction=direction,material=Material.ARROW,speed=ShotbowRules.speed(force),
+                gravity=ShotbowRules.GRAVITY,drag=ShotbowRules.DRAG,trail=ShotbowRules.trail(force)) { at,hit ->
+                landed?.add(at.toVector().setY(0).distance(from.toVector().setY(0)))
+                if (hit != null && hitTargets.add(hit.uniqueId) && arena.hit(p,hit,ShotbowRules.damage(force),.25,at,ArenaItem.SHOTBOW))
                     // Let the client play its exact vanilla PvP bow-hit cue and pitch.
                     (p as org.bukkit.craftbukkit.entity.CraftPlayer).handle.connection.send(
                         net.minecraft.network.protocol.game.ClientboundGameEventPacket(

@@ -133,6 +133,7 @@ class ItemArena(val game: BrawlMinigame) {
     /** A swept collision test prevents fast rockets/volleys from tunnelling through fighters. */
     fun shot(owner: Player, kind: ArenaItem, at: Location = owner.eyeLocation, direction: Vector = owner.eyeLocation.direction,
              speed: Double = 1.4, homing: Boolean = false, material: Material = kind.material, life: Int = 100,
+             gravity: Double = 0.0, drag: Double = 1.0, trail: Boolean = true,
              impact: (Location, Player?) -> Unit) {
         if (entities.size > 300) return
         val nativeFlight = kind == ArenaItem.RAIN_STAFF
@@ -188,8 +189,10 @@ class ItemArena(val game: BrawlMinigame) {
                         val handle=(display as org.bukkit.craftbukkit.entity.CraftArrow).handle
                         handle.yRotO=yaw; handle.xRotO=pitch
                     }
+                    // A shot with weight (the Shotbow's arrows): slowed by the air, then pulled down, as an arrow is.
+                    if (!nativeFlight && (gravity != 0.0 || drag != 1.0)) { velocity.multiply(drag); velocity.y -= gravity }
                     if (kind == ArenaItem.KNOCKBACK_ROD) world.spawnParticle(Particle.LARGE_SMOKE,pos,12,.16,.16,.16,.005)
-                    world.spawnParticle(if (kind in setOf(ArenaItem.FIRE_FLOWER, ArenaItem.ROCKET_LAUNCHER, ArenaItem.MISSILE_BATTERY)) Particle.FLAME else if (kind == ArenaItem.KNOCKBACK_ROD) Particle.SMOKE else Particle.CRIT,
+                    if (trail) world.spawnParticle(if (kind in setOf(ArenaItem.FIRE_FLOWER, ArenaItem.ROCKET_LAUNCHER, ArenaItem.MISSILE_BATTERY)) Particle.FLAME else if (kind == ArenaItem.KNOCKBACK_ROD) Particle.SMOKE else Particle.CRIT,
                         pos, 2, .05, .05, .05, 0.0)
                     pos.y > world.minHeight && pos.y < world.maxHeight
                 }

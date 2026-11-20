@@ -258,6 +258,40 @@ class BotsCommand : KoinComponent {
         }.runTaskTimer(plugin, 1L, 2L)
     }
 
+    @Execute(name = "shotbowtest")
+    @Description("Debug: in a running bots game, a bot looses the Shotbow level down its longest clear line after holding it for 2, 3, 6, 10, 14 and 20 ticks; logs how fast each volley left and how far out it came down")
+    fun shotbowTest(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        BotManager.debug = true
+        val bot = BotManager.onlineBots().firstOrNull {
+            it.gameMode == org.bukkit.GameMode.SURVIVAL && it.world.name.startsWith("ssmbworld_") && it.isOnGround
+        } ?: run { plugin.logger.info("[shotbow] no bot standing in a match"); return }
+        val eye = bot.eyeLocation
+        val yaw = (0 until 16).map { it * 22.5f }.maxByOrNull { turn ->
+            val along = org.bukkit.Location(bot.world, 0.0, 0.0, 0.0, turn, 0f).direction
+            bot.world.rayTraceBlocks(eye, along, 60.0, org.bukkit.FluidCollisionMode.NEVER, true)?.hitPosition?.distance(eye.toVector()) ?: 60.0
+        }!!
+        val handle = (bot as org.bukkit.craftbukkit.entity.CraftPlayer).handle
+        handle.setYRot(yaw); handle.setYHeadRot(yaw); handle.setXRot(0f)
+        for (ticks in listOf(2, 3, 6, 10, 14, 20)) {
+            val loosed = dev.betrix.superSmashMobsBrawl.items.ItemService.debugShotbow(bot, ticks)
+            plugin.logger.info("[shotbow] ${bot.name} held $ticks ticks: ${if (loosed) "loosed" else "nothing loosed"}, " +
+                "worked out reach on flat ground %.1f blocks".format(dev.betrix.superSmashMobsBrawl.items.ShotbowRules.reach(dev.betrix.superSmashMobsBrawl.items.ShotbowRules.force(ticks))))
+        }
+    }
+
+    @Execute(name = "spawnmenu")
+    @Description("Debug: opens the sandbox's Spawn Items chest for a bot for six seconds; logs the Food icon each time its picture changes")
+    fun spawnMenu(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        BotManager.debug = true
+        val bot = BotManager.onlineBots().firstOrNull() ?: run { plugin.logger.info("[menu] no bot to open it for"); return }
+        dev.betrix.superSmashMobsBrawl.items.ItemMenus.spawner(bot)
+        val food = bot.openInventory.topInventory.contents.indexOfFirst { it?.type in dev.betrix.superSmashMobsBrawl.items.ItemPresentation.foods }
+        plugin.logger.info("[menu] ${bot.name}: Spawn Items open, food icon in slot $food starts as ${bot.openInventory.topInventory.getItem(food.coerceAtLeast(0))?.type}")
+        org.bukkit.Bukkit.getScheduler().runTaskLater(plugin, Runnable { bot.closeInventory(); plugin.logger.info("[menu] ${bot.name}: closed") }, 125L)
+    }
+
     @Execute(name = "clear")
     @Description("Remove all AI bots")
     fun clear(@Context sender: CommandSender) {

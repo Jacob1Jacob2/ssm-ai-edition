@@ -75,6 +75,24 @@ class ItemCatalogTest : StringSpec({
         listOf("COPPER_AXE", "COPPER_SWORD", "BOW", "CARVED_PUMPKIN", "FEATHER").map(DropFeel::of) shouldBe
             listOf(DropFeel.TOOL, DropFeel.TOOL, DropFeel.TOOL, DropFeel.PLAIN, DropFeel.PLAIN)
     }
+    "a shotbow not drawn all the way does not shoot like one that is" {
+        // The draw of an ordinary bow: nothing for the first ticks, full after a second, and no more than full.
+        (ShotbowRules.force(2) < ShotbowRules.LEAST) shouldBe true
+        (ShotbowRules.force(3) >= ShotbowRules.LEAST) shouldBe true
+        ShotbowRules.force(10) shouldBe (0.4167 plusOrMinus .001)
+        listOf(20, 200).map(ShotbowRules::force) shouldBe listOf(1.0, 1.0)
+        // Speed and damage follow the draw from nothing: a quick tap is a tenth of a full shot, not 40% of one.
+        ShotbowRules.speed(1.0) shouldBe 3.0
+        ShotbowRules.speed(ShotbowRules.force(3)) shouldBe (0.32 plusOrMinus .01)
+        ShotbowRules.damage(1.0) shouldBe 6.25
+        ShotbowRules.damage(ShotbowRules.force(10)) shouldBe (2.6 plusOrMinus .01)
+        // ...and the arrows fall: a tap drops them at the shooter's feet, half a draw goes a few blocks, a full one carries.
+        val reach = listOf(3, 10, 20).map { ShotbowRules.reach(ShotbowRules.force(it)) }
+        (reach[0] < 4.0) shouldBe true
+        (reach[1] in 8.0..13.0) shouldBe true
+        (reach[2] > 20.0) shouldBe true
+        listOf(0.5, 0.99, 1.0).map(ShotbowRules::trail) shouldBe listOf(false, false, true)
+    }
     "an enlarged egg is not drawn bigger than the thrower's view of it allows" {
         val sprite = dev.betrix.superSmashMobsBrawl.projectiles.ProjectileSprite
         // Right at the eyes it is an ordinary egg; a couple of blocks out it is most of the way; then full size.
