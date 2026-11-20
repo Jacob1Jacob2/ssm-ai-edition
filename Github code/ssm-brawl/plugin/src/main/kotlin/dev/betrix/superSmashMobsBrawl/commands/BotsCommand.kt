@@ -663,6 +663,19 @@ class BotsCommand : KoinComponent {
         plugin.logger.info("[navkeys] done")
     }
 
+    @Execute(name = "mobs")
+    @Description("Debug: the mobs standing in every match world right now, by kind and age in seconds (what a kit summoned and should have taken away again shows up here as an old one)")
+    fun mobs(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        for (game in minigameService.activeMinigames()) {
+            val world = game.worldManager.getWorld()?.world ?: continue
+            val mobs = world.livingEntities.filter { it !is org.bukkit.entity.Player }
+            plugin.logger.info("[mobs] ${game.worldManager.getWorld()?.data?.id}: " + if (mobs.isEmpty()) "none" else
+                mobs.groupBy { it.type.name.lowercase() }.entries.joinToString(", ") { (kind, all) ->
+                    "${all.size} $kind (oldest ${all.maxOf { it.ticksLived } / 20}s)" })
+        }
+    }
+
     @Execute(name = "lowblocks")
     @Description("Debug: what the running match's world has at and under its void level, inside the world border: blocks per height, and the lowest ones with their place and material")
     fun lowBlocks(@Context sender: CommandSender) {

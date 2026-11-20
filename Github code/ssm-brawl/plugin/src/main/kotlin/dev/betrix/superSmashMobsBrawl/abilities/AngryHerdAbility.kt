@@ -29,20 +29,39 @@ class AngryHerdAbility(player: Player) : BrawlAbility("angry_herd", player) {
     private val cowAmountHeight: Int = metadata.int("cowAmountHeight") ?: 1
     private val knockback: Double get() = upgradedValue("knockback", 1.25)
 
+    /** The cows of the herd that is running now. Nothing in a match can hurt them: they go when the herd ends. */
+    private val herd = mutableListOf<Entity>()
+
+    /** Takes every cow of the herd out of the world, with a puff where it stood. */
+    private fun dismiss() {
+        herd.forEach { cow ->
+            if (!cow.isValid) return@forEach
+            Particle.POOF.builder().location(cow.location.clone().add(0.0, 1.0, 0.0)).count(1).receivers(96, true).spawn()
+            cow.remove()
+        }
+        herd.clear()
+    }
+
     override fun teardown() {
         super.teardown()
         herdTask?.cancel()
         herdTask = null
+        // The owner died, left or changed kit while the herd was running. Stopping the task alone
+        // (which is all this used to do) left the cows standing in the arena for the rest of the
+        // match: the task was the only thing that ever removed them.
+        dismiss()
     }
 
     override fun activate() {
         super.activate()
+        // A herd still running from the cast before this one is not left behind either.
+        dismiss()
         cowDirections.clear()
         lastCowLocation.clear()
         lastMoveTime.clear()
         lastDamageTime.clear()
 
-        val cows = mutableListOf<Entity>()
+        val cows = herd
 
         for (j in 0 until cowAmountHeight) {
             for (i in (1 - cowAmountRadius) until cowAmountRadius) {
@@ -85,17 +104,7 @@ class AngryHerdAbility(player: Player) : BrawlAbility("angry_herd", player) {
             repeatingTask(1) task@{
                 // End condition: owner null or ability duration elapsed
                 if (elapsedSinceLastActivation >= durationMs) {
-                    // Cleanup cows
-                    cows.forEach { cow ->
-                        if (cow.isValid) {
-                            Particle.POOF.builder()
-                                .location(cow.location.clone().add(0.0, 1.0, 0.0))
-                                .count(1)
-                                .receivers(96, true)
-                                .spawn()
-                            cow.remove()
-                        }
-                    }
+                    dismiss()
                     // Stop this task
                     this.cancel()
                     herdTask = null
