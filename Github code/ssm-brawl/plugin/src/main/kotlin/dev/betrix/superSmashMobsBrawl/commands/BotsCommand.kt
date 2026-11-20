@@ -213,6 +213,25 @@ class BotsCommand : KoinComponent {
         }.runTaskTimer(plugin, 20L, 40L)
     }
 
+    @Execute(name = "borrowdrop")
+    @Description("Debug: in a running bots game, hands a bot a Mystery Ability and has it press the drop key on the tool; the tool and its ability should both be gone")
+    fun borrowDrop(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        val bot = BotManager.onlineBots().firstOrNull {
+            it.gameMode == org.bukkit.GameMode.SURVIVAL && it.world.name.startsWith("ssmbworld_") && (0..8).any { slot -> it.inventory.getItem(slot) == null }
+        } ?: run { plugin.logger.info("[borrow] DROP: no bot free for it"); return }
+        val kit = dev.betrix.superSmashMobsBrawl.services.KitService.getKitForPlayer(bot) ?: return
+        val (sourceKit, id) = dev.betrix.superSmashMobsBrawl.abilities.MysteryAbility.everything().first { it.second !in kit.abilityIds() }
+        val slot = (0..8).first { bot.inventory.getItem(it) == null }
+        bot.inventory.heldItemSlot = slot
+        if (!dev.betrix.superSmashMobsBrawl.abilities.MysteryAbility.grant(bot, sourceKit to id)) { plugin.logger.info("[borrow] DROP: not granted"); return }
+        val before = bot.inventory.getItem(slot)?.type
+        val dropped = bot.dropItem(false)
+        val items = bot.world.getEntitiesByClass(org.bukkit.entity.Item::class.java).count { dev.betrix.superSmashMobsBrawl.abilities.MysteryAbility.isBorrowed(it.itemStack) }
+        plugin.logger.info("[borrow] DROP $id on ${bot.name} (${kit.id}): held $before, drop went through=$dropped, slot now ${bot.inventory.getItem(slot)?.type ?: "empty"}, " +
+            "ability ${if (id in kit.abilityIds()) "STILL ON THE KIT" else "gone"}, lying in the world: $items")
+    }
+
     @Execute(name = "clear")
     @Description("Remove all AI bots")
     fun clear(@Context sender: CommandSender) {

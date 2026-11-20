@@ -19,7 +19,12 @@ import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 
 /** What a borrowed ability still has left, and how it differs from the same ability in its own kit. */
-class Borrowed(val sourceKit: String, var uses: Int, val total: Int, val cooldownScale: Double, val slot: Int)
+class Borrowed(val sourceKit: String, var uses: Int, val total: Int, val cooldownScale: Double, val slot: Int) {
+    /** The server tick the tool was handed out in. */
+    var since = 0
+    /** Clicks up to this tick are still the click that opened the bag (see [MysteryRules.stillBagClick]). */
+    var quietUntil = 0
+}
 
 /** The rules of the Mystery Ability item, with nothing of the server in them. */
 object MysteryRules {
@@ -31,6 +36,25 @@ object MysteryRules {
 
     /** Half the usual cooldown, except Slime Rocket, which keeps its own. */
     fun cooldownScale(abilityId: String) = if (abilityId == "slime_rocket") 1.0 else 0.5
+
+    /**
+     * A mouse button held down sends its click again every 4 ticks, and nobody lets go of a
+     * button in less than that. So the click that opened the bag arrived a second time with the
+     * new tool already in the hand, and used it. A click on a borrowed tool is that same click
+     * for as long as clicks keep coming this close together...
+     */
+    const val QUIET_TICKS = 7
+    /** ...but no longer than this after the bag was opened: a button held this long is meant. */
+    const val QUIET_MOST = 15
+
+    fun open(lent: Borrowed, now: Int) { lent.since = now; lent.quietUntil = now + QUIET_TICKS }
+
+    /** Is a click at tick [now] still the one that opened the bag? (Counts it, if so.) */
+    fun stillBagClick(lent: Borrowed, now: Int): Boolean {
+        if (now > lent.quietUntil) return false
+        lent.quietUntil = minOf(now + QUIET_TICKS, lent.since + QUIET_MOST)
+        return true
+    }
 
     /**
      * (kit, ability) pairs a player in [ownKit] can draw: every ability of every other kit, less
@@ -49,6 +73,8 @@ object MysteryAbility : KoinComponent {
     private val data: DataService by inject()
     private val lang: LangService by inject()
     private val MARK = NamespacedKey("ssm", "borrowed_ability")
+    /** Which ability a tool belongs to, as [BrawlAbility] writes it on every ability tool. */
+    private val ABILITY get() = NamespacedKey(dev.betrix.superSmashMobsBrawl.items.ItemService.plugin, "abilityId")
     private val TOOL = Regex("(?:WOODEN|STONE|IRON|GOLDEN|DIAMOND|NETHERITE)_(SWORD|AXE|SHOVEL|PICKAXE|HOE)")
 
     fun isBorrowed(item: ItemStack?) = item?.itemMeta?.persistentDataContainer?.has(MARK, PersistentDataType.BYTE) == true
@@ -65,7 +91,11 @@ object MysteryAbility : KoinComponent {
         val (sourceKit, id) = forced ?: MysteryRules.candidates(kits(), kit.id, kit.abilityIds().toSet()).randomOrNull() ?: return false
         val ability = BrawlKit.createAbility(id, player) ?: return false
         val uses = MysteryRules.uses(id)
-        ability.borrowed = Borrowed(sourceKit, uses, uses, MysteryRules.cooldownScale(id), player.inventory.heldItemSlot)
+        ability.borrowed = Borrowed(sourceKit, uses, uses, MysteryRules.cooldownScale(id), player.inventory.heldItemSlot).also {
+            // (A bot presses a button for exactly one tick: its next click is a new one.)
+            if (!dev.betrix.superSmashMobsBrawl.bots.BotManager.isBot(player)) MysteryRules.open(it, org.bukkit.Bukkit.getCurrentTick())
+            else it.quietUntil = -1
+        }
         kit.borrow(ability)
         player.sendMessage(Component.text("Item> ", NamedTextColor.BLUE)
             .append(Component.text("Mystery Ability: ", NamedTextColor.GOLD))
@@ -73,6 +103,23 @@ object MysteryAbility : KoinComponent {
             .append(Component.text(" ($uses uses)", NamedTextColor.GRAY)))
         player.playSound(player.location, org.bukkit.Sound.ITEM_BUNDLE_DROP_CONTENTS, 1f, 1f)
         player.playSound(player.location, org.bukkit.Sound.BLOCK_NOTE_BLOCK_PLING, .4f, 1.6f)
+        return true
+    }
+
+    /**
+     * The drop key on a borrowed tool: the player is done with it and wants the hand free for
+     * another item. The ability goes with the tool. False when [item] is not theirs to throw away.
+     */
+    fun discard(player: Player, item: ItemStack): Boolean {
+        if (!isBorrowed(item)) return false
+        val kit = KitService.getKitForPlayer(player) ?: return false
+        val id = item.itemMeta?.persistentDataContainer?.get(ABILITY, PersistentDataType.STRING) ?: return false
+        val ability = kit.getAbility(id)?.takeIf { it.borrowed != null } ?: return false
+        kit.release(ability)
+        player.sendMessage(Component.text("Item> ", NamedTextColor.BLUE)
+            .append(Component.text("Dropped ", NamedTextColor.GRAY))
+            .append(lang.t("abilities.$id.name").color(NamedTextColor.GOLD)))
+        player.playSound(player.location, org.bukkit.Sound.ENTITY_ITEM_BREAK, .6f, 1.3f)
         return true
     }
 

@@ -65,4 +65,20 @@ class ItemCatalogTest : StringSpec({
         listOf("ink_shotgun", "blizzard", "inferno").map(rules::uses) shouldBe listOf(7, 50, 75)
         listOf("ink_shotgun", "slime_rocket", "blizzard").map(rules::cooldownScale) shouldBe listOf(0.5, 1.0, 0.5)
     }
+    "the click that opens a mystery ability does not use the tool that comes out of it" {
+        val rules = dev.betrix.superSmashMobsBrawl.abilities.MysteryRules
+        fun tool() = dev.betrix.superSmashMobsBrawl.abilities.Borrowed("slime", 7, 7, 0.5, 4).also { rules.open(it, 100) }
+        // The button is still down: the same click comes in again 4 ticks later, and again.
+        val held = tool()
+        listOf(100, 104, 108, 112).map { rules.stillBagClick(held, it) } shouldBe listOf(true, true, true, true)
+        // ...but a button held for most of a second is meant.
+        rules.stillBagClick(held, 116) shouldBe false
+        // Let go and clicked again: that is a new click.
+        val clicked = tool()
+        rules.stillBagClick(clicked, 104) shouldBe true
+        rules.stillBagClick(clicked, 113) shouldBe false
+        // Clicking as fast as a hand can does not keep the tool waiting for ever.
+        val mashed = tool()
+        (101..130).filter { it % 3 == 0 }.first { !rules.stillBagClick(mashed, it) } shouldBe 117
+    }
 })

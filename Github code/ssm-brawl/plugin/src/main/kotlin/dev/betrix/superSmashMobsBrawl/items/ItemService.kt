@@ -354,6 +354,16 @@ object ItemService : KoinComponent {
             } else if (state == PlayerFishEvent.State.CAUGHT_FISH) { isCancelled=true; hook.remove() }
         }
         event<PlayerDropItemEvent>(priority = EventPriority.HIGHEST) {
+            // A Mystery Ability's tool is an item like the bag it came out of: the drop key throws
+            // it away (with its ability), so the hand is free for the next item.
+            if (dev.betrix.superSmashMobsBrawl.abilities.MysteryAbility.isBorrowed(itemDrop.itemStack)) {
+                if (arena(player)?.players()?.contains(player) == true &&
+                    dev.betrix.superSmashMobsBrawl.abilities.MysteryAbility.discard(player, itemDrop.itemStack)) {
+                    isCancelled = false
+                    itemDrop.remove()
+                } else isCancelled = true
+                return@event
+            }
             val discarded = kind(itemDrop.itemStack) ?: return@event
             if (discarded.tool || discarded == ArenaItem.DIAMOND_HELMET || arena(player)?.players()?.contains(player) != true) {
                 isCancelled = true

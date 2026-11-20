@@ -31,17 +31,47 @@ internal object ProjectileUpgradeVisual {
             })
         }
         update(display, entity, scale)
+        val late = HashSet<java.util.UUID>()
         entity.world.players.filter { entity !is Arrow || ResourcePackService.hasPack(it) }.forEach {
             it.hideEntity(ItemService.plugin, entity)
-            it.showEntity(ItemService.plugin, display)
+            if (entity is ThrowableProjectile && inFace(it, entity.location, scale)) late += it.uniqueId
+            else it.showEntity(ItemService.plugin, display)
         }
+        if (late.isNotEmpty()) unseen[display] = late
         return display
     }
+
+    /**
+     * A thrown egg or snowball leaves from just in front of the thrower's eyes, and the game does
+     * not draw its own for the first moment of the flight for exactly that reason. The enlarged
+     * picture is a separate entity the game knows nothing about, so it was drawn from the first
+     * tick: a sprite bigger than the screen, in the face of whoever threw it, once for every egg.
+     * So it is shown to a player only when it is this far from their eyes (times its size), or
+     * has been flying for [LATEST] ticks. Nothing about the flight itself changes.
+     */
+    private const val CLEAR = 2.5
+    private const val LATEST = 6
+    private val unseen = java.util.WeakHashMap<ItemDisplay, MutableSet<java.util.UUID>>()
+
+    private fun inFace(viewer: Player, at: Location, scale: Double) =
+        viewer.world == at.world && viewer.eyeLocation.distanceSquared(at) < (CLEAR * scale) * (CLEAR * scale)
 
     fun update(display: ItemDisplay, arrow: Entity, scale: Double, direction: org.bukkit.util.Vector = arrow.velocity) {
         if (arrow !is Arrow) {
             display.transformation = Transformation(Vector3f(), Quaternionf(), Vector3f(scale.toFloat()), Quaternionf())
             display.teleport(arrow.location.apply { yaw = 0f; pitch = 0f })
+            val late = unseen[display] ?: return
+            val at = arrow.location
+            late.removeIf { id ->
+                val viewer = Bukkit.getPlayer(id)?.takeIf { it.isOnline } ?: return@removeIf true
+                if (arrow.ticksLived < LATEST && inFace(viewer, at, scale)) return@removeIf false
+                viewer.showEntity(ItemService.plugin, display)
+                if (dev.betrix.superSmashMobsBrawl.bots.BotManager.debug && (arrow as? Projectile)?.shooter == viewer)
+                    ItemService.plugin.logger.info("[sprite] ${display.itemStack.type.name.lowercase()} x$scale shown to its thrower ${viewer.name} " +
+                        "after ${arrow.ticksLived} ticks, ${"%.1f".format(viewer.eyeLocation.distance(at))} blocks away")
+                true
+            }
+            if (late.isEmpty()) unseen.remove(display)
             return
         }
         val v = direction

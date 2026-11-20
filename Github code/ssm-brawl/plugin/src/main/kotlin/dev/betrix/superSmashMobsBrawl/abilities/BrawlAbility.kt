@@ -208,7 +208,23 @@ abstract class BrawlAbility(val id: String, val player: Player) : Manageable(), 
             }
         )
 
-        listeners.add(event<PlayerInteractEvent>(player) { onPlayerInteract(this) })
+        listeners.add(event<PlayerInteractEvent>(player) { if (!bagClick(this)) onPlayerInteract(this) })
+    }
+
+    /**
+     * True for a click on this borrowed tool that is still the click that took it out of the bag
+     * (see [MysteryRules.stillBagClick]). Such a click does nothing at all: it does not cast, and
+     * it does not start the tool blocking or drawing either, which a hold-to-use ability would
+     * take for its button being held.
+     */
+    private fun bagClick(event: PlayerInteractEvent): Boolean {
+        val lent = borrowed ?: return false
+        if (event.hand != null && event.hand != EquipmentSlot.HAND) return false
+        if (getAbilityId(event.item ?: player.inventory.itemInMainHand) != id) return false
+        if (!MysteryRules.stillBagClick(lent, org.bukkit.Bukkit.getCurrentTick())) return false
+        event.setUseInteractedBlock(org.bukkit.event.Event.Result.DENY)
+        event.setUseItemInHand(org.bukkit.event.Event.Result.DENY)
+        return true
     }
 
     override fun teardown() {
