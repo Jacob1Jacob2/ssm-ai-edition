@@ -24,6 +24,22 @@ class MatchModeTest : StringSpec({
         }
     }
 
+    "a mode's button is dark when the match has nobody, or too few, to play it with" {
+        // The sandbox: nobody to fight, so none of the four.
+        MatchMode.entries.filter { it.available(1) } shouldBe emptyList()
+        MatchMode.entries.map { it.unavailable(1) }.toSet() shouldBe setOf("The sandbox has nobody to fight")
+        // Two players are a duel: only FFA is back.
+        MatchMode.entries.filter { it.available(2) } shouldBe listOf(MatchMode.FFA)
+        MatchMode.TEAM_UPS.unavailable(2) shouldBe "Takes 3 or more players"
+        MatchMode.BOTS_VS_YOU.unavailable(2) shouldBe "Takes 3 or more players"
+        MatchMode.TEAMS.unavailable(2) shouldBe "Takes 4 or more players"
+        // From four players on, and on Random (where the number is rolled for every match), all of them.
+        for (players in GameSetupService.PLAYER_COUNTS.filter { it >= 4 }) MatchMode.entries.filter { it.available(players) } shouldBe MatchMode.entries
+        for (players in listOf(1, 2, 16)) MatchMode.entries.filter { it.available(players, random = true) } shouldBe MatchMode.entries
+        // Every icon that can go dark has its dark copy in the pack.
+        MenuAssets.DARK_FLAT_ICONS.toSet() shouldBe setOf("copper_axe", "iron_axe", "copper_sword", "iron_sword")
+    }
+
     "a setup knows its seats: who is a teammate, who an opponent" {
         val setup = GameSetupService.Setup(players = 8, teams = true, teammates = listOf("Ana", "Bo", "Cy", "Di"),
             selectedBotNames = listOf("ana", "Ed", "Flo", "Gus", "Hal", "Ivy"))

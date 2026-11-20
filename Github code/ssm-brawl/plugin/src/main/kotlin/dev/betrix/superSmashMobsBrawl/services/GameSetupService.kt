@@ -356,30 +356,27 @@ object GameSetupService : KoinComponent {
             } else set(43, MenuIcons.dark(menuItem(Material.COPPER_CHEST, "Reset to Normal Kit Stats", NamedTextColor.DARK_GRAY,
                 listOf("Your kit's stats are normal")))) { unavailable(player) }
 
-            // Fifth row: the mode, one tool each. With fewer than three fighters there is only one way to stand.
-            // (Two teams cannot be chosen below four players, so they are not left chosen there either.)
-            if (s.teams && !s.playersRandom && s.players < 4) { s.matchMode = MatchMode.FFA; save() }
+            // Fifth row: the mode, one tool each. A mode that cannot be played with this many fighters
+            // is there but dark, like the head beside it: all four in the sandbox, where there is
+            // nobody to fight, and all but FFA with two players, who can only be a duel.
+            // (And a mode that cannot be chosen is not left chosen either. The sandbox has no mode
+            // at all, so there the one picked for a real match is kept for when there is one again.)
+            if (!s.sandbox && !s.matchMode.available(s.players, s.playersRandom)) { s.matchMode = MatchMode.FFA; save() }
             val mode = s.matchMode
-            val counted = !s.playersRandom && s.players >= 2
-            val few = when {
-                s.playersRandom -> null
-                s.sandbox -> "The sandbox has nobody to fight"
-                s.players == 2 -> "With 2 players it is always a 1v1"
-                else -> null
-            }
-            fun modeButton(slot: Int, material: Material, value: MatchMode, name: String, lore: List<String>) =
-                set(slot, menuItem(material, name, NamedTextColor.AQUA, lore + listOfNotNull(few), "Mode" in chosen && mode == value)) {
+            fun modeButton(slot: Int, material: Material, value: MatchMode, name: String, darkName: String, lore: List<String>) {
+                val why = value.unavailable(s.players, s.playersRandom)
+                if (why != null) set(slot, MenuIcons.dark(menuItem(material, darkName, NamedTextColor.DARK_GRAY, listOf(why)))) { unavailable(player) }
+                else set(slot, menuItem(material, name, NamedTextColor.AQUA, lore, "Mode" in chosen && mode == value)) {
                     s.matchMode = value
                     changed(player)
                 }
-            modeButton(37, Material.COPPER_AXE, MatchMode.FFA, "FFA", listOf("Everybody for themselves"))
-            modeButton(38, Material.IRON_AXE, MatchMode.TEAM_UPS, "Team-Ups", listOf("FFA, but the bots can team on you", "if you camp or get annoying"))
-            modeButton(39, Material.COPPER_SWORD, MatchMode.BOTS_VS_YOU, if (counted) "${s.bots}v1" else "All vs 1",
+            }
+            modeButton(37, Material.COPPER_AXE, MatchMode.FFA, "FFA", "FFA", listOf("Everybody for themselves"))
+            modeButton(38, Material.IRON_AXE, MatchMode.TEAM_UPS, "Team-Ups", "Team-Ups", listOf("FFA, but the bots can team on you", "if you camp or get annoying"))
+            modeButton(39, Material.COPPER_SWORD, MatchMode.BOTS_VS_YOU, if (s.playersRandom) "All vs 1" else "${s.bots}v1", "All vs 1",
                 listOf("Every bot is on one team against you"))
-            // Two teams take four players: with fewer the sword is there but dark, like the head beside it.
-            if (s.playersRandom || s.players >= 4) modeButton(40, Material.IRON_SWORD, MatchMode.TEAMS,
-                if (s.playersRandom) "Teams" else "${s.players / 2}v${s.players / 2}", listOf("Two even teams, yours is blue", "Pick your team with the head"))
-            else set(40, MenuIcons.dark(menuItem(Material.IRON_SWORD, "2v2", NamedTextColor.DARK_GRAY, listOf("Takes 4 or more players")))) { unavailable(player) }
+            modeButton(40, Material.IRON_SWORD, MatchMode.TEAMS, if (s.playersRandom) "Teams" else "${s.players / 2}v${s.players / 2}", "2v2",
+                listOf("Two even teams, yours is blue", "Pick your team with the head"))
             // Lit while the two teams mode is chosen, the same way as the chest: who is on your team, and their kits.
             if (s.teams && (s.playersRandom || s.players >= 4)) set(41, menuItem(Material.PLAYER_HEAD, "Your Team", NamedTextColor.BLUE,
                 listOf("Choose your teammates", "and the kits they play",

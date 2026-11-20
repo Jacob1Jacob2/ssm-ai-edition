@@ -95,13 +95,23 @@ class ItemArena(val game: BrawlMinigame) {
         while (iterator.hasNext()) {
             val effect = iterator.next()
             if (!effect.step()) { effect.close(); iterator.remove() }
+            // That step ended the match (a hit that took the last life), and the match closed
+            // this arena from inside it: nothing more is stepped, and the closing waits until here.
+            if (closed) break
         }
-        stepping = false; active += pending; pending.clear()
+        stepping = false
+        if (closed) { shut(); return }
+        active += pending; pending.clear()
         entities.removeIf { !it.isValid }
     }
     fun close() {
         if (closed) return
         closed = true
+        // (Asked for from inside one of this arena's own effects: taking the effects away under
+        // the feet of the loop that is going through them is what used to end in an error.)
+        if (!stepping) shut()
+    }
+    private fun shut() {
         (active + pending).forEach { it.close() }; active.clear(); pending.clear()
         drops.forEach { it.close() }; drops.clear()
         entities.forEach { it.remove() }; entities.clear()

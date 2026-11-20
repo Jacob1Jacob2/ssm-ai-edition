@@ -47,17 +47,24 @@ object RocketRules {
 }
 
 object AnvilRules {
-    /** High enough to come out of the sky on any map, and down in 0.8 seconds all the same. */
+    /** High enough to come out of the sky on any map, and down in half a second all the same. */
     const val HEIGHT = 30.0
-    const val FALL_TICKS = 16
+    /**
+     * Half a second. (It was 0.8 at first, and bots got out from under it at their ordinary pace:
+     * 0.8 seconds is 4.5 blocks at a run.)
+     */
+    const val FALL_TICKS = 10
     const val DAMAGE = 90.0
     /**
      * The anvil is drawn five blocks wide and lands on whoever is under it, out to its corners.
-     * In the 0.8 seconds it takes, someone walking covers 3.4 blocks and is still under it;
-     * someone already at a run covers 4.5 and is not, and a running jump is clear by a block.
+     * In the half second it takes, someone walking covers 2.2 blocks and someone running 2.8: both
+     * are still under it. Only someone already running and jumping, 3.6 blocks, is just clear.
      */
     const val SCALE = 5.0
     const val REACH = 3.5
+    /** How far the ring of dust thrown up by the landing runs, and for how many ticks. */
+    const val SHOCK_REACH = 7.0
+    const val SHOCK_TICKS = 8
     /** How high the anvil is over where it will land, [age] ticks after it appeared. */
     fun heightAt(age: Int) = HEIGHT * (1.0 - (age.coerceIn(0, FALL_TICKS) / FALL_TICKS.toDouble()))
     /**
@@ -67,11 +74,39 @@ object AnvilRules {
     fun lands(dx: Double, dy: Double, dz: Double) = dx * dx + dz * dz <= REACH * REACH && dy > -1.5 && dy < 6.0
 }
 
-/** The Flying Car: what the three keys do to it, and what its fuel is. */
+/** The Flying Car: what the three keys do to it, how it gathers speed, and what its fuel is. */
 object CarRules {
-    /** Blocks a tick: forward at close to three times a sprint, up and down a little slower. */
-    const val FORWARD = 0.75
-    const val CLIMB = 0.5
+    /** Blocks a tick: forward at a little over three times a sprint (18 blocks a second), up and down at two thirds of that. */
+    const val FORWARD = 0.9
+    const val CLIMB = 0.6
+    /**
+     * How much of the way to the speed its keys ask for the car gets each tick. It gathers speed,
+     * loses it and swings round over about a third of a second, in place of going from standing to
+     * flat out, or from one heading to another, between one tick and the next.
+     */
+    const val EASE = 0.3
+    /** How many ticks every player's game spreads each of the car's moves over, so that it glides instead of stepping. */
+    const val GLIDE_TICKS = 2
+    /**
+     * What the car takes up for the purposes of not flying through things: as wide as a player
+     * and a little shorter than one, so that wherever its driver could stand to get in, it fits.
+     */
+    const val HALF_WIDTH = 0.3
+    const val HEIGHT = 1.4
+    /** Seconds of flying in a full tank. */
+    const val FUEL = 40
+    /** Parked this long, the tank begins to fill again: a second of flying for every [REFUEL_TICKS] it stands. */
+    const val REST_TICKS = 200
+    const val REFUEL_TICKS = 80
+
+    /** One tick of gathering speed: from [now] toward [wanted], both in blocks a tick. */
+    fun eased(now: Double, wanted: Double): Double = (now + (wanted - now) * EASE).let { if (kotlin.math.abs(it) < 0.002 && wanted == 0.0) 0.0 else it }
+
+    /** Does a car that has stood for [parkedTicks] get a second of fuel back this tick? */
+    fun refuels(parkedTicks: Int): Boolean = parkedTicks > REST_TICKS && (parkedTicks - REST_TICKS) % REFUEL_TICKS == 0
+
+    /** Seconds of fuel a car has got back after standing for [parkedTicks] (and not past [FUEL] with what it had). */
+    fun refuelled(parkedTicks: Int): Int = ((parkedTicks - REST_TICKS).coerceAtLeast(0)) / REFUEL_TICKS
     /** Percent of a health bar for whoever it runs into, and no more often than once a second each. */
     const val RAM_DAMAGE = 25.0
     const val RAM_KNOCKBACK = 1.6
@@ -215,7 +250,7 @@ enum class ArenaItem(val label: String, val material: Material, val uses: Int,
         "Right-click to put a 3x3 slime pad under your feet and launch yourself high into the air. The pad fades after five seconds."),
     POISON_MIST("Poison Mist", Material.PUFFERFISH, 1, ItemRarity.UNCOMMON,
         "Right-click to throw. After three seconds it bursts into a mist that lingers for five seconds and gives everyone who touches it Poison II for six seconds."),
-    CAGE_TRAP("Cage Trap", Material.JUNGLE_TRAPDOOR, 1, ItemRarity.UNCOMMON,
+    CAGE_TRAP("Cage Trap", Material.OAK_TRAPDOOR, 1, ItemRarity.UNCOMMON,
         "Right-click to throw. Sets on the ground after three seconds, then cages whoever walks over it for eight seconds."),
 
     // --- rare
@@ -275,10 +310,10 @@ enum class ArenaItem(val label: String, val material: Material, val uses: Int,
         "Right-click, then stand still or move slowly for five seconds to gain a life. Maximum eight lives. Moving quickly interrupts the channel."),
     PERSONAL_ROCKET("Personal Rocket", Material.FIREWORK_ROCKET, 4, ItemRarity.ULTIMATE,
         "Right-click to ride a rocket the way you are looking. It explodes on impact; the blast does not hurt you."),
-    ANVIL("Anvil", Material.ANVIL, 1, ItemRarity.ULTIMATE,
-        "Right-click to drop an anvil out of the sky onto every opponent. It lands in 0.8 seconds for 90% health damage."),
-    FLYING_CAR("Flying Car", Material.MINECART, 30, ItemRarity.ULTIMATE,
-        "Right-click to get in or out. Forward drives, jump rises, sneak sinks. Ramming an opponent hurts them.");
+    ANVIL("Falling Anvil", Material.ANVIL, 1, ItemRarity.ULTIMATE,
+        "Right-click to drop an anvil out of the sky onto every opponent. It lands in half a second for 90% health damage."),
+    FLYING_CAR("Flying Car", Material.MINECART, CarRules.FUEL, ItemRarity.ULTIMATE,
+        "Right-click to get in or out. Forward drives, jump rises, sneak sinks. Ramming hurts. Refuels while parked.");
 
     val id get() = name.lowercase()
     val tool get() = this in setOf(DIAMOND_AXE, DIAMOND_SHOVEL, DIAMOND_SWORD)

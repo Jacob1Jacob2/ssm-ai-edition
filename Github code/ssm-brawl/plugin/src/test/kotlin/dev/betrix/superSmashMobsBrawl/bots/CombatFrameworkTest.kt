@@ -383,17 +383,23 @@ class CombatFrameworkTest : StringSpec({
         plan(ArenaItem.FLYING_CAR, calm) shouldBe null
         plan(ArenaItem.FLYING_CAR, calm.copy(falling = true, airJump = false)) shouldBe ItemAim.NONE
         plan(ArenaItem.FLYING_CAR, fight.copy(targetDistance = 3.0, targetUnreachable = true)) shouldBe ItemAim.NONE
+        // A few seconds in the tank are not worth a chase, but they are worth being caught by; an empty one is worth nothing.
+        plan(ArenaItem.FLYING_CAR, fight.copy(charge = ItemTactics.CAR_WORTH)) shouldBe ItemAim.NONE
+        plan(ArenaItem.FLYING_CAR, fight.copy(charge = ItemTactics.CAR_WORTH - 1)) shouldBe null
+        plan(ArenaItem.FLYING_CAR, calm.copy(falling = true, airJump = false, charge = 1)) shouldBe ItemAim.NONE
+        plan(ArenaItem.FLYING_CAR, calm.copy(falling = true, airJump = false, charge = 0)) shouldBe null
         // The Personal Rocket is ridden at an opponent, seen or (with no way to them) not.
         plan(ArenaItem.PERSONAL_ROCKET, fight) shouldBe ItemAim.TARGET
         plan(ArenaItem.PERSONAL_ROCKET, fight.copy(targetDistance = 2.0)) shouldBe null
         plan(ArenaItem.PERSONAL_ROCKET, fight.copy(targetVisible = false)) shouldBe null
         plan(ArenaItem.PERSONAL_ROCKET, fight.copy(targetVisible = false, targetUnreachable = true)) shouldBe ItemAim.TARGET
         plan(ArenaItem.PERSONAL_ROCKET, calm) shouldBe null
-        // An Anvil lands where they were: not on someone at a run, unless the bot knows no better.
-        plan(ArenaItem.ANVIL, fight.copy(targetSpeed = 0.28)) shouldBe null
-        plan(ArenaItem.ANVIL, fight.copy(targetSpeed = 0.28), BotDifficulty.NORMAL) shouldBe ItemAim.NONE
-        plan(ArenaItem.ANVIL, fight.copy(targetSpeed = 0.2)) shouldBe ItemAim.NONE
-        plan(ArenaItem.ANVIL, fight.copy(targetSpeed = 0.28, targetVisible = false, targetDistance = 50.0, heldSeconds = 90)) shouldBe ItemAim.NONE
+        // A Falling Anvil lands where they were half a second before: on a walk (0.22 blocks a tick) or
+        // a run (0.28), but not on someone running and jumping (0.36), unless the bot knows no better.
+        plan(ArenaItem.ANVIL, fight.copy(targetSpeed = 0.36)) shouldBe null
+        plan(ArenaItem.ANVIL, fight.copy(targetSpeed = 0.36), BotDifficulty.NORMAL) shouldBe ItemAim.NONE
+        plan(ArenaItem.ANVIL, fight.copy(targetSpeed = 0.28)) shouldBe ItemAim.NONE
+        plan(ArenaItem.ANVIL, fight.copy(targetSpeed = 0.36, targetVisible = false, targetDistance = 50.0, heldSeconds = 90)) shouldBe ItemAim.NONE
         plan(ArenaItem.ANVIL, calm) shouldBe null
         // A Cage Trap goes where a mine would.
         for (s in listOf(fight, fight.copy(targetDistance = 2.0), fight.copy(fleeing = true, targetDistance = 2.0), fight.copy(targetDistance = 30.0), calm))

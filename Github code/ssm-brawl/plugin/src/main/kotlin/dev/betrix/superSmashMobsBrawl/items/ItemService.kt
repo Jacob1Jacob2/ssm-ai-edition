@@ -124,7 +124,8 @@ object ItemService : KoinComponent {
                     dev.betrix.superSmashMobsBrawl.abilities.MysteryAbility.isBorrowed(held)
             }) return false
             val slot = (0..8).firstOrNull { player.inventory.getItem(it)?.type?.isAir != false } ?: return false
-            player.inventory.setItem(slot, stack(kind).also { it.type = ItemPresentation.material(kind, player) })
+            player.inventory.setItem(slot, stack(kind).also { it.type = ItemPresentation.material(kind, player) }
+                .let { if (kind == ArenaItem.FLYING_CAR) ItemPresentation.steady(it, player) else it })
             if (kind == ArenaItem.SHOTBOW) ensureShotbowAmmo(player)
         }
         player.playSound(player.location, Sound.ENTITY_ITEM_PICKUP, .65f, 1f)
@@ -168,24 +169,34 @@ object ItemService : KoinComponent {
         originalInvisible.putIfAbsent(player.uniqueId, player.isInvisible)
         player.isInvisible = true
         player.disguise?.setInvisible(true)
-        me.libraryaddict.disguise.DisguiseAPI.getDisguise(player)?.let {
-            // (Not setHideHeldItemFromSelf: that empties the held hotbar slot on the player's own
-            // screen, and whoever is invisible still needs to see what they are carrying.)
-            it.watcher.isInvisible = true; it.setHideArmorFromSelf(true)
-        }
+        me.libraryaddict.disguise.DisguiseAPI.getDisguise(player)?.let { it.watcher.isInvisible = true }
         hidden[player.uniqueId] = maxOf(hidden[player.uniqueId] ?: 0, Bukkit.getCurrentTick() + ticks)
+        // To everyone else the fighter is not there at all: body, armour, held item, name.
         Bukkit.getOnlinePlayers().filter { it != player }.forEach { it.hideEntity(plugin, player) }
+        // Their own game still draws what they hold and wear on their own (now bodiless) figure:
+        // see UnseenGear. Not for the two seconds after a respawn, which nobody spends looking at themself.
+        if (ticks >= UNSEEN_FROM_TICKS && !BotManager.isBot(player) && ResourcePackService.hasPack(player)) {
+            unseen += player.uniqueId
+            UnseenGear.wear(player)
+        }
         if(!wasHidden)player.sendMessage(dev.betrix.superSmashMobsBrawl.utils.CombatFeedback.condition(true))
+        if (BotManager.debug) Bukkit.getScheduler().runTaskLater(plugin, Runnable {
+            val others = Bukkit.getOnlinePlayers().filter { it != player && it.world == player.world }
+            plugin.logger.info("[hide] ${player.name} for $ticks ticks: still shown to ${others.filter { it.canSee(player) }.joinToString { it.name }.ifEmpty { "nobody" }} " +
+                "of ${others.size} in the world, sent to ${player.trackedBy.joinToString { it.name }.ifEmpty { "nobody" }}; own gear ${if (player.uniqueId in unseen) "unseen" else "as it is"}")
+        }, 3L)
     }
+    /** Hidden for at least this long, a player's own view of themself is cleared too (see [UnseenGear]). */
+    private const val UNSEEN_FROM_TICKS = 100
+    private val unseen = mutableSetOf<UUID>()
     private fun reveal(player: Player) {
         val wasHidden=hidden.remove(player.uniqueId)!=null
         originalInvisible.remove(player.uniqueId)?.let { player.isInvisible = it }
         if (wasHidden) {
             player.disguise?.setInvisible(false)
-            me.libraryaddict.disguise.DisguiseAPI.getDisguise(player)?.let {
-                it.watcher.isInvisible = false; it.setHideArmorFromSelf(false)
-            }
+            me.libraryaddict.disguise.DisguiseAPI.getDisguise(player)?.let { it.watcher.isInvisible = false }
         }
+        if (unseen.remove(player.uniqueId)) UnseenGear.shed(player)
         Bukkit.getOnlinePlayers().forEach { it.showEntity(plugin, player) }
         if(wasHidden && player.isOnline)player.sendMessage(dev.betrix.superSmashMobsBrawl.utils.CombatFeedback.condition(false))
     }
@@ -218,8 +229,12 @@ object ItemService : KoinComponent {
         val now = Bukkit.getCurrentTick()
         if (now < (cooldowns[player.uniqueId] ?: 0)) return false
         val cost = if (kind == ArenaItem.KNOCKBACK_ROD && !left) 2 else 1
-        if (uses(item) < cost) return false
-        if (!arena.effects.use(player, kind, actualTarget)) return false
+        // (An empty Flying Car is still a click: it says it is out of fuel.)
+        if (uses(item) < cost && kind != ArenaItem.FLYING_CAR) return false
+        if (!arena.effects.use(player, kind, actualTarget)) {
+            if (kind == ArenaItem.FLYING_CAR) cooldowns[player.uniqueId] = now + 12
+            return false
+        }
         // The Flying Car is not used up by getting in or out of it, only by the flying.
         if (kind != ArenaItem.FLYING_CAR) consume(player, cost)
         // (A held button clicks again every 4 ticks: long enough that getting into the car is not
@@ -301,6 +316,34 @@ object ItemService : KoinComponent {
         return true
     }
 
+    /**
+     * Puts [delta] seconds of fuel into (or takes them out of) the Flying Car in [slot], and says
+     * how many are in it now. Unlike a use, running dry does not take the item: an empty car is
+     * kept, to be thrown away or left to fill again.
+     */
+    fun charge(player: Player, slot: Int, delta: Int): Int {
+        val item = player.inventory.getItem(slot) ?: return 0
+        val kind = kind(item)?.takeIf { it == ArenaItem.FLYING_CAR } ?: return 0
+        val before = uses(item)
+        val now = (before + delta).coerceIn(0, kind.uses)
+        if (now != before) player.inventory.setItem(slot, ItemPresentation.steady(stack(kind, now).also { it.type = item.type }, player))
+        return now
+    }
+
+    /** How long each player's Flying Car has stood, in ticks: what its tank fills by (see [CarRules.refuels]). */
+    private val parked = mutableMapOf<UUID, Int>()
+    private fun refuel(player: Player) {
+        val slot = (0..8).firstOrNull { player.inventory.getItem(it)?.let { item -> item.type == ArenaItem.FLYING_CAR.material && kind(item) == ArenaItem.FLYING_CAR } == true }
+            ?: run { parked.remove(player.uniqueId); return }
+        if (ItemEffects.driving(player)) { parked[player.uniqueId] = 0; return }
+        val stood = (parked[player.uniqueId] ?: 0) + 1
+        parked[player.uniqueId] = stood
+        if (CarRules.refuels(stood) && uses(player.inventory.getItem(slot)) < ArenaItem.FLYING_CAR.uses) {
+            val now = charge(player, slot, 1)
+            if (BotManager.debug) plugin.logger.info("[car] ${player.name}'s car has stood ${stood / 20} seconds: $now seconds of fuel")
+        }
+    }
+
     private fun ensureShotbowAmmo(player: Player) {
         if (player.inventory.contains(Material.ARROW)) return
         val slot = (9..35).firstOrNull { player.inventory.getItem(it)?.type?.isAir != false } ?: return
@@ -315,6 +358,7 @@ object ItemService : KoinComponent {
     }
     fun clear(player: Player) {
         ItemEffects.cars[player.uniqueId]?.let { ItemEffects.park(player, it) }
+        parked.remove(player.uniqueId)
         clearShotbowAmmo(player)
         DiamondHelmet.clear(player)
         reveal(player); frozen.remove(player.uniqueId); cooldowns.remove(player.uniqueId); lives.remove(player.uniqueId)
@@ -473,7 +517,13 @@ object ItemService : KoinComponent {
                     lives[player.uniqueId] = life
                     DiamondHelmet.refresh(player)
                     if (frozen(player)) player.allowFlight = false
+                    refuel(player)
                     if (player.uniqueId in hidden && !hidden(player)) reveal(player)
+                    // Whatever came into the hotbar since (an item picked up, a tool rebuilt) is unseen too.
+                    else if (player.uniqueId in unseen) UnseenGear.wear(player)
+                    // And nothing stays unseen after it: an item put away while its owner was hidden
+                    // (a helmet under an Armor Upgrade, a hotbar set aside for a Smash) and brought back later.
+                    else if (arena.tick % 40 == 0L && !BotManager.isBot(player)) UnseenGear.shed(player)
                     // Bots decide for themselves when an item is worth using (BotBrain.considerItem).
                 }
                 arena.step()

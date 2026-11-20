@@ -2352,7 +2352,16 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         // not the item being of no use, and four of them are no reason to throw it away. Nor is a
         // car that cannot be got into from inside a cage.
         if (ItemService.coolingDown(player) || (kind == ArenaItem.FLYING_CAR && ItemService.caged(player))) return
-        val situation = itemSituation(t, map)
+        val charge = ItemService.uses(player.inventory.getItem(slot))
+        // A Flying Car run dry would fill again if it were left to, a second of flying for every
+        // four it stands. A bot has better things to do with its one free hand than wait for that.
+        if (kind == ArenaItem.FLYING_CAR && charge <= 0 && !player.isInsideVehicle) {
+            dbg("the Flying Car is out of fuel: thrown away")
+            player.inventory.setItem(slot, null)
+            carried = null
+            return
+        }
+        val situation = itemSituation(t, map).copy(charge = charge)
         // Just out of the Flying Car (nobody left to chase, or no way to them by car): not straight
         // back into it, unless it is that or a fall.
         if (wasRiding && !situation.riding) carRestUntil = tick + 100

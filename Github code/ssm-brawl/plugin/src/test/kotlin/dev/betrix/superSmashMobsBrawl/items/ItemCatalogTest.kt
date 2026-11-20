@@ -56,7 +56,7 @@ class ItemCatalogTest : StringSpec({
         layout.BACK shouldBe 53
         fun row(rarity: ItemRarity) = layout.inRow(rarity).sortedBy(layout::slotOf).map { it.material.name.lowercase() }
         row(ItemRarity.COMMON) shouldBe listOf("fire_charge", "sugar", "ender_eye", "experience_bottle", "snowball", "cooked_porkchop", "cooked_beef")
-        row(ItemRarity.UNCOMMON) shouldBe listOf("ice", "zombie_spawn_egg", "slime_ball", "flint_and_steel", "slime_block", "pufferfish", "jungle_trapdoor")
+        row(ItemRarity.UNCOMMON) shouldBe listOf("ice", "zombie_spawn_egg", "slime_ball", "flint_and_steel", "slime_block", "pufferfish", "oak_trapdoor")
         row(ItemRarity.RARE) shouldBe listOf("bow", "oak_pressure_plate", "tnt", "gunpowder", "emerald", "paper", "stick")
         row(ItemRarity.EPIC) shouldBe listOf("diamond_axe", "diamond_shovel", "diamond_sword", "diamond_helmet", "poppy", "cake", "golden_apple")
         row(ItemRarity.LEGENDARY) shouldBe listOf("skeleton_skull", "fishing_rod", "golden_pickaxe", "blaze_rod", "mushroom_stew", "golden_hoe", "orange_bundle")
@@ -72,7 +72,13 @@ class ItemCatalogTest : StringSpec({
         listOf(ArenaItem.PERSONAL_ROCKET, ArenaItem.ANVIL, ArenaItem.FLYING_CAR).map { it.rarity }.toSet() shouldBe setOf(ItemRarity.ULTIMATE)
         ArenaItem.CAGE_TRAP.rarity shouldBe ItemRarity.UNCOMMON
         listOf(ArenaItem.PERSONAL_ROCKET, ArenaItem.ANVIL, ArenaItem.CAGE_TRAP, ArenaItem.FLYING_CAR).map { it.usesText() } shouldBe
-            listOf("4 uses", "1 use", "1 use", "30 seconds of fuel")
+            listOf("4 uses", "1 use", "1 use", "40 seconds of fuel")
+        ArenaItem.FLYING_CAR.usesText(0) shouldBe "0 seconds of fuel"
+        // The anvil is the Falling Anvil now, and still answers to its old name.
+        ArenaItem.ANVIL.label shouldBe "Falling Anvil"
+        listOf("anvil", "falling anvil", "Falling_Anvil").map(ArenaItem::parse).toSet() shouldBe setOf(ArenaItem.ANVIL)
+        // The cage is oak.
+        ArenaItem.CAGE_TRAP.material.name shouldBe "OAK_TRAPDOOR"
         ArenaItem.FLYING_CAR.usesText(1) shouldBe "1 second of fuel"
         ArenaItem.DIAMOND_HELMET.usesText() shouldBe "4 hits"
     }
@@ -91,24 +97,61 @@ class ItemCatalogTest : StringSpec({
         near(go(0f, down = true), 0.0, -CarRules.CLIMB, 0.0)
         near(go(0f, up = true, down = true), 0.0, 0.0, 0.0)
         near(go(180f, forward = true, up = true), 0.0, CarRules.CLIMB, -CarRules.FORWARD)
-        // Quick, not silly: between twice and four times a sprint (5.6 blocks a second).
-        (CarRules.FORWARD * 20 in 11.0..22.0) shouldBe true
-        ArenaItem.FLYING_CAR.uses shouldBe 30
+        // Quick, not silly: a fifth faster than the 15 blocks a second it began at, up and down in proportion.
+        CarRules.FORWARD * 20 shouldBe (18.0 plusOrMinus 1e-9)
+        CarRules.CLIMB * 20 shouldBe (12.0 plusOrMinus 1e-9)
+        ArenaItem.FLYING_CAR.uses shouldBe 40
+        CarRules.FUEL shouldBe 40
         // Running someone down hurts less than the rocket's blast, which is less than the Rocket Launcher's.
         (CarRules.RAM_DAMAGE < RocketRules.BLAST_DAMAGE && RocketRules.BLAST_DAMAGE < 90.0 && RocketRules.BLAST_RADIUS < 10.0) shouldBe true
         (RocketRules.CRATER < RocketRules.BLAST_RADIUS) shouldBe true
     }
-    "an anvil is down in 0.8 seconds, on whoever did not already have a run on" {
-        AnvilRules.FALL_TICKS shouldBe 16
+    "the flying car gathers speed, and a parked one fills its tank again" {
+        // From standing to nearly flat out takes a third of a second or so, not one tick and not a second.
+        var speed = 0.0
+        val ticks = generateSequence { speed = CarRules.eased(speed, CarRules.FORWARD); speed }.takeWhile { it < CarRules.FORWARD * 0.9 }.count() + 1
+        (ticks in 5..9) shouldBe true
+        // The first tick is a part of the way, never all of it; and it comes to a dead stop, not a crawl for ever.
+        (CarRules.eased(0.0, CarRules.FORWARD) in 0.1..0.5) shouldBe true
+        var coasting = CarRules.FORWARD
+        repeat(40) { coasting = CarRules.eased(coasting, 0.0) }
+        coasting shouldBe 0.0
+        // Nothing for the first ten seconds it stands; then a second of flying for every four.
+        (0..CarRules.REST_TICKS).none(CarRules::refuels) shouldBe true
+        (0..1200).filter(CarRules::refuels) shouldBe (1..12).map { CarRules.REST_TICKS + it * CarRules.REFUEL_TICKS }.filter { it <= 1200 }
+        CarRules.REST_TICKS shouldBe 200
+        CarRules.REFUEL_TICKS shouldBe 80
+        listOf(0, 200, 279, 280, 600, 200 + 40 * 80).map(CarRules::refuelled) shouldBe listOf(0, 0, 0, 1, 5, 40)
+    }
+    "what an unseen fighter carries is itself in the hotbar and nothing in a hand seen from outside" {
+        val sword = """{"model": {"type": "minecraft:composite", "models": [{"type": "minecraft:model", "model": "minecraft:item/iron_sword"}, {"type": "minecraft:model", "model": "ssm:item/opponent_selected_overlay"}]}}"""
+        val unseen = kotlinx.serialization.json.Json.parseToJsonElement(UnseenGear.unseen(sword)!!) as kotlinx.serialization.json.JsonObject
+        val model = unseen["model"] as kotlinx.serialization.json.JsonObject
+        model["type"].toString() shouldBe "\"minecraft:select\""
+        model["property"].toString() shouldBe "\"minecraft:display_context\""
+        // In either hand, or on the head, of a figure seen from outside: nothing.
+        val case = (model["cases"] as kotlinx.serialization.json.JsonArray).single() as kotlinx.serialization.json.JsonObject
+        (case["when"] as kotlinx.serialization.json.JsonArray).map { it.toString().trim('"') } shouldBe listOf("thirdperson_righthand", "thirdperson_lefthand", "head")
+        case["model"].toString() shouldBe """{"type":"minecraft:empty"}"""
+        // Everywhere else (the hotbar, the inventory, the hand in first person): the sword, without the selection overlay.
+        model["fallback"].toString() shouldBe """{"type":"minecraft:model","model":"minecraft:item/iron_sword"}"""
+        // And putting it on does not dip the hand as changing items would.
+        unseen["hand_animation_on_swap"].toString() shouldBe "false"
+        UnseenGear.unseen("""{"model":{"type":"minecraft:model","model":"minecraft:item/iron_sword"}}""") shouldBe null
+    }
+    "a falling anvil is down in half a second, on whoever is not running and jumping" {
+        AnvilRules.FALL_TICKS shouldBe 10
         AnvilRules.DAMAGE shouldBe 90.0
-        listOf(0, 8, 16, 40).map(AnvilRules::heightAt) shouldBe listOf(AnvilRules.HEIGHT, AnvilRules.HEIGHT / 2, 0.0, 0.0)
+        listOf(0, 5, 10, 40).map(AnvilRules::heightAt) shouldBe listOf(AnvilRules.HEIGHT, AnvilRules.HEIGHT / 2, 0.0, 0.0)
         val seconds = AnvilRules.FALL_TICKS / 20.0
-        // Standing there, or walking (4.3 blocks a second): under it.
+        // Standing there, walking (4.3 blocks a second) or running (5.6): under it.
         AnvilRules.lands(0.0, 0.0, 0.0) shouldBe true
         AnvilRules.lands(4.3 * seconds, 0.0, 0.0) shouldBe true
-        // Already running (5.6), or running and jumping (7.1): out from under it.
-        AnvilRules.lands(5.6 * seconds, 0.0, 0.0) shouldBe false
+        AnvilRules.lands(5.6 * seconds, 0.0, 0.0) shouldBe true
+        // Already running and jumping (7.1): just out from under it. (In its first 0.8 seconds a walk was nearly enough.)
         AnvilRules.lands(0.0, 0.0, 7.1 * seconds) shouldBe false
+        AnvilRules.lands(4.3 * 0.8, 0.0, 0.0) shouldBe true
+        AnvilRules.lands(5.6 * 0.8, 0.0, 0.0) shouldBe false
         // Jumping on the spot does not help; being a floor below does.
         AnvilRules.lands(1.0, 2.5, 1.0) shouldBe true
         AnvilRules.lands(1.0, -4.0, 1.0) shouldBe false

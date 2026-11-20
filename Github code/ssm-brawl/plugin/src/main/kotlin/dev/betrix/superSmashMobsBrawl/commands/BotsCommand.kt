@@ -333,6 +333,27 @@ class BotsCommand : KoinComponent {
             plugin.logger.info("[useitem] caged ${bot.name}")
             return
         }
+        if (item == "unseen") {
+            // What Shadow Walk does to the gear of a player with the pack (a bot has none, so it is done by hand here).
+            val gear = dev.betrix.superSmashMobsBrawl.items.UnseenGear
+            plugin.logger.info("[unseen] ${bot.name} as it is: ${gear.describe(bot)}")
+            gear.wear(bot)
+            plugin.logger.info("[unseen] ${bot.name} unseen:   ${gear.describe(bot)}")
+            gear.wear(bot)
+            gear.shed(bot)
+            plugin.logger.info("[unseen] ${bot.name} seen again: ${gear.describe(bot)}")
+            return
+        }
+        if (item == "drain") {
+            // A Flying Car with a quarter of a tank, left standing: it should begin to fill after ten seconds.
+            for (slot in 0..35) if (items.kind(bot.inventory.getItem(slot)) != null) bot.inventory.setItem(slot, null)
+            val car = dev.betrix.superSmashMobsBrawl.items.ArenaItem.FLYING_CAR
+            val given = items.give(bot, car)
+            val slot = (0..8).firstOrNull { items.kind(bot.inventory.getItem(it)) == car } ?: return
+            val left = items.charge(bot, slot, -(car.uses - 10))
+            plugin.logger.info("[useitem] a Flying Car -> ${bot.name} (given=$given), drained to $left seconds of fuel")
+            return
+        }
         if (item == "trap") {
             // A trap set where the bot stands: it is on it, so it is who gets caged.
             items.arena(bot)?.effects?.cageTrap(bot.location)

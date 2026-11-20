@@ -46,6 +46,8 @@ data class ItemSituation(
     val heldSeconds: Int = 0,
     /** Sitting in something (a Flying Car, as it is the only thing there is to sit in). */
     val riding: Boolean = false,
+    /** What is left in the carried item: its uses, or for a Flying Car its seconds of fuel. */
+    val charge: Int = Int.MAX_VALUE,
 )
 
 /**
@@ -115,13 +117,16 @@ object ItemTactics {
             // The rider goes with the rocket, so it is also the way to someone no route leads to
             // (seen or not: it goes off against whatever is between them, and that is near enough).
             PERSONAL_ROCKET -> at(ItemAim.TARGET, !s.riding && (within(5.0..26.0) || (camped && dist != null && dist <= 26.0)))
-            // An anvil for every opponent, wherever they are. It lands where they stood 0.8 seconds
-            // before: wasted on someone at a run (a walk is not enough to get out from under it),
-            // so careful bots wait for them to slow down.
+            // An anvil for every opponent, wherever they are. It lands where they stood half a
+            // second before: only someone running and jumping is out from under it by then, so
+            // careful bots wait for anything less.
             ANVIL -> at(ItemAim.NONE, dist != null && (!careful || s.targetSpeed < ANVIL_OUTRUN || impatient || camped))
-            // The best thing there is to find: half a minute of going anywhere and running people
-            // down. Got into for a chase, to reach a camper, or to be caught by when falling.
-            FLYING_CAR -> at(ItemAim.NONE, !s.riding && ((s.falling && !s.airJump) || (dist != null && dist > 5.0) || camped))
+            // The best thing there is to find: going anywhere and running people down, for as long
+            // as the tank lasts (and it fills again while the car stands). Got into for a chase or
+            // to reach a camper, with enough in the tank to be worth it; and with anything at all
+            // in it, to be caught by when falling.
+            FLYING_CAR -> at(ItemAim.NONE, !s.riding && s.charge >= 1 &&
+                ((s.falling && !s.airJump) || (s.charge >= CAR_WORTH && ((dist != null && dist > 5.0) || camped))))
 
             // --- finishers: worth most when the opponent is at an edge or already hurt
             KNOCKBACK_ROD -> when {
@@ -156,8 +161,10 @@ object ItemTactics {
     /** Items a bot cannot spend should not block it from picking up others. */
     fun shouldDiscard(failedUses: Int) = failedUses >= 4
 
-    /** Blocks a tick: a walk is 0.22 and does not get out from under an Anvil, a run is 0.28 and does. */
-    const val ANVIL_OUTRUN = 0.24
+    /** Blocks a tick: a walk is 0.22 and a run 0.28, and neither gets out from under a Falling Anvil; a running jump, 0.36, does. */
+    const val ANVIL_OUTRUN = 0.33
+    /** Seconds of fuel a Flying Car wants in it before a bot gets in to chase somebody. */
+    const val CAR_WORTH = 12
 
     /** The Smasher's blast reaches 11 blocks; this close it still takes off a good part of a health bar. */
     const val SMASHER_THROUGH = 8.5

@@ -23,4 +23,20 @@ enum class MatchMode {
         this == TEAM_UPS -> "Team-Ups"
         else -> "FFA"
     }
+
+    /**
+     * Can this mode be picked for a match of [players] fighters? ([random]: the number is rolled
+     * for every match, so nothing is ruled out.) The sandbox has nobody to fight, so none of them
+     * can; two fighters are a duel, which is FFA and nothing else; two teams take four.
+     */
+    fun available(players: Int, random: Boolean = false): Boolean = unavailable(players, random) == null
+
+    /** Why its button in Game Settings is dark, or null when it can be picked. */
+    fun unavailable(players: Int, random: Boolean = false): String? = when {
+        random -> null
+        players <= 1 -> "The sandbox has nobody to fight"
+        this == FFA -> null
+        this == TEAMS -> if (players < 4) "Takes 4 or more players" else null
+        else -> if (players < 3) "Takes 3 or more players" else null
+    }
 }

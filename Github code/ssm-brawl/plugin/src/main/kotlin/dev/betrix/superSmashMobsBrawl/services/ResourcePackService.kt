@@ -300,6 +300,8 @@ object ResourcePackService : KoinComponent {
             """{"model":{"type":"minecraft:model","model":"ssm:item/lava_block"}}""".toByteArray()
 
         SelectionIcons.assets(files)
+        // (After the selected icons: those are made for every item model there is, and these need none.)
+        dev.betrix.superSmashMobsBrawl.items.UnseenGear.assets(files)
 
         // Deterministic zip (fixed timestamps, sorted entries) so the hash only changes with content.
         val out = ByteArrayOutputStream()
