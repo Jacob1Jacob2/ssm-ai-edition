@@ -663,6 +663,35 @@ class BotsCommand : KoinComponent {
         plugin.logger.info("[navkeys] done")
     }
 
+    @Execute(name = "lowblocks")
+    @Description("Debug: what the running match's world has at and under its void level, inside the world border: blocks per height, and the lowest ones with their place and material")
+    fun lowBlocks(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        val bot = BotManager.onlineBots().firstOrNull { it.world.key.value().startsWith("ssmbworld") }
+            ?: run { plugin.logger.info("[lowblocks] no match world"); return }
+        val data = minigameService.getMinigameForPlayer(bot)?.worldManager?.getWorld()?.data
+            ?: run { plugin.logger.info("[lowblocks] no match"); return }
+        val world = bot.world
+        val half = (data.worldBorderSize / 2).toInt()
+        val cx = kotlin.math.floor(data.worldBorderCenterX).toInt()
+        val cz = kotlin.math.floor(data.worldBorderCenterZ).toInt()
+        val top = data.voidLevel.toInt() + 14
+        val perHeight = java.util.TreeMap<Int, Int>()
+        val lowest = ArrayList<Triple<Int, String, String>>()
+        for (x in cx - half..cx + half) for (z in cz - half..cz + half) {
+            if (!world.isChunkLoaded(x shr 4, z shr 4)) world.getChunkAt(x shr 4, z shr 4)
+            for (y in world.minHeight..top) {
+                val type = world.getBlockAt(x, y, z).type
+                if (type.isAir) continue
+                perHeight.merge(y, 1, Int::plus)
+                if (y <= data.voidLevel.toInt() + 2) lowest += Triple(y, "$x $y $z", type.name.lowercase())
+            }
+        }
+        plugin.logger.info("[lowblocks] ${data.id}: void at ${data.voidLevel}, border ${data.worldBorderSize} around $cx $cz, blocks up to y=$top by height: " +
+            perHeight.entries.joinToString(" ") { "${it.key}:${it.value}" }.ifEmpty { "none" })
+        plugin.logger.info("[lowblocks] at or under the void (+2): ${lowest.size}" + lowest.sortedBy { it.first }.take(30).joinToString("") { " | ${it.second} ${it.third}" })
+    }
+
     @Execute(name = "edges")
     @Description("Debug: where the route planner says a kit can go from the block at x y z of the running match, long jumps apart")
     fun edges(@Context sender: CommandSender, @Arg x: Double, @Arg y: Double, @Arg z: Double, @Arg kit: String) {

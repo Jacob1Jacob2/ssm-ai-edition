@@ -1,6 +1,6 @@
 id: "ruins"
 worldBorderSize: 207.0
-voidLevel: 42.0
+voidLevel: 32.0
 maxPlayers: 9
 creators: []
 spawnPoints:

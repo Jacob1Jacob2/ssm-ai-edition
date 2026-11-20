@@ -23,7 +23,8 @@ object BotIdentity {
     fun rankColor(rank: String): NamedTextColor = when (rank.lowercase()) {
         "elite" -> NamedTextColor.AQUA
         "mythic", "mythical" -> NamedTextColor.GREEN
-        "celestial", "mod" -> NamedTextColor.RED
+        "celestial" -> NamedTextColor.RED
+        "mod" -> NamedTextColor.GOLD
         "divine" -> NamedTextColor.LIGHT_PURPLE
         "god" -> NamedTextColor.WHITE
         else -> NamedTextColor.YELLOW

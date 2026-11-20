@@ -89,7 +89,9 @@ object MapScanService : KoinComponent {
     }
 
     /** Lowest non-marker block in one x/z column. */
-    private class Column(val x: Int, val z: Int, val minY: Int, val minMaterial: Material)
+    /** One column of a map: its lowest block of any kind, and its lowest block with a top to stand on, if it has one. */
+    private class Column(val x: Int, val z: Int, val minY: Int, val minMaterial: Material,
+                         val floorY: Int? = null, val floorMaterial: Material = Material.AIR)
 
     /** Marker-coloured wool with nothing on it: either decoration or a marker missing its plate. */
     private class BareWool(val x: Int, val y: Int, val z: Int, val material: Material, val below: Material)
@@ -257,7 +259,7 @@ object MapScanService : KoinComponent {
                             }
                     }
                 withContext(Dispatchers.Default) {
-                    snapshots.forEach { results += scanChunk(it, world.minHeight) }
+                    snapshots.forEach { results += scanChunk(it, world.minHeight, world.maxHeight) }
                 }
             }
 
@@ -293,20 +295,25 @@ object MapScanService : KoinComponent {
         return out
     }
 
-    private fun scanChunk(snap: ChunkSnapshot, worldMinY: Int): ChunkResult {
+    private fun scanChunk(snap: ChunkSnapshot, worldMinY: Int, worldMaxY: Int): ChunkResult {
         val markers = mutableListOf<Marker>()
         val columns = mutableListOf<Column>()
         val bare = mutableListOf<BareWool>()
         val baseX = snap.x shl 4
         val baseZ = snap.z shl 4
+        // Every block of the chunk is looked at, bottom of the world to top. The height a column is
+        // saved with ("the highest block here is at y") is not gone by: on maps that were downloaded
+        // it is wrong for some columns, and a column it said was empty was skipped whole. That is how
+        // the wreckage falling under Aviation's plane was missed and the void came to be above it.
+        val top = worldMaxY - 1
 
         for (lx in 0 until 16) for (lz in 0 until 16) {
-            val top = snap.getHighestBlockYAt(lx, lz)
-            if (top < worldMinY) continue
             val wx = baseX + lx
             val wz = baseZ + lz
             var colMinY = Int.MAX_VALUE
             var colMinMat = Material.AIR
+            var colFloorY = Int.MAX_VALUE
+            var colFloorMat = Material.AIR
             for (y in worldMinY..top) {
                 val type = snap.getBlockType(lx, y, lz)
                 if (type.isAir) continue
@@ -341,8 +348,12 @@ object MapScanService : KoinComponent {
                     colMinY = y
                     colMinMat = type
                 }
+                // What the void has to be under is the lowest thing a fighter can come down on: a
+                // block with a top to it. Not the lava or water some maps have far below (that kills
+                // by itself), and not a vine hanging off the underside of an island.
+                if (type.isSolid && y < colFloorY) { colFloorY = y; colFloorMat = type }
             }
-            if (colMinY != Int.MAX_VALUE) columns += Column(wx, wz, colMinY, colMinMat)
+            if (colMinY != Int.MAX_VALUE) columns += Column(wx, wz, colMinY, colMinMat, colFloorY.takeIf { it != Int.MAX_VALUE }, colFloorMat)
         }
         return ChunkResult(markers, columns, bare)
     }
@@ -377,7 +388,10 @@ object MapScanService : KoinComponent {
         val maxX = solid.maxOf { it.x }
         val minZ = solid.minOf { it.z }
         val maxZ = solid.maxOf { it.z }
-        val lowest = solid.minBy { it.minY }
+        // The void goes under the lowest block a fighter could come down on (see scanChunk). A map
+        // with no such block in reach of its markers falls back on its lowest block of any kind.
+        val floor = solid.filter { it.floorY != null }.minByOrNull { it.floorY!! }
+        val lowest = floor?.let { Column(it.x, it.z, it.floorY!!, it.floorMaterial) } ?: solid.minBy { it.minY }
         val minY = lowest.minY
         val ignoredColumns = chunks.sumOf { it.columns.size } - solid.size
 
