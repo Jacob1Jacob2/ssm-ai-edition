@@ -174,17 +174,11 @@ object BotConversationService : KoinComponent, Listener {
         val answered = told.sortedBy { if (it.world == leader.world) it.location.distanceSquared(leader.location) else Double.MAX_VALUE }
             .any { s.dialogue.teamAnswer(it.uniqueId, leader.uniqueId, order.ask, target, facts, time) }
         if (answered) s.chatAudience = audience
-        // Bots that do not talk do it all the same, and the player is told that they heard.
-        else if (told.isNotEmpty() && order.ask != TeamTalk.Ask.UNCLEAR && !BotManager.isBot(leader)) {
+        // Bots that do not talk do it all the same, and the player is told that they heard. Not when
+        // it is who to go after, though: that is not announced (the player asked for it out of chat),
+        // the team just does it.
+        else if (told.isNotEmpty() && !BotManager.isBot(leader)) TeamTalk.heard(order.ask)?.let { does ->
             val who = if (told.size <= 2) told.joinToString(" and ") { BotManager.displayNameOf(it) } else "Your team"
-            val does = when (order.ask) {
-                TeamTalk.Ask.COME -> "coming to you"
-                TeamTalk.Ask.FOCUS -> present.find { it.uniqueId == target }?.let { "going for ${BotManager.displayNameOf(it)}" } ?: "not sure who you mean"
-                TeamTalk.Ask.RETREAT -> "falling back"
-                TeamTalk.Ask.HOLD -> "holding here"
-                TeamTalk.Ask.PUSH -> "going in"
-                else -> "back to fighting freely"
-            }
             leader.sendMessage(Component.text("Team> ", NamedTextColor.BLUE).append(Component.text("$who ${if (told.size == 1) "is" else "are"} $does.", NamedTextColor.GRAY)))
         }
         if (BotManager.debug) plugin.logger.info("[team] ${BotManager.displayNameOf(leader)} said \"${body.take(80)}\": ${order.ask}" +

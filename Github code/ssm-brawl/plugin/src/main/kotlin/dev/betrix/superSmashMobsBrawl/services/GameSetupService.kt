@@ -67,6 +67,8 @@ object GameSetupService : KoinComponent {
         var teammates: List<String> = emptyList(),
         /** A new number of players (2, 4, 8 or 16) for every match; [players] holds the one rolled for the next. */
         var playersRandom: Boolean = false,
+        /** Two teams: the colour of the player's own side (Blue, Red, or either one, settled as the match is made). */
+        var teamColor: dev.betrix.superSmashMobsBrawl.minigames.TeamColor = dev.betrix.superSmashMobsBrawl.minigames.TeamColor.BLUE,
     ) {
         /** How the fighters stand to each other. */
         var matchMode: MatchMode
@@ -173,6 +175,7 @@ object GameSetupService : KoinComponent {
                     teams = parts.getOrNull(20)?.toBoolean() ?: false,
                     teammates = parts.getOrNull(21)?.split('|')?.filter { it.isNotBlank() } ?: emptyList(),
                     playersRandom = parts.getOrNull(22)?.toBoolean() ?: false,
+                    teamColor = dev.betrix.superSmashMobsBrawl.minigames.TeamColor.restore(parts.getOrNull(23)),
                 )
         }
     }
@@ -188,7 +191,7 @@ object GameSetupService : KoinComponent {
         setups.forEach { (uuid, s) ->
             props.setProperty(
                 uuid.toString(),
-                "${s.difficulty?.name?.lowercase() ?: "mixed"},${s.players},${s.items},${s.crystals},${s.itemIntervalSeconds},${s.crystalIntervalSeconds},${s.allBotsVsPlayer},${s.botsIdle},${s.selectedBotNames.joinToString("|")},${s.enabledCrystalTiers.sortedBy {it.ordinal}.joinToString("|") {it.name}},${s.reverseMap},${s.reverseRandom},${s.reflectMode.name},${s.mapScale.name},${s.enabledItems.sortedBy { it.ordinal }.joinToString("|") { it.id }},${dev.betrix.superSmashMobsBrawl.items.ArenaItem.CATALOG_VERSION},${s.botPersonality.name},${s.botKits.entries.joinToString("|") {"${it.key}:${it.value}"}},${s.lives},${s.teamUps},${s.teams},${s.teammates.joinToString("|")},${s.playersRandom}",
+                "${s.difficulty?.name?.lowercase() ?: "mixed"},${s.players},${s.items},${s.crystals},${s.itemIntervalSeconds},${s.crystalIntervalSeconds},${s.allBotsVsPlayer},${s.botsIdle},${s.selectedBotNames.joinToString("|")},${s.enabledCrystalTiers.sortedBy {it.ordinal}.joinToString("|") {it.name}},${s.reverseMap},${s.reverseRandom},${s.reflectMode.name},${s.mapScale.name},${s.enabledItems.sortedBy { it.ordinal }.joinToString("|") { it.id }},${dev.betrix.superSmashMobsBrawl.items.ArenaItem.CATALOG_VERSION},${s.botPersonality.name},${s.botKits.entries.joinToString("|") {"${it.key}:${it.value}"}},${s.lives},${s.teamUps},${s.teams},${s.teammates.joinToString("|")},${s.playersRandom},${s.teamColor.name}",
             )
         }
         file.parentFile.mkdirs()
@@ -376,9 +379,10 @@ object GameSetupService : KoinComponent {
             modeButton(39, Material.COPPER_SWORD, MatchMode.BOTS_VS_YOU, if (s.playersRandom) "All vs 1" else "${s.bots}v1", "All vs 1",
                 listOf("Every bot is on one team against you"))
             modeButton(40, Material.IRON_SWORD, MatchMode.TEAMS, if (s.playersRandom) "Teams" else "${s.players / 2}v${s.players / 2}", "2v2",
-                listOf("Two even teams, yours is blue", "Pick your team with the head"))
+                listOf("Two even teams", "Pick your team and its color with the head"))
             // Lit while the two teams mode is chosen, the same way as the chest: who is on your team, and their kits.
-            if (s.teams && (s.playersRandom || s.players >= 4)) set(41, menuItem(Material.PLAYER_HEAD, "Your Team", NamedTextColor.BLUE,
+            // (Its name is in the colour picked for the team; purple while that is left to chance.)
+            if (s.teams && (s.playersRandom || s.players >= 4)) set(41, menuItem(Material.PLAYER_HEAD, "Your Team", SetupSelectionMenus.colorOf(s.teamColor),
                 listOf("Choose your teammates", "and the kits they play",
                     if (s.effectiveTeammates.isEmpty()) "Random teammates" else "${s.effectiveTeammates.size}/${s.teammateSlots} chosen — random fills the rest"))) {
                 SetupSelectionMenus.team(player)

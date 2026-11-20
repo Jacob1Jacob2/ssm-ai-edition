@@ -23,15 +23,7 @@ object ItemMenus {
     private enum class Mode(val title: String) { GUIDE("Carl's Item Guide"), CHOOSE("Choose Items"), SPAWN("Spawn Items") }
 
     private fun plain(text: String, color: NamedTextColor) = Component.text(text, color).decoration(TextDecoration.ITALIC, false)
-    private fun wrap(value: String): List<Component> {
-        val lines = mutableListOf<String>(); var line = ""
-        value.split(' ').forEach { word ->
-            if (line.length + word.length > 42) { lines += line; line = "" }
-            line += (if (line.isEmpty()) "" else " ") + word
-        }
-        if (line.isNotEmpty()) lines += line
-        return lines.map { plain(it, GRAY) }
-    }
+    private fun wrap(kind: ArenaItem): List<Component> = kind.descriptionLines.map { plain(it, GRAY) }
 
     /** Carl's Item Guide, or with [select] the Choose Items page of Game Settings. */
     fun open(player: Player, select: Boolean = false) = show(player, if (select) Mode.CHOOSE else Mode.GUIDE)
@@ -63,7 +55,7 @@ object ItemMenus {
                     val enabled = kind in settings.enabledItems
                     val icon = ItemStack.of(ItemPresentation.material(kind, player)).apply { editMeta {
                         it.displayName(plain(kind.label, kind.rarity.color))
-                        it.lore(listOf(plain("${kind.rarity.label} · ${kind.usesText()}", kind.rarity.color)) + wrap(kind.description) + when (mode) {
+                        it.lore(listOf(plain("${kind.rarity.label} · ${kind.usesText()}", kind.rarity.color)) + wrap(kind) + when (mode) {
                             Mode.GUIDE -> emptyList()
                             Mode.CHOOSE -> listOf(plain(if (enabled) "Enabled — click to disable" else "Disabled — click to enable", if (enabled) GREEN else RED))
                             Mode.SPAWN -> listOf(plain("Click to spawn it in front of you", YELLOW))

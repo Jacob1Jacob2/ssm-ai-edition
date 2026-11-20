@@ -330,7 +330,7 @@ class BrawlMinigame(val minigameDef: MinigameDef, val teams: List<MinigameTeam>,
     val sides: Map<UUID, TeamSide> =
         if (settings.teams && allPlayers().size >= 4) TeamSides.assign(host,
             allPlayers().map { TeamSides.Fighter(it.uniqueId, dev.betrix.superSmashMobsBrawl.bots.BotManager.displayNameOf(it)) },
-            settings.teammates, settings.selectedBotNames)
+            settings.teammates, settings.selectedBotNames, hostSide = settings.teamColor.side())
         else emptyMap()
 
     fun sideOf(player: OfflinePlayer): TeamSide? = sides[player.uniqueId]

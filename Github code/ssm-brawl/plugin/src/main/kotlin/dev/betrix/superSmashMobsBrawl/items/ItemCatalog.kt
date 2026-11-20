@@ -54,7 +54,14 @@ object AnvilRules {
      * 0.8 seconds is 4.5 blocks at a run.)
      */
     const val FALL_TICKS = 10
-    const val DAMAGE = 90.0
+    /** Percent of a full health bar (90 at first). */
+    const val DAMAGE = 85.0
+    /**
+     * What it takes out of the map where it lands: a dish as wide as the anvil and two blocks deep
+     * (a ball of this radius, its middle [CRATER_LIFT] over the ground).
+     */
+    const val CRATER = 3.0
+    const val CRATER_LIFT = 1.0
     /**
      * The anvil is drawn five blocks wide and lands on whoever is under it, out to its corners.
      * In the half second it takes, someone walking covers 2.2 blocks and someone running 2.8: both
@@ -98,6 +105,15 @@ object CarRules {
     /** Parked this long, the tank begins to fill again: a second of flying for every [REFUEL_TICKS] it stands. */
     const val REST_TICKS = 200
     const val REFUEL_TICKS = 80
+    /**
+     * The car's own noise, for as long as it is going anywhere: started again every [HUM_TICKS]
+     * (the sound is longer than that, so there is no gap in it) and cut off when the car stops.
+     * Slower than [HUM_SPEED] blocks a tick it is standing.
+     */
+    const val HUM_TICKS = 30
+    const val HUM_SPEED = 0.05
+    /** Is it time to start the car's noise again, [since] ticks after it was last started? (Straight away when it has just got going.) */
+    fun hums(moving: Boolean, humming: Boolean, since: Long): Boolean = moving && (!humming || since >= HUM_TICKS)
 
     /** One tick of gathering speed: from [now] toward [wanted], both in blocks a tick. */
     fun eased(now: Double, wanted: Double): Double = (now + (wanted - now) * EASE).let { if (kotlin.math.abs(it) < 0.002 && wanted == 0.0) 0.0 else it }
@@ -311,11 +327,17 @@ enum class ArenaItem(val label: String, val material: Material, val uses: Int,
     PERSONAL_ROCKET("Personal Rocket", Material.FIREWORK_ROCKET, 4, ItemRarity.ULTIMATE,
         "Right-click to ride a rocket the way you are looking. It explodes on impact; the blast does not hurt you."),
     ANVIL("Falling Anvil", Material.ANVIL, 1, ItemRarity.ULTIMATE,
-        "Right-click to drop an anvil out of the sky onto every opponent. It lands in half a second for 90% health damage."),
+        "Right-click to drop an anvil out of the sky onto every opponent. It lands in half a second for 85% health damage and smashes the ground."),
     FLYING_CAR("Flying Car", Material.MINECART, CarRules.FUEL, ItemRarity.ULTIMATE,
-        "Right-click to get in or out. Forward drives, jump rises, sneak sinks. Ramming hurts. Refuels while parked.");
+        "Right-click: in or out. Ramming hurts.\nW drives, jump rises, sneak sinks.\nFuel regens after 10 seconds parked.");
 
     val id get() = name.lowercase()
+    /**
+     * The description as a tooltip shows it: broken into lines no tooltip is too wide for. (As one
+     * line, the end of a long one ran off the side of the screen: the Flying Car's last sentence,
+     * that it refuels, was never seen.) A line break in the description starts a new line.
+     */
+    val descriptionLines: List<String> get() = wrapped(description)
     val tool get() = this in setOf(DIAMOND_AXE, DIAMOND_SHOVEL, DIAMOND_SWORD)
     /** Something to eat. The foods are one find between them: see [roll]. */
     val food get() = healPercent > 0
@@ -353,6 +375,19 @@ enum class ArenaItem(val label: String, val material: Material, val uses: Int,
     }
 
     companion object {
+        /** The widest a line of a tooltip gets, in characters. */
+        const val TOOLTIP_WIDTH = 42
+        /** [text] in lines of at most [width] characters, broken between words and at every line break in it. */
+        fun wrapped(text: String, width: Int = TOOLTIP_WIDTH): List<String> = text.split('\n').flatMap { paragraph ->
+            val lines = mutableListOf<String>()
+            var line = ""
+            for (word in paragraph.split(' ').filter { it.isNotEmpty() }) {
+                if (line.isNotEmpty() && line.length + 1 + word.length > width) { lines += line; line = "" }
+                line += (if (line.isEmpty()) "" else " ") + word
+            }
+            if (line.isNotEmpty()) lines += line
+            lines
+        }
         const val CATALOG_VERSION = 3
         /** How long Shadow Walk lasts. */
         const val SHADOW_WALK_TICKS = 600

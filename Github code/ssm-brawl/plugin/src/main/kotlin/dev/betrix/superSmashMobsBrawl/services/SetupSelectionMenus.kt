@@ -3,6 +3,7 @@ package dev.betrix.superSmashMobsBrawl.services
 import dev.betrix.superSmashMobsBrawl.bots.BotManager
 import dev.betrix.superSmashMobsBrawl.gui.brawlGui
 import dev.betrix.superSmashMobsBrawl.gui.BrawlGui.Companion.openInventory
+import dev.betrix.superSmashMobsBrawl.minigames.TeamColor
 import dev.betrix.superSmashMobsBrawl.smash.SmashItems
 import dev.betrix.superSmashMobsBrawl.smash.SmashTier
 import io.papermc.paper.datacomponent.DataComponentTypes
@@ -79,6 +80,10 @@ object SetupSelectionMenus {
             }
         })
     }
+
+    /** The colour a choice of team colour is written in: purple, the two mixed, while it is left to chance. */
+    fun colorOf(color:TeamColor)=when(color) {TeamColor.BLUE -> BLUE;TeamColor.RED -> RED;TeamColor.RANDOM -> LIGHT_PURPLE}
+    private fun woolOf(color:TeamColor)=when(color) {TeamColor.BLUE -> Material.BLUE_WOOL;TeamColor.RED -> Material.RED_WOOL;TeamColor.RANDOM -> Material.PURPLE_WOOL}
 
     /** Who to fight: bots picked from the roster by name. */
     fun opponents(player:Player,page:Int=0)=roster(player,page,false)
@@ -166,6 +171,19 @@ object SetupSelectionMenus {
                 if(current>0)roster(player,current-1,team) else GameSetupService.openMenu(player)
             }
             if(team) {
+                // Which of the two colours the player's own side is: one click each for blue, red, and whichever it turns out.
+                val color=s.teamColor
+                set(47,ItemStack.of(woolOf(color)).apply {
+                    editMeta {
+                        it.displayName(Component.text("Team Color: ",YELLOW).append(Component.text(color.label,colorOf(color))).decoration(TextDecoration.ITALIC,false))
+                        it.lore((if(color==TeamColor.RANDOM)listOf("Blue or red, new every match") else emptyList<String>()).plus("Click for ${color.next().label.lowercase()}")
+                            .map {line -> Component.text(line,GRAY).decoration(TextDecoration.ITALIC,false)})
+                    }
+                }) {
+                    s.teamColor=color.next()
+                    player.playSound(player.location,org.bukkit.Sound.BLOCK_NOTE_BLOCK_PLING,0.3f,2f)
+                    GameSetupService.save();LobbyBotService.configure(player);reopen()
+                }
                 set(49,item(Material.PAPER,"${picks.size}/$limit chosen",listOf("Choose up to $limit teammate${if(limit==1)"" else "s"}","Random bots fill the rest of your team")))
                 set(51,item(Material.ENDER_EYE,"Random Teammates",listOf("Takes everybody off your team:","it is filled at random"))) {
                     s.teammates=emptyList();GameSetupService.save();LobbyBotService.configure(player);reopen()

@@ -72,9 +72,10 @@ object ItemService : KoinComponent {
             it.persistentDataContainer.set(KEY, PersistentDataType.STRING, kind.id)
             it.persistentDataContainer.set(USES, PersistentDataType.INTEGER, count)
             it.isUnbreakable = true
+            // (The description in lines: as one, the end of a long one was off the side of the screen.)
             it.lore(listOf(Component.text("${kind.rarity.label} · ${kind.usesText(count)}", kind.rarity.color)
-                .decoration(TextDecoration.ITALIC, false), Component.text(kind.description, NamedTextColor.GRAY)
-                .decoration(TextDecoration.ITALIC, false)))
+                .decoration(TextDecoration.ITALIC, false)) + kind.descriptionLines.map { line ->
+                Component.text(line, NamedTextColor.GRAY).decoration(TextDecoration.ITALIC, false) })
             it.setEnchantmentGlintOverride(kind == ArenaItem.SHOTBOW || kind == ArenaItem.KNOCKBACK_ROD)
         }
         ItemPresentation.plainTooltip(this)

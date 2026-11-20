@@ -131,8 +131,9 @@ object CombatLogService : KoinComponent {
                 }
                 LobbyLeaderboardService.recordKill(killer)
                 dev.betrix.superSmashMobsBrawl.events.BrawlKillEvent(killer, victim).callEvent()
-                if (killer.uniqueId == java.util.UUID.fromString("784cabf9-a8a2-4d39-a381-e716baaf5cbe")) {
-                    val taunt = ClassicChatService.message(killer, Component.text("L ${BotManager.displayNameOf(victim)}"))
+                // "L <name>" for whoever has it on (/auto L turns it off: some clients say it themselves).
+                if (AutoL.on(killer.uniqueId)) {
+                    val taunt = ClassicChatService.message(killer, Component.text(AutoL.line(BotManager.displayNameOf(victim))))
                     game.allPlayers().mapNotNull { it.player }.forEach { it.sendMessage(taunt) }
                 }
             }

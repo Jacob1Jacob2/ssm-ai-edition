@@ -91,6 +91,7 @@ class SuperSmashMobsBrawl : SuspendingJavaPlugin(), KoinComponent {
         HotbarService.setup()
         runCatching { GameSetupService.setup() }.onFailure { logger.warning("Game setups not loaded: ${it.message}") }
         runCatching { dev.betrix.superSmashMobsBrawl.services.KitStatsService.setup() }.onFailure { logger.warning("Kit stats not loaded: ${it.message}") }
+        runCatching { dev.betrix.superSmashMobsBrawl.services.AutoL.setup(dataFolder) }.onFailure { logger.warning("Auto L choices not loaded: ${it.message}") }
         ScoreboardService.setup()
         CombatLogService.setup()
         dev.betrix.superSmashMobsBrawl.smash.SmashService.setup()
@@ -118,6 +119,9 @@ class SuperSmashMobsBrawl : SuspendingJavaPlugin(), KoinComponent {
                     dev.rollczi.litecommands.suggestion.SuggestionResult.of("blue", "green", "yellow", "red"))
                 .argumentSuggestion(String::class.java, dev.rollczi.litecommands.argument.ArgumentKey.of("crystal-mode"),
                     dev.rollczi.litecommands.suggestion.SuggestionResult.of("item"))
+                .argumentSuggestion(String::class.java, dev.rollczi.litecommands.argument.ArgumentKey.of("auto-what"),
+                    dev.rollczi.litecommands.suggestion.SuggestionResult.of("L"))
+                .commands(dev.betrix.superSmashMobsBrawl.commands.AutoCommand())
                 .commands(QueueCommand())
                 .commands(KitCommand())
                 .commands(LeaveCommand())

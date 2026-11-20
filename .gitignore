@@ -43,6 +43,7 @@ advancements/
 /test-server/plugins/super-smash-mobs-brawl/map-choices.properties
 /test-server/plugins/super-smash-mobs-brawl/wins.json
 /test-server/plugins/super-smash-mobs-brawl/kit-stats.properties
+/test-server/plugins/super-smash-mobs-brawl/auto-l.properties
 # worlds of finished matches
 /test-server/world/dimensions/minecraft/ssmbworld_*/
 /public-hosting/oracle-retry/oracle-retry.properties

@@ -123,6 +123,30 @@ class ItemCatalogTest : StringSpec({
         CarRules.REFUEL_TICKS shouldBe 80
         listOf(0, 200, 279, 280, 600, 200 + 40 * 80).map(CarRules::refuelled) shouldBe listOf(0, 0, 0, 1, 5, 40)
     }
+    "a tooltip is in lines that fit on the screen, and the flying car's says its fuel comes back" {
+        ArenaItem.wrapped("one two three", 7) shouldBe listOf("one two", "three")
+        ArenaItem.wrapped("a\nb c") shouldBe listOf("a", "b c")
+        ArenaItem.wrapped("") shouldBe emptyList()
+        for (item in ArenaItem.entries) {
+            // Nothing is lost or reordered, and no line is wider than a tooltip is drawn.
+            item.descriptionLines.joinToString(" ") shouldBe item.description.replace('\n', ' ')
+            item.descriptionLines.all { it.length <= ArenaItem.TOOLTIP_WIDTH } shouldBe true
+        }
+        // (As one line this was 106 characters, and its last sentence was off the side of the screen.)
+        ArenaItem.FLYING_CAR.descriptionLines shouldBe listOf("Right-click: in or out. Ramming hurts.",
+            "W drives, jump rises, sneak sinks.", "Fuel regens after 10 seconds parked.")
+    }
+    "the flying car's noise starts when it gets going, is kept up, and stops with it" {
+        CarRules.hums(moving = true, humming = false, since = 0) shouldBe true
+        CarRules.hums(moving = true, humming = true, since = CarRules.HUM_TICKS - 1L) shouldBe false
+        CarRules.hums(moving = true, humming = true, since = CarRules.HUM_TICKS.toLong()) shouldBe true
+        CarRules.hums(moving = false, humming = true, since = 500) shouldBe false
+        CarRules.hums(moving = false, humming = false, since = 500) shouldBe false
+        // The sound is 1.94 seconds long, played at 1.15 times its speed: it is started again before it has run out.
+        (CarRules.HUM_TICKS < 1.94 / 1.15 * 20) shouldBe true
+        // Going up or down at full tilt is moving too; drifting to a stop is not.
+        (CarRules.CLIMB > CarRules.HUM_SPEED && CarRules.HUM_SPEED > 0.002) shouldBe true
+    }
     "what an unseen fighter carries is itself in the hotbar and nothing in a hand seen from outside" {
         val sword = """{"model": {"type": "minecraft:composite", "models": [{"type": "minecraft:model", "model": "minecraft:item/iron_sword"}, {"type": "minecraft:model", "model": "ssm:item/opponent_selected_overlay"}]}}"""
         val unseen = kotlinx.serialization.json.Json.parseToJsonElement(UnseenGear.unseen(sword)!!) as kotlinx.serialization.json.JsonObject
@@ -141,7 +165,11 @@ class ItemCatalogTest : StringSpec({
     }
     "a falling anvil is down in half a second, on whoever is not running and jumping" {
         AnvilRules.FALL_TICKS shouldBe 10
-        AnvilRules.DAMAGE shouldBe 90.0
+        AnvilRules.DAMAGE shouldBe 85.0
+        ArenaItem.ANVIL.description.contains("85%") shouldBe true
+        // It takes the ground it lands on with it: as wide as itself, and less than a rocket does.
+        (AnvilRules.CRATER * 2 >= AnvilRules.SCALE && AnvilRules.CRATER < RocketRules.CRATER) shouldBe true
+        (AnvilRules.CRATER - AnvilRules.CRATER_LIFT) shouldBe (2.0 plusOrMinus 1e-9)
         listOf(0, 5, 10, 40).map(AnvilRules::heightAt) shouldBe listOf(AnvilRules.HEIGHT, AnvilRules.HEIGHT / 2, 0.0, 0.0)
         val seconds = AnvilRules.FALL_TICKS / 20.0
         // Standing there, walking (4.3 blocks a second) or running (5.6): under it.

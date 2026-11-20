@@ -121,14 +121,18 @@ object ScoreboardService : KoinComponent {
     private fun versus(left: String, leftColor: NamedTextColor, right: String, rightColor: NamedTextColor): Component =
         text(left, leftColor).append(text("v", NamedTextColor.WHITE)).append(text(right, rightColor))
 
-    /** The mode as the sidebar words it, the numbers of a 3v1 or a 2v2 in the colours of their sides. */
-    private fun modeText(mode: MatchMode, players: Int, random: Boolean = false): Component = when {
+    /**
+     * The mode as the sidebar words it, the numbers of a 3v1 or a 2v2 in the colours of their sides:
+     * [own] is the side of the player who set the match up, and comes first.
+     */
+    private fun modeText(mode: MatchMode, players: Int, random: Boolean = false,
+                         own: NamedTextColor = NamedTextColor.BLUE, other: NamedTextColor = NamedTextColor.RED): Component = when {
         // On Random players the sizes of the sides are not known until the match starts.
-        random && mode == MatchMode.TEAMS -> text("Teams", NamedTextColor.BLUE)
+        random && mode == MatchMode.TEAMS -> text("Teams", own)
         random && mode == MatchMode.BOTS_VS_YOU -> text("All", NamedTextColor.RED).append(text(" v ", NamedTextColor.WHITE)).append(text("1", NamedTextColor.GREEN))
         !random && players <= 1 -> text("Sandbox", NamedTextColor.AQUA)
         !random && (players == 2 || mode == MatchMode.BOTS_VS_YOU) -> versus("${players - 1}", NamedTextColor.RED, "1", NamedTextColor.GREEN)
-        !random && mode == MatchMode.TEAMS && players >= 4 -> versus("${players / 2}", NamedTextColor.BLUE, "${players - players / 2}", NamedTextColor.RED)
+        !random && mode == MatchMode.TEAMS && players >= 4 -> versus("${players / 2}", own, "${players - players / 2}", other)
         mode == MatchMode.TEAM_UPS -> text("Team-Ups", NamedTextColor.GOLD)
         else -> text("FFA", NamedTextColor.GREEN)
     }
@@ -198,7 +202,10 @@ object ScoreboardService : KoinComponent {
             val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
             buildString { repeat(8) { append(alphabet.random()) } }
         }
-        val mode = modeText(setup.matchMode, setup.players, setup.playersRandom)
+        // (The team colour picked in Your Team; both numbers purple while it is left to chance.)
+        val picked = setup.teamColor
+        val mode = modeText(setup.matchMode, setup.players, setup.playersRandom, SetupSelectionMenus.colorOf(picked),
+            if (picked == dev.betrix.superSmashMobsBrawl.minigames.TeamColor.RANDOM) SetupSelectionMenus.colorOf(picked) else picked.side().other.color)
         val lives = livesRow("${setup.lives} ${if (setup.lives == 1) "Life" else "Lives"}", setup.lives)
         val lines = listOf(
             Component.empty(),
@@ -287,8 +294,10 @@ object ScoreboardService : KoinComponent {
             setup.crystalIntervalSeconds, GameSetupService.CRYSTAL_INTERVALS, true)
         val difficulty = text("Difficulty: ", NamedTextColor.WHITE).append(text(setup.difficultyName, if(setup.botsIdle)NamedTextColor.GRAY else difficultyColor(setup.difficulty)))
         // By what the match is, not by what was asked for: two teams only where there are sides.
+        val hostSide = game.host?.let { game.sides[it] } ?: dev.betrix.superSmashMobsBrawl.minigames.TeamSide.BLUE
         val mode = text("Mode: ", NamedTextColor.WHITE).append(modeText(
-            if (game.sides.isNotEmpty()) MatchMode.TEAMS else setup.matchMode.takeIf { it != MatchMode.TEAMS } ?: MatchMode.FFA, everyone.size))
+            if (game.sides.isNotEmpty()) MatchMode.TEAMS else setup.matchMode.takeIf { it != MatchMode.TEAMS } ?: MatchMode.FFA, everyone.size,
+            own = hostSide.color, other = hostSide.other.color))
 
         fun entry(row: Row): Component = cell(row, Bukkit.getPlayerExact(row.name)?.let { BotManager.displayNameOf(it) } ?: row.name)
         val all = ArrayList<Line>()

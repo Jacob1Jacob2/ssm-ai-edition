@@ -56,6 +56,32 @@ class TeamSidesTest : StringSpec({
         sides.names(TeamSide.BLUE, all) shouldContainExactlyInAnyOrder listOf("You", "Ana")
     }
 
+    "the host's team is the colour the host picked, and the same fighters either way" {
+        val all = fighters("You", "Ana", "Bo", "Cy", "Di", "Ed", "Flo", "Gus")
+        val blue = TeamSides.assign(all[0].id, all, teammates = listOf("Bo", "Flo"), opponents = listOf("Ana"), random = Random(3))
+        val red = TeamSides.assign(all[0].id, all, teammates = listOf("Bo", "Flo"), opponents = listOf("Ana"), random = Random(3), hostSide = TeamSide.RED)
+        red[all[0].id] shouldBe TeamSide.RED
+        red.names(TeamSide.RED, all) shouldContainExactlyInAnyOrder blue.names(TeamSide.BLUE, all)
+        red.names(TeamSide.BLUE, all) shouldContainExactlyInAnyOrder blue.names(TeamSide.RED, all)
+        red.names(TeamSide.RED, all).containsAll(listOf("You", "Bo", "Flo")) shouldBe true
+        ("Ana" in red.names(TeamSide.BLUE, all)) shouldBe true
+    }
+
+    "the colour button goes blue, red, random and round again, and random is one or the other" {
+        TeamColor.BLUE.next() shouldBe TeamColor.RED
+        TeamColor.RED.next() shouldBe TeamColor.RANDOM
+        TeamColor.RANDOM.next() shouldBe TeamColor.BLUE
+        TeamColor.BLUE.side() shouldBe TeamSide.BLUE
+        TeamColor.RED.side() shouldBe TeamSide.RED
+        (1..40).map { TeamColor.RANDOM.side(Random(it)) }.toSet() shouldBe setOf(TeamSide.BLUE, TeamSide.RED)
+        TeamSide.BLUE.other shouldBe TeamSide.RED
+        TeamSide.RED.other shouldBe TeamSide.BLUE
+        // A save from before there was a choice is Blue, as every team was.
+        TeamColor.restore(null) shouldBe TeamColor.BLUE
+        TeamColor.restore("nonsense") shouldBe TeamColor.BLUE
+        TeamColor.entries.forEach { TeamColor.restore(it.name) shouldBe it }
+    }
+
     "a match of bots only, with nobody hosting, is split evenly as well" {
         val all = fighters("a", "b", "c", "d", "e", "f", "g", "h")
         val sides = TeamSides.assign(null, all, emptyList(), emptyList(), Random(7))

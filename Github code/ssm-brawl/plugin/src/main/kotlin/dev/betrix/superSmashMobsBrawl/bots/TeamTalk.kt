@@ -41,6 +41,20 @@ object TeamTalk {
     data class Standing(val ask: Ask, val leader: UUID, val target: UUID?, val until: Long,
                         val spot: Triple<Double, Double, Double>? = null)
 
+    /**
+     * What a team that does not talk is said to be doing, in "Your team are ...", when it has been
+     * asked [ask]. Null for what goes unsaid: a line nothing could be made of, and who to go
+     * after, which the team does without a word in chat.
+     */
+    fun heard(ask: Ask): String? = when (ask) {
+        Ask.COME -> "coming to you"
+        Ask.RETREAT -> "falling back"
+        Ask.HOLD -> "holding here"
+        Ask.PUSH -> "going in"
+        Ask.FREE -> "back to fighting freely"
+        Ask.FOCUS, Ask.UNCLEAR -> null
+    }
+
     /** How long each thing is kept up when nothing replaces it, in milliseconds. */
     fun lasts(ask: Ask): Long = when (ask) {
         Ask.COME -> 60_000
@@ -60,6 +74,13 @@ object TeamTalk {
         "|\\b(hes|shes|theyre|he is|she is|they are|its|this one is|that one is) (so |really |very |almost )?(low|weak|one shot|one hit|dead|dying|half)\\b")
     private val PUSH = Regex("\\b(go|push|attack|fight|all in|charge|send it|lets go|get (them|em))\\b|^now$")
     private val SMALL_TALK = Regex("\\b(gg|ggs|gf|wp|nice|lol|lmao|sorry|sry|ty|thanks|thx|hi|hey|hello)\\b")
+    /**
+     * What a line that is thrown at an opponent begins with: "L cqsey", "ez cqsey", "rip cqsey
+     * again". It names them, but to them, about what has just happened; it asks nothing of the
+     * team. (Some clients say "L <name>" by themselves after every kill, and each one was taken
+     * for an order to go after whoever had just been killed.)
+     */
+    private val TAUNT = Regex("^(l+|ls|ez+|ezpz|rip|bye+|cya|sit|lol|lmao|lmfao|haha+|xd|bozo|noob|nub|trash|owned|rekt|clapped|destroyed|deleted|outplayed|skill issue|get good|git gud|gg|ggs|gf|imagine)\\b")
 
     /** Words that are parts of some names but in a sentence are just words. */
     private val COMMON = setOf("just", "that", "this", "with", "here", "come", "kill", "they", "them", "your", "youre", "help",
@@ -110,6 +131,7 @@ object TeamTalk {
         val foe = opponents.filter { refers(words, it, opponents) }.singleOrNull()
             ?: opponents.filter { byKit(words, it) }.singleOrNull()
         fun has(pattern: Regex) = pattern.containsMatchIn(text)
+        if (foe != null && has(TAUNT)) return null
         val ask = when {
             has(NOT_FOLLOW) || has(FREE) -> Ask.FREE
             // "get cqsey", "cqsey is low", or just the name: but not "gg cqsey".

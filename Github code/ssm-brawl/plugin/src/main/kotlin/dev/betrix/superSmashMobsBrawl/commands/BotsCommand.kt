@@ -354,6 +354,82 @@ class BotsCommand : KoinComponent {
             plugin.logger.info("[useitem] a Flying Car -> ${bot.name} (given=$given), drained to $left seconds of fuel")
             return
         }
+        if (item == "parked") {
+            // A Flying Car hanging still while its driver looks round, driven the way a player's is
+            // (by the look the server holds for them, set here exactly as a look packet from a
+            // player in a vehicle sets it). What is counted is what the server then tells the
+            // driver's game about the way the minecart faces: first left to itself, then with the
+            // plugin telling it every tick.
+            for (slot in 0..35) if (items.kind(bot.inventory.getItem(slot)) != null) bot.inventory.setItem(slot, null)
+            val car = dev.betrix.superSmashMobsBrawl.items.ArenaItem.FLYING_CAR
+            items.give(bot, car)
+            val slot = (0..8).firstOrNull { items.kind(bot.inventory.getItem(it)) == car } ?: return
+            bot.inventory.heldItemSlot = slot
+            val effects = dev.betrix.superSmashMobsBrawl.items.ItemEffects
+            effects.handDriven += bot.uniqueId
+            val driver = (bot as org.bukkit.craftbukkit.entity.CraftPlayer).handle
+            var driven: dev.betrix.superSmashMobsBrawl.items.ItemEffects.Car? = null
+            var cart: net.minecraft.world.entity.Entity? = null
+            var stood = org.bukkit.util.Vector()
+            var told = 0
+            var waited = 0
+            var tick = 0
+            var look = bot.location.yaw
+            var meddled = 0
+            var wrong = 0
+            val phase = 60
+            org.bukkit.Bukkit.getScheduler().runTaskTimer(plugin, java.util.function.Consumer { task ->
+                val car = driven ?: run {
+                    // Not in yet: an item just used leaves the hand busy for a moment, so it is tried until it takes.
+                    val got = effects.cars[bot.uniqueId] ?: run { bot.inventory.heldItemSlot = slot; items.use(bot); effects.cars[bot.uniqueId] }
+                    if (got == null) {
+                        if (++waited > 80 || !bot.isOnline) {
+                            effects.handDriven -= bot.uniqueId
+                            plugin.logger.info("[cartest] ${bot.name} could not get into a Flying Car here")
+                            task.cancel()
+                        }
+                        return@Consumer
+                    }
+                    driven = got
+                    cart = (got.cart as org.bukkit.craftbukkit.entity.CraftEntity).handle
+                    stood = got.at.clone()
+                    look = bot.location.yaw
+                    effects.explicitTurns = false
+                    dev.betrix.superSmashMobsBrawl.bots.nms.FakeConnection.sniff = { connection, packet ->
+                        if (connection === driver.connection.connection && packet is net.minecraft.network.protocol.game.ClientboundMoveEntityPacket &&
+                            packet.hasRotation() && packet.getEntity(driver.level()) === cart) told++
+                    }
+                    plugin.logger.info("[cartest] ${bot.name} in a Flying Car at %.1f %.1f %.1f after $waited ticks, standing, looking round at 6 degrees a tick".format(stood.x, stood.y, stood.z))
+                    got
+                }
+                val driven = car
+                val gone = effects.cars[bot.uniqueId] !== driven
+                if (tick > 0 && !gone) {
+                    // Is the look still what it was set to a tick ago, and did the car turn to it in the meantime?
+                    if (kotlin.math.abs(net.minecraft.util.Mth.wrapDegrees(bot.location.yaw - look)) > .01f) meddled++
+                    if (kotlin.math.abs(net.minecraft.util.Mth.wrapDegrees(driven.cart.location.yaw - (look - 90f))) > .01f) wrong++
+                }
+                if (tick == phase || tick == phase * 2 || gone) {
+                    plugin.logger.info("[cartest] ${if (tick <= phase) "left to the server" else "told every tick"}: the driver's game was told the minecart had turned $told times in $phase ticks; " +
+                        "cart facing %.0f for a look of %.0f (wants %.0f); wrong on $wrong ticks, look changed by something else on $meddled; the car moved %.2f blocks".format(
+                            driven.cart.location.yaw, look, net.minecraft.util.Mth.wrapDegrees(look - 90f), driven.at.distance(stood)))
+                    told = 0; wrong = 0; meddled = 0
+                    effects.explicitTurns = true
+                }
+                if (tick >= phase * 2 || gone) {
+                    dev.betrix.superSmashMobsBrawl.bots.nms.FakeConnection.sniff = null
+                    effects.explicitTurns = true
+                    effects.handDriven -= bot.uniqueId
+                    if (!gone) items.arena(bot)?.effects?.leaveCar(bot)
+                    task.cancel()
+                    return@Consumer
+                }
+                look = net.minecraft.util.Mth.wrapDegrees(look + 6f)
+                driver.absSnapTo(driver.x, driver.y, driver.z, look, 0f)
+                tick++
+            }, 1L, 1L)
+            return
+        }
         if (item == "trap") {
             // A trap set where the bot stands: it is on it, so it is who gets caged.
             items.arena(bot)?.effects?.cageTrap(bot.location)
@@ -543,7 +619,12 @@ class BotsCommand : KoinComponent {
         for (id in BotManager.standIns) {
             val host = org.bukkit.Bukkit.getPlayer(id) ?: continue
             val game = minigameService.getMinigameForPlayer(host) ?: continue
-            dev.betrix.superSmashMobsBrawl.services.BotConversationService.say(host, text)
+            // ({foe} and {mate} stand for the name of an opponent and of a teammate: a test cannot know them beforehand.)
+            fun someone(same: Boolean) = game.allPlayers().mapNotNull { it.player }
+                .firstOrNull { it != host && (game.sideOf(it) == game.sideOf(host)) == same }?.let { BotManager.displayNameOf(it) } ?: "nobody"
+            val said = text.replace("{foe}", someone(false)).replace("{mate}", someone(true))
+            plugin.logger.info("[team] ${BotManager.displayNameOf(host)} types \"$said\"")
+            dev.betrix.superSmashMobsBrawl.services.BotConversationService.say(host, said)
             // How far its teammates are from it for the next half minute: the proof that they came (or stayed away).
             var left = 15
             object : org.bukkit.scheduler.BukkitRunnable() {
@@ -599,6 +680,8 @@ class BotsCommand : KoinComponent {
             click(4); log("click 8 players -> ${state()}")
             click(40); log("click two teams -> ${state()}"); dump("teams", listOf(4, 39, 40, 41, 43, 45))
             click(41); log("click Your Team -> '${title()}'"); dump("team menu", listOf(0, 1, 2, 45, 47, 49, 51, 53))
+            // The team colour button: blue, red, random, and blue again.
+            repeat(3) { click(47); log("clicked the team colour -> ${s.teamColor}; slot 47: ${describe(47)}") }
             click(0); click(1); log("put two on the team -> '${title()}'; ${state()}"); dump("team menu", listOf(0, 1, 2))
             click(2, right = true); log("right-click a third -> '${title()}'")
             click(1); log("picked the kit in slot 1 -> '${title()}'; ${state()}"); dump("team menu", listOf(0, 1, 2, 3, 49))

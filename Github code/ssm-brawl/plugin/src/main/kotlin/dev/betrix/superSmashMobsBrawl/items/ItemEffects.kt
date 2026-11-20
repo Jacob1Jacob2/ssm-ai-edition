@@ -737,13 +737,15 @@ class ItemEffects(private val arena: ItemArena) {
     /**
      * What five blocks of anvil arriving from the sky looks and sounds like: the clang, a thud under
      * it and a blast over it; iron and ground thrown up, sparks and smoke; a ring of dust running
-     * out across the floor; and lumps of whatever it landed on flung out of the way. All of it for
-     * show: the map is as it was.
+     * out across the floor; and lumps of whatever it landed on flung out of the way. And the ground
+     * it came down on is gone: a dish as wide as the anvil ([AnvilRules.CRATER]).
      */
     private fun anvilLanding(land: Location, dirt: org.bukkit.block.data.BlockData) {
         world.playSound(land,Sound.BLOCK_ANVIL_LAND,3f,.5f)
         world.playSound(land,Sound.ITEM_MACE_SMASH_GROUND_HEAVY,3f,.7f)
         world.playSound(land,Sound.ENTITY_GENERIC_EXPLODE,2f,.6f)
+        arena.destroy(land.clone().add(0.0,AnvilRules.CRATER_LIFT,0.0),AnvilRules.CRATER)
+        if(debug) log("[anvil] crater at %.1f %.1f %.1f: the block it landed on is now ${land.clone().subtract(0.0,.5,0.0).block.type}".format(land.x,land.y,land.z))
         val low=land.clone().add(0.0,.3,0.0)
         world.spawnParticle(Particle.EXPLOSION_EMITTER,land.clone().add(0.0,1.0,0.0),1)
         world.spawnParticle(Particle.BLOCK,low,160,1.6,.4,1.6,.2,Material.ANVIL.createBlockData())
@@ -791,7 +793,7 @@ class ItemEffects(private val arena: ItemArena) {
         val slot=p.inventory.heldItemSlot
         if(ItemService.uses(p.inventory.getItem(slot))<=0) {
             // An empty tank is not the end of the car: it fills again while it stands.
-            dev.betrix.superSmashMobsBrawl.services.EnergyHud.message(p,net.kyori.adventure.text.Component.text("Flying Car: out of fuel",net.kyori.adventure.text.format.NamedTextColor.RED))
+            dev.betrix.superSmashMobsBrawl.services.EnergyHud.message(p,net.kyori.adventure.text.Component.text("Flying Car: out of fuel. It regens while parked",net.kyori.adventure.text.format.NamedTextColor.RED))
             p.playSound(p.location,Sound.BLOCK_DISPENSER_FAIL,.8f,1.2f)
             return false
         }
@@ -808,8 +810,7 @@ class ItemEffects(private val arena: ItemArena) {
         if(!root.addPassenger(cart) || !cart.addPassenger(p)) { park(p,car);return false }
         cars[p.uniqueId]=car
         world.playSound(p.location,Sound.BLOCK_PISTON_EXTEND,.8f,1.4f)
-        world.playSound(p.location,Sound.ENTITY_MINECART_INSIDE,.5f,1.2f)
-        if(debug) log("[car] ${p.name} in, ${ItemService.uses(p.inventory.getItem(slot))} seconds of fuel")
+        if(debug || !dev.betrix.superSmashMobsBrawl.bots.BotManager.isBot(p)) log("[car] ${p.name} in, ${ItemService.uses(p.inventory.getItem(slot))} seconds of fuel")
         arena.loop(Int.MAX_VALUE,finish={ park(p,car) }) { drive(p,car) }
         return true
     }
@@ -839,11 +840,46 @@ class ItemEffects(private val arena: ItemArena) {
         }
         (car.root as org.bukkit.craftbukkit.entity.CraftEntity).handle.setPos(at.x,at.y,at.z)
     }
+    /**
+     * Turns the car to face [yaw] and tells every player who can see it so there and then.
+     *
+     * The server would get round to telling them by itself, but only every third tick, and their
+     * games then take three more to swing the minecart round: a car that trailed a quarter of a
+     * second behind where its driver was looking, in steps. Told every tick, it follows the look.
+     */
+    private fun face(car: Car, yaw: Float) {
+        car.cart.setRotation(yaw,0f)
+        if(!explicitTurns) return
+        val packed=net.minecraft.util.Mth.packDegrees(yaw)
+        if(packed==car.facing) return
+        car.facing=packed
+        val packet=net.minecraft.network.protocol.game.ClientboundMoveEntityPacket.Rot(car.cart.entityId,packed,0.toByte(),false)
+        car.cart.trackedBy.forEach { (it as org.bukkit.craftbukkit.entity.CraftPlayer).handle.connection.send(packet) }
+        car.turnsSent++
+    }
+    /**
+     * The noise of the car, for as long as it is going anywhere. It is played on the driver, so it
+     * goes where the car goes (a sound played at a place is left behind in a second at this
+     * speed, and one played on the minecart is not heard at all: the minecart is silent, or it
+     * would add its own clatter on rails to this).
+     */
+    private fun hum(p: Player, car: Car) {
+        val moving=car.speed.length()>=CarRules.HUM_SPEED
+        if(CarRules.hums(moving,car.humming,arena.tick-car.hummed)) {
+            if(debug && !car.humming) log("[car] ${p.name}'s car is on the move: its noise starts")
+            world.playSound(p,HUM,org.bukkit.SoundCategory.PLAYERS,.6f,1.15f)
+            car.humming=true;car.hummed=arena.tick;car.hums++
+        } else if(!moving && car.humming) {
+            if(debug) log("[car] ${p.name}'s car has stopped: its noise is cut off (started ${car.hums} times, ${CarRules.HUM_TICKS} ticks apart)")
+            car.humming=false;car.hums=0;hush(p)
+        }
+    }
     private fun drive(p: Player, car: Car): Boolean {
         val cart=car.cart
         if(cars[p.uniqueId]!==car || car.parked || p !in arena.players() || !cart.isValid || !car.root.isValid || p.vehicle!=cart || cart.vehicle!=car.root) return false
         if(ItemService.kind(p.inventory.getItem(car.slot))!=ArenaItem.FLYING_CAR) return false
-        val bot=dev.betrix.superSmashMobsBrawl.bots.BotManager.isBot(p)
+        // (A bot can be driven as a player is, by where it looks: how the tests check the path a player's car takes.)
+        val bot=dev.betrix.superSmashMobsBrawl.bots.BotManager.isBot(p) && p.uniqueId !in handDriven
         // The sneak key takes the car down; it must not also be what it is in any other minecart, the way out.
         if(p.isSneaking) p.isSneaking=false
         val keys=if(bot) botKeys(p,car) ?: return false else p.currentInput.let { Keys(p.location.yaw,it.isForward,it.isJump,it.isSneak) }
@@ -851,7 +887,11 @@ class ItemEffects(private val arena: ItemArena) {
         car.speed.x=CarRules.eased(car.speed.x,x);car.speed.y=CarRules.eased(car.speed.y,y);car.speed.z=CarRules.eased(car.speed.z,z)
         carry(car)
         // The car faces the way its driver does, whether it is going anywhere or not.
-        cart.setRotation(keys.yaw-90f,0f)
+        face(car,keys.yaw-90f)
+        hum(p,car)
+        // How far the driver has looked round while the car stood, for the log: what it should have turned by.
+        car.looked?.let { before -> if(car.speed.length()<CarRules.HUM_SPEED) car.turnedStill+=abs(net.minecraft.util.Mth.wrapDegrees(keys.yaw-before)) }
+        car.looked=keys.yaw
         p.fallDistance=0f
         val going=car.speed
         if(going.length()>=CarRules.RAM_SPEED) {
@@ -873,19 +913,21 @@ class ItemEffects(private val arena: ItemArena) {
         if(++car.burnt>=20) {
             car.burnt=0
             val left=ItemService.charge(p,car.slot,-1)
-            if(debug) {
+            // (A player's car leaves a line every five seconds whether or not anything is being
+            // debugged: what the server saw of a drive is the only account of it there is afterwards.)
+            if(debug || !bot && ++car.seconds%5==0) {
                 val at=car.at.toLocation(world)
                 val seat=p.location
-                log("[car] ${p.name} at %.1f %.1f %.1f: %.1f blocks this second (keys: %s%s%s), driver %.2f from the car, cart facing %.0f for a look of %.0f, fuel $left".format(
+                log("[car] ${p.name} at %.1f %.1f %.1f: %.1f blocks since the last line (keys: %s%s%s), driver %.2f from the car, cart facing %.0f for a look of %.0f, looked round %.0f degrees while it stood, %d turns sent to %d who see it, fuel $left".format(
                     at.x,at.y,at.z,car.lastAt?.takeIf { it.world==at.world }?.distance(at) ?: 0.0,
                     if(keys.forward) "forward " else "",if(keys.up) "up " else "",if(keys.down) "down" else "",
-                    hypot(seat.x-at.x,seat.z-at.z),cart.location.yaw,keys.yaw))
-                car.lastAt=at
+                    hypot(seat.x-at.x,seat.z-at.z),cart.location.yaw,keys.yaw,car.turnedStill,car.turnsSent,cart.trackedBy.size))
+                car.lastAt=at;car.turnedStill=0f;car.turnsSent=0
             }
             if(left<=0) {
                 // The tank is dry: the car is gone, the item stays, and fills again while it stands.
                 world.playSound(car.at.toLocation(world),Sound.BLOCK_FIRE_EXTINGUISH,.8f,.7f)
-                dev.betrix.superSmashMobsBrawl.services.EnergyHud.message(p,net.kyori.adventure.text.Component.text("Flying Car: out of fuel",net.kyori.adventure.text.format.NamedTextColor.RED))
+                dev.betrix.superSmashMobsBrawl.services.EnergyHud.message(p,net.kyori.adventure.text.Component.text("Flying Car: out of fuel. It regens while parked",net.kyori.adventure.text.format.NamedTextColor.RED))
                 if(debug) log("[car] ${p.name} out of fuel at %.1f %.1f %.1f".format(car.at.x,car.at.y,car.at.z))
                 return false
             }
@@ -979,23 +1021,45 @@ class ItemEffects(private val arena: ItemArena) {
         var dodgeUntil = 0L
         /** No way to the opponent by car: back to where it got in. */
         var gaveUp = false
+        /** The way the minecart was last said to face, as it goes over the wire (256ths of a turn). */
+        var facing: Byte? = null
+        /** Whether the car's noise is on, and the tick it was last started. */
+        var humming = false
+        var hummed = 0L
+        var hums = 0
+        /** For the log: where the driver looked a tick ago, how far they have looked round while the car stood, and how often the car was turned for those who see it. */
+        var looked: Float? = null
+        var turnedStill = 0f
+        var turnsSent = 0
+        var seconds = 0
     }
     companion object {
         /** Every Flying Car being driven, by its driver; and their minecarts, which nothing may break or empty. */
         val cars = mutableMapOf<UUID, Car>()
         val carts = mutableSetOf<UUID>()
         fun driving(p: Player) = cars.containsKey(p.uniqueId)
+        /** What a Flying Car on the move sounds like: a minecart on rails, a little higher. Two seconds long. */
+        val HUM = Sound.ENTITY_MINECART_RIDING
+        /** The car has stopped, or is gone: so has its noise, for everyone who heard it. */
+        fun hush(p: Player) { if (p.isOnline) p.world.players.forEach { it.stopSound(HUM, org.bukkit.SoundCategory.PLAYERS) } }
+        /** Debug: with this off, players learn which way a car faces only as the server gets round to it (see [face]). */
+        var explicitTurns = true
+        /** Debug: bots whose car goes by where they look and the keys they hold, as a player's does. */
+        val handDriven = mutableSetOf<UUID>()
         /** The car is gone and its driver is where it was. (Safe to call twice.) */
         fun park(p: Player, car: Car) {
             if (car.parked) return
             car.parked = true
             cars.remove(p.uniqueId, car)
             carts.remove(car.cart.uniqueId)
+            handDriven.remove(p.uniqueId)
             if (car.cart.isValid) { car.cart.eject(); car.cart.remove() }
             car.root.remove()
             p.fallDistance = 0f
+            if (car.humming) { car.humming = false; hush(p) }
             if (p.isOnline) p.world.playSound(p.location, Sound.BLOCK_PISTON_CONTRACT, .7f, 1.4f)
-            if (dev.betrix.superSmashMobsBrawl.bots.BotManager.debug) ItemService.plugin.logger.info("[car] ${p.name} out")
+            val bots = dev.betrix.superSmashMobsBrawl.bots.BotManager
+            if (bots.debug || !bots.isBot(p)) ItemService.plugin.logger.info("[car] ${p.name} out")
         }
         val cloneOwners = mutableMapOf<UUID, Player>()
         /** The most lives a fighter can hold, from the menu or from Extra Life. */

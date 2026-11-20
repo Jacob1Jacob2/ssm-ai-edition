@@ -62,6 +62,28 @@ class TeamTalkTest : StringSpec({
         for (line in listOf("gg cqsey", "nice one", "lol", "come on", "wtf", "that was close", "")) read(line) shouldBe null
     }
 
+    "a line thrown at an opponent who has just been killed is not an order to go after them" {
+        // What a client's own "auto L" types after every kill, and the like.
+        for (line in listOf("L cqsey", "l cqsey", "L cqsey again", "ez cqsey", "ezzz cqsey", "rip charlie", "L Charlie_Skirk", "gg cqsey",
+            "lol cqsey", "get good cqsey", "skill issue cqsey", "sit cqsey", "LLLL cqsey")) read(line) shouldBe null
+        // The same names in a line that asks for something still are one.
+        read("get cqsey")!!.ask shouldBe Ask.FOCUS
+        read("cqsey is low")!!.ask shouldBe Ask.FOCUS
+        // A name that begins with an L is a name, and an L in front of it is still an L.
+        val lolo = named(202, "Loloilooo", "Spider")
+        TeamTalk.parse("loloilooo", mates, foes + lolo)!!.let { it.ask shouldBe Ask.FOCUS; it.target shouldBe lolo.id }
+        TeamTalk.parse("lets get loloilooo", mates, foes + lolo)!!.ask shouldBe Ask.FOCUS
+        TeamTalk.parse("L Loloilooo", mates, foes + lolo) shouldBe null
+    }
+
+    "a team that does not talk says what it is doing, but never who it is going for" {
+        TeamTalk.heard(Ask.FOCUS) shouldBe null
+        TeamTalk.heard(Ask.UNCLEAR) shouldBe null
+        TeamTalk.heard(Ask.COME) shouldBe "coming to you"
+        Ask.entries.filter { TeamTalk.heard(it) != null }.toSet() shouldBe setOf(Ask.COME, Ask.RETREAT, Ask.HOLD, Ask.PUSH, Ask.FREE)
+        Ask.entries.mapNotNull(TeamTalk::heard).none { "going for" in it } shouldBe true
+    }
+
     "falling back, holding, going in, never mind" {
         for (line in listOf("run", "fall back", "back up", "get out", "retreat")) ask(line) shouldBe Ask.RETREAT
         for (line in listOf("stay here", "wait here", "hold", "dont move", "wait")) ask(line) shouldBe Ask.HOLD
