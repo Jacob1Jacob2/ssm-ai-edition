@@ -286,24 +286,17 @@ object BotConversationService : KoinComponent, Listener {
 
     private fun teamEvent(game: BrawlMinigame, s: Session, event: TeamUps.Event, facts: List<BotDialogue.Fighter>, time: Long) {
         fun name(id: UUID?) = facts.find { it.id == id }?.name ?: "?"
-        /** Tells the players of the match: the one it is about in the second person. */
-        fun tell(about: UUID, you: String, them: String) = game.allPlayers().mapNotNull { it.player }
-            .filter { it.isOnline && !BotManager.isBot(it) && games.getMinigameForPlayer(it) === game }.forEach { p ->
-                p.sendMessage(Component.text("Game> ", NamedTextColor.BLUE).append(
-                    Component.text(if (p.uniqueId == about) you else them, NamedTextColor.GRAY)))
-                if (p.uniqueId == about) p.playSound(p.location, Sound.BLOCK_BELL_USE, .7f, .6f)
-            }
+        // The game itself says nothing about any of this (it used to: "Game> The bots have called a
+        // truce and are teaming up on you!", with a bell). A lobby of people does not come with a
+        // notice that it has turned on somebody: the player finds out from what the others type,
+        // if they type anything, and from everybody coming for them at once.
         when (event) {
             is TeamUps.Warned -> {
                 s.dialogue.teamWarned(event.bot, event.target, event.reason, facts, time)
-                // A bot that does not talk cannot say what is coming: the game says it for it.
-                if (s.dialogue.personalityOf(event.bot) == BotPersonality.SILENT)
-                    tell(event.target, "The bots are losing patience with you.", "The bots are losing patience with ${name(event.target)}.")
                 if (BotManager.debug) plugin.logger.info("[teamups] ${name(event.bot)} warns ${name(event.target)} (${event.reason.name.lowercase()})")
             }
             is TeamUps.Formed -> {
                 s.dialogue.teamedUp(event.pact, event.declined, facts, time)
-                tell(event.pact.target, "The bots have called a truce and are teaming up on you!", "The bots are teaming up on ${name(event.pact.target)}!")
                 if (BotManager.debug) plugin.logger.info("[teamups] pact on ${name(event.pact.target)} for ${event.pact.reason.name.lowercase()}: " +
                     "${name(event.pact.leader)} leads ${event.pact.members.filter { it != event.pact.leader }.joinToString { name(it) }}" +
                     (if (event.declined.isEmpty()) "" else "; staying out: ${event.declined.joinToString { name(it) }}"))
@@ -315,7 +308,6 @@ object BotConversationService : KoinComponent, Listener {
             }
             is TeamUps.Ended -> {
                 s.dialogue.teamOver(event.pact, event.how, event.turncoat, event.betrayed, facts, time)
-                tell(event.pact.target, "The team-up on you is over.", "The team-up on ${name(event.pact.target)} is over.")
                 if (BotManager.debug) plugin.logger.info("[teamups] pact on ${name(event.pact.target)} over (${event.how.name.lowercase()})" +
                     (if (event.turncoat != null) "; ${name(event.turncoat)} turns on ${name(event.betrayed)}" else ""))
             }
