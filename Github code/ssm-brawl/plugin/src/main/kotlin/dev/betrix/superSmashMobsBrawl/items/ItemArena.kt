@@ -16,7 +16,14 @@ import org.joml.Quaternionf
 import kotlin.math.*
 
 class ItemArena(val game: BrawlMinigame) {
-    val world get() = game.worldManager.getWorld()!!.world
+    /**
+     * The match's world, looked up once. (A hit that wins the match ends it there and then, inside
+     * the hit: the game no longer knows its world, and whatever the item still had to do in that
+     * tick, a sound, the next player in the blast, used to stop on an error.)
+     */
+    val world: World by lazy { game.worldManager.getWorld()!!.world }
+    /** The match is over and its world is on the way out: nothing more is to be done to it. */
+    val over get() = game.worldManager.getWorld() == null
     val terrain get() = SmashService.arena(game)
     val effects = ItemEffects(this)
     var tick = 0L; private set
@@ -42,6 +49,13 @@ class ItemArena(val game: BrawlMinigame) {
         it.teleportDuration = 1; it.interpolationDuration = 1
         it.transformation = org.bukkit.util.Transformation(Vector3f(), Quaternionf(), Vector3f(scale), Quaternionf())
     }
+    /** The nearest place the map itself says there is ground: where an item can lie, someone can stand. */
+    /** Well under anywhere the map says there is to stand: lower than this, someone is on their way out of the world. */
+    val floorY: Double by lazy {
+        ((pickupSlots.map { it.y } + game.worldManager.getWorld()?.data?.spawnPoints.orEmpty().map { it.y }).minOrNull() ?: world.minHeight.toDouble()) - 6.0
+    }
+    fun nearestStand(at: Location): Location? =
+        (pickupSlots + game.worldManager.getWorld()?.data?.spawnPoints.orEmpty().map { Location(world, it.x, it.y, it.z) }).minByOrNull { it.distanceSquared(at) }
     /** Pickups that can be collected right now, for bots deciding whether to fetch one. */
     fun pickupLocations(): List<Location> = drops.filter { !it.expired() && it.age > 10 }.map { it.at }
     /** The same pickups with what each one is, for a bot that is after something in particular. */
@@ -127,8 +141,11 @@ class ItemArena(val game: BrawlMinigame) {
             val capped=min(percent,damageCap / (it.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH)?.value ?: 20.0) * 100.0)
             hit(owner, it, capped * falloff * (if (it == owner) selfScale else 1.0), kb * falloff, at, kind, self)
         }
-        if (destroy) terrain.destroy(at, radius, maxBlocks, itemSound=true,
-            itemSoundVolume=if(kind==ArenaItem.ROCKET_LAUNCHER) 4f else .65f)
+        if (destroy) destroy(at, radius, maxBlocks, if(kind==ArenaItem.ROCKET_LAUNCHER) 4f else .65f)
+    }
+    /** Takes a bite out of the map, unless the blast that would have has just ended the match. */
+    fun destroy(at: Location, radius: Double, maxBlocks: Int = Int.MAX_VALUE, volume: Float = .65f) {
+        if (!over) terrain.destroy(at, radius, maxBlocks, itemSound=true, itemSoundVolume=volume)
     }
     /** A swept collision test prevents fast rockets/volleys from tunnelling through fighters. */
     fun shot(owner: Player, kind: ArenaItem, at: Location = owner.eyeLocation, direction: Vector = owner.eyeLocation.direction,

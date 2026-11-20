@@ -59,6 +59,9 @@ class SpiderLeapPassive(player: Player) :
 
                 isCancelled = true
 
+                // At the wheel of a Flying Car the jump key means up, not a leap.
+                if (dev.betrix.superSmashMobsBrawl.items.ItemEffects.driving(player)) return@ToggleFlightEvent
+
                 // Check if double jump is available
                 if (!canDoubleJump) {
                     player.sendDebugMessage("[Spider Leap] Double jump not available")

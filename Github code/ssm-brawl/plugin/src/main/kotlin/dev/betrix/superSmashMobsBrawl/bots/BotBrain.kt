@@ -109,6 +109,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     private var carriedFails = 0
     private var nextItemTick = 0L
     private var channelUntil = 0L
+    private var wasRiding = false
+    private var carRestUntil = 0L
     /** The stretch of ticks this bot spends standing still, typing a chat message. */
     private var typingFrom = 0L
     private var typingUntil = 0L
@@ -974,6 +976,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         // A shot nobody got round to firing (the fight moved on) is forgotten.
         if (shot?.let { tick - it.born > 20 } == true) shot = null
         considerItem(target?.takeIf { it.isOnline && it.world == player.world }, map)
+        // At the wheel of a Flying Car: the car goes where it is driven (ItemEffects.botKeys), and
+        // nothing the legs or the abilities could do from the seat is of any use.
+        if (player.isInsideVehicle) return releaseInputs()
         if (tick < channelUntil) {
             // Channelling an Extra Life: any movement ends it, so stand still unless attacked.
             if (opponents.any { it.world == player.world && it.location.distanceSquared(player.location) < 36 }) channelUntil = 0
@@ -2327,6 +2332,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             voidBehind = away != null && (2..8 step 2).any { !hasSolidBelow(here.clone().add(away.x * it, 0.0, away.z * it), 12) },
             nearestEnemy = opponents.filter { it.world == here.world }.minOfOrNull { it.location.distance(here) } ?: Double.MAX_VALUE,
             heldSeconds = ((tick - carriedSince) / 20).toInt(),
+            riding = player.isInsideVehicle,
         )
     }
 
@@ -2342,7 +2348,16 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         if (slot == null || kind == null) { carried = null; return }
         if (kind != carried) { carried = kind; carriedSince = tick; carriedFails = 0 }
         if (kind.tool || kind == dev.betrix.superSmashMobsBrawl.items.ArenaItem.DIAMOND_HELMET) return
+        // Between two uses (a rocket has a second between launches), a click does nothing: that is
+        // not the item being of no use, and four of them are no reason to throw it away. Nor is a
+        // car that cannot be got into from inside a cage.
+        if (ItemService.coolingDown(player) || (kind == ArenaItem.FLYING_CAR && ItemService.caged(player))) return
         val situation = itemSituation(t, map)
+        // Just out of the Flying Car (nobody left to chase, or no way to them by car): not straight
+        // back into it, unless it is that or a fall.
+        if (wasRiding && !situation.riding) carRestUntil = tick + 100
+        wasRiding = situation.riding
+        if (kind == ArenaItem.FLYING_CAR && tick < carRestUntil && !(situation.falling && !situation.airJump)) return
         // Against someone no route leads to, a few items are used with more care than a throw in their direction.
         if (t != null && d.smartTargeting && situation.targetUnreachable && !situation.falling && siegeItem(slot, kind, t, situation)) return
         when (val aim = ItemTactics.plan(kind, situation, d) ?: return) {

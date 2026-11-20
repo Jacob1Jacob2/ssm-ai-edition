@@ -280,16 +280,74 @@ class BotsCommand : KoinComponent {
         }
     }
 
-    @Execute(name = "spawnmenu")
-    @Description("Debug: opens the sandbox's Spawn Items chest for a bot for six seconds; logs the Food icon each time its picture changes")
-    fun spawnMenu(@Context sender: CommandSender) {
+    @Execute(name = "itemmenus")
+    @Description("Debug: opens the three item menus for a bot (the guide, Choose Items, the sandbox's Spawn Items), logs what every slot holds, and in Choose Items clicks a rarity block twice and an item twice")
+    fun itemMenus(@Context sender: CommandSender) {
         if (!allowed(sender)) return
         BotManager.debug = true
         val bot = BotManager.onlineBots().firstOrNull() ?: run { plugin.logger.info("[menu] no bot to open it for"); return }
-        dev.betrix.superSmashMobsBrawl.items.ItemMenus.spawner(bot)
-        val food = bot.openInventory.topInventory.contents.indexOfFirst { it?.type in dev.betrix.superSmashMobsBrawl.items.ItemPresentation.foods }
-        plugin.logger.info("[menu] ${bot.name}: Spawn Items open, food icon in slot $food starts as ${bot.openInventory.topInventory.getItem(food.coerceAtLeast(0))?.type}")
-        org.bukkit.Bukkit.getScheduler().runTaskLater(plugin, Runnable { bot.closeInventory(); plugin.logger.info("[menu] ${bot.name}: closed") }, 125L)
+        val plainText = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
+        val setup = dev.betrix.superSmashMobsBrawl.services.GameSetupService.setupOf(bot)
+        val before = setup.enabledItems
+        fun top() = bot.openInventory.topInventory
+        fun describe(slot: Int): String {
+            val item = top().getItem(slot) ?: return "-"
+            val name = item.itemMeta?.displayName()?.let(plainText::serialize) ?: ""
+            val lore = item.itemMeta?.lore()?.joinToString(" / ") { plainText.serialize(it) } ?: ""
+            return "${item.type.name.lowercase()} '$name' [$lore]"
+        }
+        fun click(slot: Int) = org.bukkit.Bukkit.getPluginManager().callEvent(org.bukkit.event.inventory.InventoryClickEvent(
+            bot.openInventory, org.bukkit.event.inventory.InventoryType.SlotType.CONTAINER, slot,
+            org.bukkit.event.inventory.ClickType.LEFT, org.bukkit.event.inventory.InventoryAction.PICKUP_ALL))
+        runCatching {
+            dev.betrix.superSmashMobsBrawl.items.ItemMenus.open(bot)
+            plugin.logger.info("[menu] --- ${plainText.serialize(bot.openInventory.title())}")
+            for (slot in 0 until top().size) plugin.logger.info("[menu] guide slot $slot: ${describe(slot)}")
+            dev.betrix.superSmashMobsBrawl.items.ItemMenus.spawner(bot)
+            plugin.logger.info("[menu] --- ${plainText.serialize(bot.openInventory.title())}: slot 7 ${describe(7)}; slot 52 ${describe(52)}; slot 53 ${describe(53)}")
+            dev.betrix.superSmashMobsBrawl.items.ItemMenus.open(bot, true)
+            plugin.logger.info("[menu] --- ${plainText.serialize(bot.openInventory.title())}: ${setup.enabledItems.size} enabled; slot 0 ${describe(0)}; slot 2 ${describe(2)}")
+            click(0); plugin.logger.info("[menu] clicked the common block: ${setup.enabledItems.size} enabled, commons on: ${setup.enabledItems.count { it.rarity.ordinal == 0 }}; slot 0 ${describe(0)}")
+            click(0); plugin.logger.info("[menu] clicked it again: ${setup.enabledItems.size} enabled, commons on: ${setup.enabledItems.count { it.rarity.ordinal == 0 }}")
+            click(52); plugin.logger.info("[menu] clicked slot 52: ${setup.enabledItems.size} enabled; ${describe(52)}")
+            click(52); plugin.logger.info("[menu] clicked it again: ${setup.enabledItems.size} enabled; ${describe(52)}")
+            click(1); plugin.logger.info("[menu] clicked the glass: ${setup.enabledItems.size} enabled")
+            click(53); plugin.logger.info("[menu] clicked the redstone block: now in '${plainText.serialize(bot.openInventory.title())}'")
+        }.onFailure { plugin.logger.warning("[menu] FAILED: $it") }
+        setup.enabledItems = before
+        dev.betrix.superSmashMobsBrawl.services.GameSetupService.save()
+        bot.closeInventory()
+    }
+
+    @Execute(name = "useitem")
+    @Description("Debug: in a running bots game, puts an arena item in a bot's hand and has it use it there and then (bots decide for themselves with 'bots giveitem'); 'cage' cages the bot outright")
+    fun useItem(@Context sender: CommandSender, @Arg item: String) {
+        if (!allowed(sender)) return
+        BotManager.debug = true
+        val items = dev.betrix.superSmashMobsBrawl.items.ItemService
+        val bot = BotManager.onlineBots().firstOrNull {
+            it.gameMode == org.bukkit.GameMode.SURVIVAL && it.world.name.startsWith("ssmbworld_") && !it.isInsideVehicle
+        } ?: run { plugin.logger.info("[useitem] no bot in a match"); return }
+        if (item == "cage") {
+            items.arena(bot)?.effects?.cage(bot)
+            plugin.logger.info("[useitem] caged ${bot.name}")
+            return
+        }
+        if (item == "trap") {
+            // A trap set where the bot stands: it is on it, so it is who gets caged.
+            items.arena(bot)?.effects?.cageTrap(bot.location)
+            plugin.logger.info("[useitem] a cage trap set under ${bot.name}")
+            return
+        }
+        val kind = dev.betrix.superSmashMobsBrawl.items.ArenaItem.parse(item) ?: run { plugin.logger.info("[useitem] no such item: $item"); return }
+        for (slot in 0..35) if (items.kind(bot.inventory.getItem(slot)) != null) bot.inventory.setItem(slot, null)
+        val given = items.give(bot, kind)
+        val slot = (0..8).firstOrNull { items.kind(bot.inventory.getItem(it)) == kind }
+        if (slot != null) bot.inventory.heldItemSlot = slot
+        val health = bot.health
+        val used = slot != null && items.use(bot, kind == dev.betrix.superSmashMobsBrawl.items.ArenaItem.SMASHER)
+        plugin.logger.info("[useitem] ${kind.label} -> ${bot.name}: given=$given used=$used, health %.1f -> %.1f, hand now ${slot?.let { bot.inventory.getItem(it)?.type } ?: "empty"}, uses left ${slot?.let { items.uses(bot.inventory.getItem(it)) } ?: 0}"
+            .format(health, bot.health))
     }
 
     @Execute(name = "clear")

@@ -57,8 +57,13 @@ object ItemService : KoinComponent {
     fun kind(item: ItemStack?): ArenaItem? = item?.itemMeta?.persistentDataContainer
         ?.get(KEY, PersistentDataType.STRING)?.let(ArenaItem::parse)
     fun uses(item: ItemStack?) = item?.itemMeta?.persistentDataContainer?.get(USES, PersistentDataType.INTEGER) ?: 0
-    fun frozen(player: Player) = (frozen[player.uniqueId] ?: 0) > Bukkit.getCurrentTick()
+    /** No double jump right now: iced, or at the wheel of a Flying Car (where the jump key means up). */
+    fun frozen(player: Player) = (frozen[player.uniqueId] ?: 0) > Bukkit.getCurrentTick() || ItemEffects.driving(player)
     fun hidden(player: Player) = (hidden[player.uniqueId] ?: 0) > Bukkit.getCurrentTick()
+    /** Between two uses of an item: a click now does nothing, and is no sign that the item is of no use. */
+    fun coolingDown(player: Player) = Bukkit.getCurrentTick() < (cooldowns[player.uniqueId] ?: 0)
+    /** Held in a Cage Trap's cage. */
+    fun caged(player: Player) = games.getMinigameForPlayer(player)?.let { arenas[it] }?.effects?.isCaged(player) == true
     fun appleBonus(player: Player) = appleCaps[player.uniqueId] ?: 0.0
 
     fun stack(kind: ArenaItem, count: Int = kind.uses): ItemStack = ItemStack.of(kind.material).apply {
@@ -67,7 +72,7 @@ object ItemService : KoinComponent {
             it.persistentDataContainer.set(KEY, PersistentDataType.STRING, kind.id)
             it.persistentDataContainer.set(USES, PersistentDataType.INTEGER, count)
             it.isUnbreakable = true
-            it.lore(listOf(Component.text("${kind.rarity.label} · $count ${kind.useLabel}", kind.rarity.color)
+            it.lore(listOf(Component.text("${kind.rarity.label} · ${kind.usesText(count)}", kind.rarity.color)
                 .decoration(TextDecoration.ITALIC, false), Component.text(kind.description, NamedTextColor.GRAY)
                 .decoration(TextDecoration.ITALIC, false)))
             it.setEnchantmentGlintOverride(kind == ArenaItem.SHOTBOW || kind == ArenaItem.KNOCKBACK_ROD)
@@ -164,7 +169,9 @@ object ItemService : KoinComponent {
         player.isInvisible = true
         player.disguise?.setInvisible(true)
         me.libraryaddict.disguise.DisguiseAPI.getDisguise(player)?.let {
-            it.watcher.isInvisible = true; it.setHideArmorFromSelf(true); it.setHideHeldItemFromSelf(true)
+            // (Not setHideHeldItemFromSelf: that empties the held hotbar slot on the player's own
+            // screen, and whoever is invisible still needs to see what they are carrying.)
+            it.watcher.isInvisible = true; it.setHideArmorFromSelf(true)
         }
         hidden[player.uniqueId] = maxOf(hidden[player.uniqueId] ?: 0, Bukkit.getCurrentTick() + ticks)
         Bukkit.getOnlinePlayers().filter { it != player }.forEach { it.hideEntity(plugin, player) }
@@ -176,7 +183,7 @@ object ItemService : KoinComponent {
         if (wasHidden) {
             player.disguise?.setInvisible(false)
             me.libraryaddict.disguise.DisguiseAPI.getDisguise(player)?.let {
-                it.watcher.isInvisible = false; it.setHideArmorFromSelf(false); it.setHideHeldItemFromSelf(false)
+                it.watcher.isInvisible = false; it.setHideArmorFromSelf(false)
             }
         }
         Bukkit.getOnlinePlayers().forEach { it.showEntity(plugin, player) }
@@ -213,8 +220,13 @@ object ItemService : KoinComponent {
         val cost = if (kind == ArenaItem.KNOCKBACK_ROD && !left) 2 else 1
         if (uses(item) < cost) return false
         if (!arena.effects.use(player, kind, actualTarget)) return false
-        consume(player, cost)
-        cooldowns[player.uniqueId] = now + when (kind) { ArenaItem.RAIN_STAFF -> 2; ArenaItem.MISSILE_BATTERY -> 2; else -> 8 }
+        // The Flying Car is not used up by getting in or out of it, only by the flying.
+        if (kind != ArenaItem.FLYING_CAR) consume(player, cost)
+        // (A held button clicks again every 4 ticks: long enough that getting into the car is not
+        // getting straight out of it again, and one rocket is not two.)
+        cooldowns[player.uniqueId] = now + when (kind) {
+            ArenaItem.RAIN_STAFF -> 2; ArenaItem.MISSILE_BATTERY -> 2; ArenaItem.FLYING_CAR -> 12; ArenaItem.PERSONAL_ROCKET -> 20; else -> 8
+        }
         return true
     }
     /**
@@ -278,12 +290,13 @@ object ItemService : KoinComponent {
         if (dev.betrix.superSmashMobsBrawl.bots.BotManager.debug) plugin.logger.info("[drop] ${player.name}: ${feel.name.lowercase()}")
     }
 
-    fun consume(player: Player, amount: Int): Boolean {
-        val item = player.inventory.itemInMainHand
+    /** Takes [amount] uses off the item in [slot] (the one in the hand, unless told otherwise); the last use takes the item. */
+    fun consume(player: Player, amount: Int, slot: Int = player.inventory.heldItemSlot): Boolean {
+        val item = player.inventory.getItem(slot) ?: return false
         val kind = kind(item) ?: return false
         val count = uses(item)
         if (count < amount) return false
-        player.inventory.setItemInMainHand(if (count == amount) ItemStack.empty() else stack(kind, count - amount).also { it.type = item.type })
+        player.inventory.setItem(slot, if (count == amount) null else stack(kind, count - amount).also { it.type = item.type })
         if (kind == ArenaItem.SHOTBOW && count == amount) clearShotbowAmmo(player)
         return true
     }
@@ -301,6 +314,7 @@ object ItemService : KoinComponent {
             player.inventory.setItem(slot,null)
     }
     fun clear(player: Player) {
+        ItemEffects.cars[player.uniqueId]?.let { ItemEffects.park(player, it) }
         clearShotbowAmmo(player)
         DiamondHelmet.clear(player)
         reveal(player); frozen.remove(player.uniqueId); cooldowns.remove(player.uniqueId); lives.remove(player.uniqueId)
@@ -413,8 +427,26 @@ object ItemService : KoinComponent {
             isCancelled = false
             itemDrop.remove()
             if (discarded == ArenaItem.SHOTBOW) clearShotbowAmmo(player)
+            // Thrown away from the driving seat: the car goes with it.
+            if (discarded == ArenaItem.FLYING_CAR) ItemEffects.cars[player.uniqueId]?.let { ItemEffects.park(player, it) }
             dropSound(player, discarded.dropFeel)
         }
+        // A Flying Car's minecart is not a minecart: nothing breaks it, it shoves nobody about, and
+        // the sneak key (down, in a car) is not the way out of it. A teleport still is, so that
+        // whoever dies or is moved at the wheel goes where they are sent.
+        event<org.bukkit.event.vehicle.VehicleDamageEvent>(priority = EventPriority.LOWEST) { if (vehicle.uniqueId in ItemEffects.carts) isCancelled = true }
+        event<org.bukkit.event.vehicle.VehicleDestroyEvent>(priority = EventPriority.LOWEST) { if (vehicle.uniqueId in ItemEffects.carts) isCancelled = true }
+        event<org.bukkit.event.vehicle.VehicleEntityCollisionEvent>(priority = EventPriority.LOWEST) {
+            if (vehicle.uniqueId in ItemEffects.carts) { isCancelled = true; isCollisionCancelled = true; isPickupCancelled = true }
+        }
+        fun sneakingOut(who: org.bukkit.entity.Entity) = (who as? Player)?.let { it.isSneaking || (!BotManager.isBot(it) && it.currentInput.isSneak) } == true
+        event<org.bukkit.event.vehicle.VehicleExitEvent>(priority = EventPriority.LOWEST) {
+            if (vehicle.uniqueId in ItemEffects.carts && sneakingOut(exited)) isCancelled = true
+        }
+        event<org.bukkit.event.entity.EntityDismountEvent>(priority = EventPriority.LOWEST) {
+            if (dismounted.uniqueId in ItemEffects.carts && sneakingOut(entity)) isCancelled = true
+        }
+        event<BrawlDeathEvent>(priority = EventPriority.LOWEST) { ItemEffects.cars[player.uniqueId]?.let { ItemEffects.park(player, it) } }
         event<PlayerItemDamageEvent> {
             if (kind(item) != null || item.itemMeta?.persistentDataContainer?.has(abilityKey) == true) isCancelled = true
         }

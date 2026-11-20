@@ -3,6 +3,7 @@ package dev.betrix.superSmashMobsBrawl.items
 import dev.betrix.superSmashMobsBrawl.services.KitService
 import dev.betrix.superSmashMobsBrawl.smash.SmashEffect
 import dev.betrix.superSmashMobsBrawl.abilities.ClassicSummons
+import dev.betrix.superSmashMobsBrawl.extensions.disguise
 import org.bukkit.*
 import org.bukkit.attribute.Attribute
 import org.bukkit.entity.*
@@ -19,6 +20,13 @@ class ItemEffects(private val arena: ItemArena) {
     private val channeling = mutableSetOf<UUID>()
     private val raining = mutableSetOf<UUID>()
     private val rainSoundAt = mutableMapOf<UUID, Int>()
+    /** Who is in a Cage Trap's cage right now. */
+    private val caged = mutableSetOf<UUID>()
+    fun isCaged(p: Player) = p.uniqueId in caged
+    /** The Personal Rocket flight each rider is on: a second rocket lit in mid-flight takes over from the first. */
+    private val rockets = mutableMapOf<UUID, Int>()
+    private val debug get() = dev.betrix.superSmashMobsBrawl.bots.BotManager.debug
+    private fun log(text: String) = ItemService.plugin.logger.info(text)
     private fun maxHealth(p: Player) = p.getAttribute(Attribute.MAX_HEALTH)?.value ?: 20.0
     private fun heal(p: Player, amount: Double) { p.health = (p.health + amount).coerceAtMost(maxHealth(p)) }
     private fun potion(p: Player, type: PotionEffectType, ticks: Int, amplifier: Int = 0) {
@@ -49,7 +57,7 @@ class ItemEffects(private val arena: ItemArena) {
             }
             ArenaItem.HOMING_SNOWBALL -> {
                 world.playSound(p.location, Sound.ENTITY_SNOWBALL_THROW, .7f, 1f)
-                arena.shot(p, kind, homing = true, speed = .95) { at, hit -> hit?.let { arena.hit(p, it, 30.0, 1.2, at, kind) } }
+                arena.shot(p, kind, homing = true, speed = .95) { at, hit -> hit?.let { arena.hit(p, it, ArenaItem.SNOWBALL_DAMAGE, 1.2, at, kind) } }
             }
             ArenaItem.SHOTBOW -> shotbow(p,1.0)
             ArenaItem.PLAYER_GRAPPLE -> return false // Native fishing hook and reel event own this item.
@@ -93,6 +101,11 @@ class ItemEffects(private val arena: ItemArena) {
                 }
             }
             ArenaItem.PROXIMITY_MINE -> thrown(p, kind, 60, waitForGround=true) { at -> mine(p, at, kind) }
+            ArenaItem.CAGE_TRAP -> thrown(p, kind, 60, waitForGround=true) { at -> cageTrap(at) }
+            ArenaItem.PERSONAL_ROCKET -> rocket(p)
+            ArenaItem.ANVIL -> anvils(p)
+            // In if out, out if in: the fuel is used up by the flying, not by the click.
+            ArenaItem.FLYING_CAR -> return car(p)
             ArenaItem.MONSTER_EGG -> thrown(p, kind, 60) { at -> clone(p, at) }
             ArenaItem.CRAFTY_BOMB -> return false // Requires an actual clicked block face.
             ArenaItem.FRAG_GRENADE -> thrown(p, kind, 40) { arena.blast(p, it, 3.0, 30.0, 1.2, kind, true, maxBlocks=7, damageCap=6.0) }
@@ -128,8 +141,8 @@ class ItemEffects(private val arena: ItemArena) {
             ArenaItem.MYSTERY_ABILITY -> return dev.betrix.superSmashMobsBrawl.abilities.MysteryAbility.grant(p)
             ArenaItem.JETPACK -> { p.velocity = p.velocity.setY(.9); p.fallDistance = 0f
                 world.spawnParticle(Particle.LARGE_SMOKE, p.location, 20, .3, .1, .3, .03); world.playSound(p.location, Sound.ENTITY_FIREWORK_ROCKET_LAUNCH, .8f, 1.8f) }
-            ArenaItem.FOOD, ArenaItem.AWESOME_SOUP -> {
-                heal(p,if (kind == ArenaItem.AWESOME_SOUP) maxHealth(p) else maxHealth(p)*.1)
+            ArenaItem.PORKCHOP, ArenaItem.STEAK, ArenaItem.AWESOME_SOUP -> {
+                heal(p,if (kind == ArenaItem.AWESOME_SOUP) maxHealth(p) else maxHealth(p)*kind.healPercent/100.0)
                 if (kind == ArenaItem.AWESOME_SOUP) {
                     hearts(p); world.playSound(p.location,Sound.BLOCK_GRASS_BREAK,2f,1f)
                     potion(p,PotionEffectType.REGENERATION,40)
@@ -173,7 +186,7 @@ class ItemEffects(private val arena: ItemArena) {
                     }
                 }
             }
-            ArenaItem.SHADOW_WALK -> { ItemService.hide(p, 300); world.playSound(p.location,Sound.ENTITY_ENDERMAN_TELEPORT,1f,.7f); world.spawnParticle(Particle.LARGE_SMOKE, p.location, 20, .4, .7, .4, .02) }
+            ArenaItem.SHADOW_WALK -> { ItemService.hide(p, ArenaItem.SHADOW_WALK_TICKS);world.playSound(p.location,Sound.ENTITY_ENDERMAN_TELEPORT,1f,.7f); world.spawnParticle(Particle.LARGE_SMOKE, p.location, 20, .4, .7, .4, .02) }
             ArenaItem.FIRST_AID_KIT -> { heal(p, (maxHealth(p) - p.health) * .15); hearts(p); potion(p, PotionEffectType.REGENERATION, 400) }
             ArenaItem.RAIN_STAFF -> {
                 rain(p)
@@ -500,6 +513,342 @@ class ItemEffects(private val arena: ItemArena) {
         }
         return true
     }
+    // ------------------------------------------------------------------ cage trap
+
+    /** A trapdoor lying on the ground where the throw came to rest. Whoever walks over it is caged: its thrower too. */
+    fun cageTrap(at: Location) {
+        val ground=world.rayTraceBlocks(at.clone().add(0.0,.2,0.0),Vector(0,-1,0),2.0,FluidCollisionMode.NEVER,true)
+            ?: run { if(debug) log("[cage] nothing under the trap at %.1f %.1f %.1f to set it on".format(at.x,at.y,at.z));return }
+        val surface=ground.hitPosition.toLocation(world)
+        val pos=Location(world,floor(surface.x),surface.y,floor(surface.z))
+        val body=world.spawn(pos,BlockDisplay::class.java) { it.block=Material.JUNGLE_TRAPDOOR.createBlockData() }
+        arena.track(body)
+        val trigger=pos.clone().add(.5,0.0,.5)
+        world.playSound(pos,Sound.BLOCK_WOODEN_TRAPDOOR_CLOSE,.8f,1.2f)
+        if(debug) log("[cage] trap set at ${trigger.blockX} ${trigger.blockY} ${trigger.blockZ}")
+        arena.loop(1200,finish={body.remove()}) { age ->
+            if(!body.isValid) return@loop false
+            val caught=if(age<=5) null else arena.players().filter { it.uniqueId !in caged }.filter {
+                val l=it.location
+                CageRules.steppedOn(l.x-trigger.x,l.y-trigger.y,l.z-trigger.z)
+            }.minByOrNull { it.location.distanceSquared(trigger) }
+            if(caught==null) true else { cage(caught);false }
+        }
+    }
+
+    /**
+     * Bars on four sides and a lid, of trapdoors, for [CageRules.HOLD_TICKS]. Whoever is inside
+     * stays inside: the bars are real blocks, and anything that would carry them out (a teleport,
+     * a blast that takes the bars away) puts them back in the middle.
+     */
+    fun cage(victim: Player) {
+        if(!caged.add(victim.uniqueId)) return
+        leaveCar(victim)
+        val cell=victim.location.block
+        val bars=mutableListOf<org.bukkit.block.BlockState>()
+        fun bar(block: org.bukkit.block.Block, shape: (org.bukkit.block.data.type.TrapDoor) -> Unit) {
+            // (Something solid there already is a bar as it is.)
+            if(!block.isPassable || block.type==Material.JUNGLE_TRAPDOOR) return
+            val before=block.state
+            arena.terrain.changeBlock(block,Material.JUNGLE_TRAPDOOR,false)
+            if(block.type!=Material.JUNGLE_TRAPDOOR) return
+            block.setBlockData((Material.JUNGLE_TRAPDOOR.createBlockData() as org.bukkit.block.data.type.TrapDoor).also(shape),false)
+            bars+=before
+        }
+        for((dx,dy,dz) in CageRules.BARS) bar(cell.getRelative(dx,dy,dz)) { door ->
+            // The lid lies flat on top; a side stands open against the cell, on the edge of its block nearest to it.
+            if(dy==2) door.isOpen=false
+            else {
+                door.isOpen=true
+                door.facing=when { dx>0 -> org.bukkit.block.BlockFace.EAST;dx<0 -> org.bukkit.block.BlockFace.WEST
+                    dz>0 -> org.bukkit.block.BlockFace.SOUTH;else -> org.bukkit.block.BlockFace.NORTH }
+            }
+        }
+        // Caught with nothing under the feet (stepping off an edge): a floor as well.
+        cell.getRelative(0,-1,0).takeIf { it.isPassable }?.let { under -> bar(under) { it.isOpen=false;it.half=org.bukkit.block.data.Bisected.Half.TOP } }
+        val middle=Location(world,cell.x+.5,victim.location.y,cell.z+.5)
+        fun hold() {
+            victim.teleport(middle.clone().also { it.yaw=victim.location.yaw;it.pitch=victim.location.pitch })
+            victim.velocity=Vector();victim.fallDistance=0f
+        }
+        hold()
+        world.playSound(middle,Sound.BLOCK_WOODEN_TRAPDOOR_CLOSE,1.4f,.6f)
+        world.playSound(middle,Sound.BLOCK_CHAIN_PLACE,1.2f,.7f)
+        world.spawnParticle(Particle.BLOCK,middle.clone().add(0.0,1.0,0.0),40,.5,.9,.5,.02,Material.JUNGLE_TRAPDOOR.createBlockData())
+        if(debug) log("[cage] ${victim.name} caged at ${cell.x} ${cell.y} ${cell.z} behind ${bars.size} bars: " +
+            bars.joinToString(" ") { b -> val box=b.block.boundingBox
+                "(${b.x-cell.x},${b.y-cell.y},${b.z-cell.z} x%.2f-%.2f y%.2f-%.2f z%.2f-%.2f)".format(box.minX-cell.x,box.maxX-cell.x,box.minY-cell.y,box.maxY-cell.y,box.minZ-cell.z,box.maxZ-cell.z) })
+        arena.loop(CageRules.HOLD_TICKS,finish={
+            caged.remove(victim.uniqueId)
+            bars.forEach { before -> if(before.block.type==Material.JUNGLE_TRAPDOOR) before.update(true,false) }
+            world.playSound(middle,Sound.BLOCK_WOODEN_TRAPDOOR_OPEN,1.2f,.8f)
+            if(debug) log("[cage] ${victim.name} out of the cage, %.2f blocks from its middle".format(if(victim.world==world) victim.location.distance(middle) else -1.0))
+        }) {
+            if(victim !in arena.players()) false else {
+                val l=victim.location
+                if(abs(l.x-middle.x)>.46 || abs(l.z-middle.z)>.46 || l.y<cell.y-.3 || l.y>cell.y+.8) hold()
+                true
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ personal rocket
+
+    /** Where the rocket goes: where its rider looks. (A bot looks where it is going: at the nearest opponent.) */
+    private fun heading(p: Player, left: Double): Vector? {
+        if(dev.betrix.superSmashMobsBrawl.bots.BotManager.isBot(p)) {
+            val body=p.location.add(0.0,.9,0.0)
+            // Not after someone who is on their way out of the world (under the map, with nothing
+            // under them), nor after someone the rocket will not last as far as: either is a ride
+            // out of the world too.
+            fun onTheMap(e: Player)=e.location.y>=arena.floorY ||
+                world.rayTraceBlocks(e.location.add(0.0,.3,0.0),Vector(0,-1,0),3.0,FluidCollisionMode.NEVER,true)!=null
+            val prey=arena.enemies(p).filterNot(ItemService::hidden).filter { onTheMap(it) && it.location.distance(body)<=left+RocketRules.BLAST_RADIUS-2 }
+                .minByOrNull { it.location.distanceSquared(body) }
+            if(prey==null) {
+                // Nobody left to ride it at: back over somewhere to stand, and let go of it there.
+                val stand=arena.nearestStand(body) ?: return p.eyeLocation.direction
+                val back=stand.clone().add(0.0,2.5,0.0).toVector().subtract(body.toVector())
+                return if(hypot(back.x,back.z)<2.5 && back.y> -4.0 && back.y<2.0) null else back.normalize()
+            }
+            val gap=prey.location.add(0.0,.9,0.0).toVector().subtract(body.toVector()).takeIf { it.lengthSquared()>.01 } ?: return p.eyeLocation.direction
+            val straight=gap.clone().normalize()
+            // Something solid right in the way, and too far from them for the blast to reach: up and over it,
+            // not into it. (Straight at a wall or the floor, the rocket would go off in its rider's own face.)
+            val blocked=gap.length()>RocketRules.BLAST_RADIUS-2 &&
+                world.rayTraceBlocks(body,straight,min(gap.length(),RocketRules.SPEED+2.5),FluidCollisionMode.NEVER,true)!=null
+            return if(blocked) Vector(straight.x*.55,.85,straight.z*.55).normalize() else straight
+        }
+        return p.eyeLocation.direction
+    }
+
+    /**
+     * The rider is the rocket: carried the way they look for as long as it burns, steering as they
+     * go, and it goes off against the first thing in the way. The blast is not the rider's problem.
+     */
+    private fun rocket(p: Player) {
+        val flight=(rockets[p.uniqueId] ?: 0)+1
+        rockets[p.uniqueId]=flight
+        leaveCar(p)
+        world.playSound(p.location,Sound.ENTITY_FIREWORK_ROCKET_LAUNCH,1.6f,.8f)
+        var hit=false;var stalled=0;var last=p.location;var flown=0.0
+        arena.loop(RocketRules.BURN_TICKS,finish={
+            if(rockets[p.uniqueId]==flight) {
+                rockets.remove(p.uniqueId)
+                // Burnt out with nothing in the way: a pop, and whatever speed is left.
+                if(!hit && p in arena.players()) {
+                    world.playSound(p.location,Sound.ENTITY_FIREWORK_ROCKET_BLAST,1f,1.2f)
+                    world.spawnParticle(Particle.FIREWORK,p.location.add(0.0,.9,0.0),40,.3,.3,.3,.12)
+                    if(debug) log("[rocket] ${p.name} burnt out or let go after %.1f blocks with nothing in the way, at %.1f %.1f %.1f".format(flown,p.location.x,p.location.y,p.location.z))
+                }
+            }
+        }) { age ->
+            if(rockets[p.uniqueId]!=flight || p !in arena.players()) return@loop false
+            val dir=heading(p,(RocketRules.BURN_TICKS-age)*RocketRules.SPEED) ?: return@loop false
+            val here=p.location
+            val body=here.clone().add(0.0,.9,0.0).toVector()
+            val reach=RocketRules.SPEED+.5
+            flown+=here.distance(last)
+            // In the way this tick: an opponent, something solid ahead of the body or the head, or the ground dived into.
+            val struck=arena.enemies(p).mapNotNull { e ->
+                val box=(e.disguise?.boundingBox ?: e.boundingBox).clone().expand(.6)
+                if(box.contains(body)) e to body.clone() else box.rayTrace(body,dir,reach)?.let { e to it.hitPosition }
+            }.minByOrNull { it.second.distanceSquared(body) }
+            val wall=listOf(.9,1.6).mapNotNull { world.rayTraceBlocks(here.clone().add(0.0,it,0.0),dir,reach,FluidCollisionMode.NEVER,true)?.hitPosition }
+                .minByOrNull { it.distanceSquared(body) }
+            val dived=age>=2 && dir.y< -.25 && (p as Entity).isOnGround
+            if(age>=3 && here.distanceSquared(last)<.09) stalled++ else stalled=0
+            last=here
+            val impact=struck?.second ?: wall ?: here.toVector().takeIf { dived } ?: body.takeIf { stalled>=3 }
+            if(impact!=null) {
+                hit=true
+                if(debug) log("[rocket] ${p.name} hit ${struck?.first?.name ?: "the map"} after %.1f blocks, $age ticks".format(flown))
+                rocketBlast(p,impact.toLocation(world),dir)
+                false
+            } else {
+                p.velocity=dir.clone().multiply(RocketRules.SPEED);p.fallDistance=0f
+                world.spawnParticle(Particle.FIREWORK,here.clone().add(0.0,.6,0.0),3,.1,.1,.1,.03)
+                world.spawnParticle(Particle.FLAME,here.clone().add(0.0,.4,0.0),2,.08,.08,.08,.01)
+                true
+            }
+        }
+    }
+    private fun rocketBlast(p: Player, at: Location, dir: Vector) {
+        val before=arena.enemies(p).associateWith { it.health }
+        arena.blast(p,at,RocketRules.BLAST_RADIUS,RocketRules.BLAST_DAMAGE,RocketRules.BLAST_KNOCKBACK,ArenaItem.PERSONAL_ROCKET,destroy=false)
+        arena.destroy(at,RocketRules.CRATER)
+        fieryBurst(at,RocketRules.BLAST_RADIUS*.6)
+        world.spawnParticle(Particle.FIREWORK,at,150,.6,.6,.6,.3)
+        world.playSound(at,Sound.ENTITY_FIREWORK_ROCKET_LARGE_BLAST,3f,.8f)
+        world.playSound(at,Sound.ENTITY_FIREWORK_ROCKET_TWINKLE,2f,1f)
+        // Thrown back off whatever it was, unhurt.
+        val health=p.health
+        p.velocity=dir.clone().multiply(-.45).setY(.5);p.fallDistance=0f
+        if(debug) log("[rocket] blast at ${at.blockX} ${at.blockY} ${at.blockZ}: rider health %.1f -> %.1f, hurt ".format(health,p.health) +
+            before.filter { (e,was) -> e.health<was || e !in arena.players() }.keys.joinToString { it.name }.ifEmpty { "nobody" })
+    }
+
+    // ------------------------------------------------------------------ anvil
+
+    /** One anvil out of the sky for every opponent, on to where each of them is right now. Never for the user's own team. */
+    private fun anvils(p: Player) {
+        val struck=mutableSetOf<UUID>()
+        val targets=arena.enemies(p)
+        // With nobody to drop one on (the sandbox), one comes down where the player is looking, to show what it does.
+        val spots=if(targets.isEmpty()) listOf(aim(p)) else targets.map { it.location }
+        world.playSound(p.location,Sound.BLOCK_ANVIL_PLACE,1f,.6f)
+        if(debug) log("[anvil] ${p.name} calls ${spots.size} down, on ${targets.joinToString { it.name }.ifEmpty { "nobody: where they are looking" }}")
+        spots.forEach { anvil(p,it,struck) }
+    }
+    private fun anvil(owner: Player, over: Location, struck: MutableSet<UUID>) {
+        // It comes down on the ground under them; on someone high in the air, on them.
+        val ground=world.rayTraceBlocks(over.clone().add(0.0,.5,0.0),Vector(0,-1,0),6.5,FluidCollisionMode.NEVER,true)?.hitPosition
+        val land=Location(world,over.x,ground?.y ?: over.y,over.z)
+        val size=AnvilRules.SCALE.toFloat()
+        val body=world.spawn(land.clone().add(0.0,AnvilRules.HEIGHT,0.0),BlockDisplay::class.java) {
+            it.block=Material.ANVIL.createBlockData();it.teleportDuration=1;it.interpolationDuration=1
+            it.transformation=org.bukkit.util.Transformation(org.joml.Vector3f(-size/2,0f,-size/2),org.joml.Quaternionf(),org.joml.Vector3f(size),org.joml.Quaternionf())
+        }
+        arena.track(body)
+        world.playSound(land,Sound.ENTITY_WITHER_SHOOT,.9f,.5f)
+        arena.loop(AnvilRules.FALL_TICKS+14,finish={body.remove()}) { age ->
+            if(age<=AnvilRules.FALL_TICKS) body.teleport(land.clone().add(0.0,AnvilRules.heightAt(age),0.0))
+            if(age==AnvilRules.FALL_TICKS) {
+                world.playSound(land,Sound.BLOCK_ANVIL_LAND,2.5f,.6f)
+                world.spawnParticle(Particle.BLOCK,land,140,1.2,.3,1.2,.1,Material.ANVIL.createBlockData())
+                world.spawnParticle(Particle.EXPLOSION,land.clone().add(0.0,.5,0.0),4,.9,.2,.9,0.0)
+                val under=arena.enemies(owner).filter { val l=it.location;AnvilRules.lands(l.x-land.x,l.y-land.y,l.z-land.z) }
+                if(debug) log("[anvil] landed at %.1f %.1f %.1f: under it ".format(land.x,land.y,land.z) +
+                    under.joinToString { "${it.name} (%.1f blocks off)".format(hypot(it.location.x-land.x,it.location.z-land.z)) }.ifEmpty { "nobody" } +
+                    arena.enemies(owner).minOfOrNull { hypot(it.location.x-land.x,it.location.z-land.z) }?.let { ", nearest opponent %.1f blocks off".format(it) }.orEmpty())
+                under.filter { struck.add(it.uniqueId) }.forEach { arena.hit(owner,it,AnvilRules.DAMAGE,1.0,land,ArenaItem.ANVIL) }
+            }
+            true
+        }
+    }
+
+    // ------------------------------------------------------------------ flying car
+
+    /** Which way a driver has the car going this tick. */
+    private data class Keys(val yaw: Float, val forward: Boolean, val up: Boolean, val down: Boolean)
+
+    /** The Flying Car's one button: in if out, out if in. The item stays in the hand either way. */
+    private fun car(p: Player): Boolean {
+        if(driving(p)) { leaveCar(p);return true }
+        if(p.isInsideVehicle || p.uniqueId in caged) return false
+        val slot=p.inventory.heldItemSlot
+        val home=p.location.takeIf { !it.clone().subtract(0.0,.3,0.0).block.isPassable }
+        val cart=world.spawn(p.location,org.bukkit.entity.minecart.RideableMinecart::class.java) {
+            it.setGravity(false);it.isInvulnerable=true;it.isPersistent=false;it.isSlowWhenEmpty=false
+            // Not held to a minecart's eight blocks a second, nor slowed for being off its rails.
+            it.maxSpeed=2.0;it.flyingVelocityMod=Vector(1,1,1);it.derailedVelocityMod=Vector(1,1,1)
+        }
+        arena.track(cart);carts+=cart.uniqueId
+        if(!cart.addPassenger(p)) { carts-=cart.uniqueId;cart.remove();return false }
+        val car=Car(cart,slot,home)
+        cars[p.uniqueId]=car
+        world.playSound(p.location,Sound.BLOCK_PISTON_EXTEND,.8f,1.4f)
+        world.playSound(p.location,Sound.ENTITY_MINECART_INSIDE,.5f,1.2f)
+        if(debug) log("[car] ${p.name} in, ${ItemService.uses(p.inventory.getItem(slot))} seconds of fuel")
+        arena.loop(Int.MAX_VALUE,finish={ park(p,car) }) { drive(p,car) }
+        return true
+    }
+    private fun drive(p: Player, car: Car): Boolean {
+        val cart=car.cart
+        if(cars[p.uniqueId]!==car || car.parked || p !in arena.players() || !cart.isValid || p.vehicle!=cart) return false
+        if(ItemService.kind(p.inventory.getItem(car.slot))!=ArenaItem.FLYING_CAR) return false
+        val bot=dev.betrix.superSmashMobsBrawl.bots.BotManager.isBot(p)
+        // The sneak key takes the car down; it must not also be what it is in any other minecart, the way out.
+        if(p.isSneaking) p.isSneaking=false
+        val keys=if(bot) botKeys(p,car) ?: return false else p.currentInput.let { Keys(p.location.yaw,it.isForward,it.isJump,it.isSneak) }
+        val (x,y,z)=CarRules.velocity(keys.yaw,keys.forward,keys.up,keys.down)
+        val going=Vector(x,y,z)
+        cart.velocity=going
+        p.fallDistance=0f
+        if(going.length()>=CarRules.RAM_SPEED) {
+            val box=cart.boundingBox.clone().expand(.45,.7,.45)
+            arena.enemies(p).filter { (it.disguise?.boundingBox ?: it.boundingBox).overlaps(box) }.forEach { e ->
+                if(arena.tick-(car.rammed[e.uniqueId] ?: -1000L)<CarRules.RAM_EVERY_TICKS) return@forEach
+                car.rammed[e.uniqueId]=arena.tick
+                if(arena.hit(p,e,CarRules.RAM_DAMAGE,CarRules.RAM_KNOCKBACK,cart.location,ArenaItem.FLYING_CAR)) {
+                    world.playSound(cart.location,Sound.ENTITY_IRON_GOLEM_ATTACK,1f,1.3f)
+                    world.spawnParticle(Particle.CRIT,e.location.add(0.0,1.0,0.0),20,.3,.4,.3,.3)
+                    if(debug) log("[car] ${p.name} rammed ${e.name}")
+                    // A bot does not sit on top of whoever it hit: on through, and round again.
+                    if(bot) { car.passYaw=keys.yaw;car.passUntil=arena.tick+12 }
+                }
+            }
+            if(arena.tick%2==0L) world.spawnParticle(Particle.CLOUD,cart.location.add(0.0,.2,0.0),1,.1,.05,.1,.01)
+        }
+        // A second in the car is a second off the fuel bar, moving or not.
+        if(++car.burnt>=20) {
+            car.burnt=0
+            if(debug) {
+                val at=cart.location
+                log("[car] ${p.name} at %.1f %.1f %.1f: %.1f blocks this second (keys: %s%s%s), fuel ${ItemService.uses(p.inventory.getItem(car.slot))-1}".format(
+                    at.x,at.y,at.z,car.lastAt?.takeIf { it.world==at.world }?.distance(at) ?: 0.0,
+                    if(keys.forward) "forward " else "",if(keys.up) "up " else "",if(keys.down) "down" else ""))
+                car.lastAt=at
+            }
+            if(!ItemService.consume(p,1,car.slot)) return false
+            if(ItemService.kind(p.inventory.getItem(car.slot))!=ArenaItem.FLYING_CAR) {
+                world.playSound(cart.location,Sound.BLOCK_FIRE_EXTINGUISH,.8f,.7f)
+                if(debug) log("[car] ${p.name} out of fuel at %.1f %.1f %.1f".format(cart.location.x,cart.location.y,cart.location.z))
+                return false
+            }
+        }
+        return true
+    }
+    /**
+     * A bot at the wheel: at the nearest opponent for as long as the fuel will still get it back,
+     * then to where it got in (or the nearest place there is to stand), and out. Null to get out now.
+     */
+    private fun botKeys(p: Player, car: Car): Keys? {
+        val at=car.cart.location
+        val moved=car.lastSpot?.takeIf { it.world==at.world }?.distance(at) ?: 1.0
+        car.lastSpot=at.clone()
+        if(arena.tick<car.passUntil) return Keys(car.passYaw,true,false,false)
+        // Round whatever it ran into: sideways and up for a moment, then at them again.
+        if(arena.tick<car.dodgeUntil) return Keys(car.dodgeYaw,true,true,false)
+        val fuel=ItemService.uses(p.inventory.getItem(car.slot))
+        val stand=car.home ?: arena.nearestStand(at)
+        val wayBack=stand?.let { hypot(it.x-at.x,it.z-at.z)/(CarRules.FORWARD*20)+abs(it.y-at.y)/(CarRules.CLIMB*20)+2.0 } ?: 0.0
+        val prey=arena.enemies(p).filterNot(ItemService::hidden).minByOrNull { it.location.distanceSquared(at) }
+        val low=fuel<=wayBack
+        val hunting=prey!=null && !low && !car.gaveUp
+        val goal=(if(hunting) prey!!.location.add(0.0,.3,0.0) else stand) ?: return null
+        val dx=goal.x-at.x;val dz=goal.z-at.z;val dy=goal.y-at.y
+        val flat=hypot(dx,dz)
+        if(!hunting && flat<1.2 && dy> -1.6 && dy<.8) {
+            if(debug) log("[car] ${p.name} (bot) back where it can stand, getting out with $fuel seconds left" +
+                if(car.gaveUp) ": no way to ${prey?.name} by car" else if(prey==null) ": nobody to chase" else "")
+            // Too little left to go anywhere and come back: the rest is not worth keeping the hand full for.
+            if(low && prey!=null) p.inventory.setItem(car.slot,null)
+            return null
+        }
+        val keys=Keys(Math.toDegrees(atan2(-dx,dz)).toFloat(),flat>.5,dy>.35,dy< -.35)
+        // Pressing on and getting nowhere: something is in the way.
+        if((keys.forward || keys.up || keys.down) && moved<CarRules.STUCK_STEP) car.stuck++ else car.stuck=0
+        if(moved>.3 && ++car.rolling>=60) { car.rolling=0;car.dodges=0 }
+        if(car.stuck>=CarRules.STUCK_TICKS) {
+            car.stuck=0
+            if(++car.dodges>CarRules.DODGES) {
+                // Round it every way there is and still not there: they are somewhere a car does not go.
+                if(!hunting) { if(debug) log("[car] ${p.name} (bot) cannot get back to where it got in: out here");return null }
+                car.gaveUp=true;car.dodges=0
+                if(debug) log("[car] ${p.name} (bot) gives up on ${prey?.name}: going back")
+            } else {
+                car.dodgeYaw=keys.yaw+(if(car.dodges%2==1) 90f else -90f)
+                car.dodgeUntil=arena.tick+CarRules.DODGE_TICKS
+                if(debug) log("[car] ${p.name} (bot) blocked at %.1f %.1f %.1f: going round (${car.dodges})".format(at.x,at.y,at.z))
+                return Keys(car.dodgeYaw,true,true,false)
+            }
+        }
+        return keys
+    }
+    /** Out of the car, if in one. The item stays, with whatever fuel is left in it. */
+    fun leaveCar(p: Player) { cars[p.uniqueId]?.let { park(p,it) } }
+
     private fun extraLifeFailed(p:Player, reason:String) {
         val message=net.kyori.adventure.text.Component.text("Extra Life failed! $reason", net.kyori.adventure.text.format.NamedTextColor.RED)
         p.sendMessage(net.kyori.adventure.text.Component.text("Item> ", net.kyori.adventure.text.format.NamedTextColor.BLUE).append(message))
@@ -512,7 +861,43 @@ class ItemEffects(private val arena: ItemArena) {
         world.spawnParticle(Particle.FLAME,at,180,radius*.4,.8,radius*.4,.12)
         world.spawnParticle(Particle.LARGE_SMOKE,at,100,radius*.4,.8,radius*.4,.1)
     }
+    /** A Flying Car in the air: its minecart, the hotbar slot its item (and so its fuel) is in, and where its driver got in. */
+    class Car(val cart: Minecart, val slot: Int, val home: Location?) {
+        /** Ticks flown since the last whole second came off the fuel. */
+        var burnt = 0
+        var parked = false
+        /** A bot's run on through whoever it has just rammed: the heading it holds, and until when. */
+        var passYaw = 0f
+        var passUntil = 0L
+        val rammed = mutableMapOf<UUID, Long>()
+        /** Where it was a second ago, for the log. */
+        var lastAt: Location? = null
+        /** A bot's way round something solid: where the car was a tick ago, how long it has pressed on without moving, and its swerve. */
+        var lastSpot: Location? = null
+        var stuck = 0
+        var rolling = 0
+        var dodges = 0
+        var dodgeYaw = 0f
+        var dodgeUntil = 0L
+        /** No way to the opponent by car: back to where it got in. */
+        var gaveUp = false
+    }
     companion object {
+        /** Every Flying Car being driven, by its driver; and their minecarts, which nothing may break or empty. */
+        val cars = mutableMapOf<UUID, Car>()
+        val carts = mutableSetOf<UUID>()
+        fun driving(p: Player) = cars.containsKey(p.uniqueId)
+        /** The car is gone and its driver is where it was. (Safe to call twice.) */
+        fun park(p: Player, car: Car) {
+            if (car.parked) return
+            car.parked = true
+            cars.remove(p.uniqueId, car)
+            carts.remove(car.cart.uniqueId)
+            if (car.cart.isValid) { car.cart.eject(); car.cart.remove() }
+            p.fallDistance = 0f
+            if (p.isOnline) p.world.playSound(p.location, Sound.BLOCK_PISTON_CONTRACT, .7f, 1.4f)
+            if (dev.betrix.superSmashMobsBrawl.bots.BotManager.debug) ItemService.plugin.logger.info("[car] ${p.name} out")
+        }
         val cloneOwners = mutableMapOf<UUID, Player>()
         /** The most lives a fighter can hold, from the menu or from Extra Life. */
         const val MAX_LIVES = 8

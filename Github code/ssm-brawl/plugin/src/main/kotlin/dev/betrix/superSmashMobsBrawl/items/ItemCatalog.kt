@@ -4,13 +4,109 @@ import org.bukkit.Material
 import net.kyori.adventure.text.format.NamedTextColor
 import kotlin.random.Random
 
-enum class ItemRarity(val label: String, val weight: Int, val color: NamedTextColor) {
-    COMMON("Common", 35, NamedTextColor.WHITE),
-    UNCOMMON("Uncommon", 25, NamedTextColor.GREEN),
-    RARE("Rare", 20, NamedTextColor.BLUE),
-    EPIC("Epic", 12, NamedTextColor.DARK_PURPLE),
-    LEGENDARY("Legendary", 6, NamedTextColor.GOLD),
-    ULTIMATE("Ultimate", 2, NamedTextColor.AQUA);
+/** [block] and [pane] are the two things that open a rarity's row in the item menus: the block says which rarity it is. */
+enum class ItemRarity(val label: String, val weight: Int, val color: NamedTextColor, val block: Material, val pane: Material) {
+    COMMON("Common", 35, NamedTextColor.WHITE, Material.WHITE_CONCRETE, Material.WHITE_STAINED_GLASS_PANE),
+    UNCOMMON("Uncommon", 25, NamedTextColor.GREEN, Material.LIME_CONCRETE, Material.LIME_STAINED_GLASS_PANE),
+    RARE("Rare", 20, NamedTextColor.BLUE, Material.BLUE_CONCRETE, Material.BLUE_STAINED_GLASS_PANE),
+    EPIC("Epic", 12, NamedTextColor.DARK_PURPLE, Material.MAGENTA_CONCRETE, Material.MAGENTA_STAINED_GLASS_PANE),
+    LEGENDARY("Legendary", 6, NamedTextColor.GOLD, Material.YELLOW_CONCRETE, Material.YELLOW_STAINED_GLASS_PANE),
+    ULTIMATE("Ultimate", 2, NamedTextColor.AQUA, Material.LIGHT_BLUE_CONCRETE, Material.LIGHT_BLUE_STAINED_GLASS_PANE);
+}
+
+/**
+ * Where everything sits in the item menus (Carl's Item Guide, Choose Items, the sandbox's Spawn
+ * Items): one row for each rarity, opened by that rarity's block and a pane of glass, then its
+ * items in the order they are listed in [ArenaItem]. The last slot of the chest goes back.
+ */
+object ItemMenuLayout {
+    const val SIZE = 54
+    const val BACK = 53
+    /** Seven to a row, after the block and the glass. */
+    const val PER_ROW = 7
+    fun blockSlot(rarity: ItemRarity) = rarity.ordinal * 9
+    fun paneSlot(rarity: ItemRarity) = rarity.ordinal * 9 + 1
+    fun inRow(rarity: ItemRarity) = ArenaItem.entries.filter { it.rarity == rarity }
+    fun slotOf(item: ArenaItem) = item.rarity.ordinal * 9 + 2 + inRow(item.rarity).indexOf(item)
+}
+
+/**
+ * The flight of a Personal Rocket and the fall of an Anvil, with nothing of the server in them.
+ */
+object RocketRules {
+    /** Blocks a tick while the rocket burns: about four times a sprint, the pace of a firework under an elytra pulled in a little for the size of the maps. */
+    const val SPEED = 1.25
+    /** How long it burns if it meets nothing. */
+    const val BURN_TICKS = 40
+    /** The blast where it hits: "pretty big", and smaller than the Rocket Launcher's ten blocks and 90%. */
+    const val BLAST_RADIUS = 7.0
+    const val BLAST_DAMAGE = 60.0
+    const val BLAST_KNOCKBACK = 2.4
+    /** How much of the map it takes with it: less than it hurts, so the rider is not left over a hole. */
+    const val CRATER = 5.0
+}
+
+object AnvilRules {
+    /** High enough to come out of the sky on any map, and down in 0.8 seconds all the same. */
+    const val HEIGHT = 30.0
+    const val FALL_TICKS = 16
+    const val DAMAGE = 90.0
+    /**
+     * The anvil is drawn five blocks wide and lands on whoever is under it, out to its corners.
+     * In the 0.8 seconds it takes, someone walking covers 3.4 blocks and is still under it;
+     * someone already at a run covers 4.5 and is not, and a running jump is clear by a block.
+     */
+    const val SCALE = 5.0
+    const val REACH = 3.5
+    /** How high the anvil is over where it will land, [age] ticks after it appeared. */
+    fun heightAt(age: Int) = HEIGHT * (1.0 - (age.coerceIn(0, FALL_TICKS) / FALL_TICKS.toDouble()))
+    /**
+     * Does an anvil land on someone ([dx], [dy], [dz]) from where it comes down? Whoever is under it
+     * or at its edge, on the ground there or in the air over it: it came down through them.
+     */
+    fun lands(dx: Double, dy: Double, dz: Double) = dx * dx + dz * dz <= REACH * REACH && dy > -1.5 && dy < 6.0
+}
+
+/** The Flying Car: what the three keys do to it, and what its fuel is. */
+object CarRules {
+    /** Blocks a tick: forward at close to three times a sprint, up and down a little slower. */
+    const val FORWARD = 0.75
+    const val CLIMB = 0.5
+    /** Percent of a health bar for whoever it runs into, and no more often than once a second each. */
+    const val RAM_DAMAGE = 25.0
+    const val RAM_KNOCKBACK = 1.6
+    const val RAM_EVERY_TICKS = 20
+    /** The car is only dangerous while it is moving. */
+    const val RAM_SPEED = 0.2
+    /**
+     * A bot at the wheel with something solid in the way: half a second of pressing on and moving
+     * less than [STUCK_STEP] a tick, and it swerves up and to one side for [DODGE_TICKS], the other
+     * side the next time; after [DODGES] of those it gives the chase up.
+     */
+    const val STUCK_STEP = 0.08
+    const val STUCK_TICKS = 10
+    const val DODGE_TICKS = 14
+    const val DODGES = 4
+
+    /**
+     * Where the car goes this tick: forward the way the driver faces ([yaw], in degrees, level: looking
+     * up or down does not climb), up for the jump key, down for the sneak key, and nowhere with no key held.
+     */
+    fun velocity(yaw: Float, forward: Boolean, up: Boolean, down: Boolean): Triple<Double, Double, Double> {
+        val angle = Math.toRadians(yaw.toDouble())
+        val along = if (forward) FORWARD else 0.0
+        val rise = (if (up) CLIMB else 0.0) - (if (down) CLIMB else 0.0)
+        return Triple(-kotlin.math.sin(angle) * along, rise, kotlin.math.cos(angle) * along)
+    }
+}
+
+/** The Cage Trap: where the bars of the cage go around whoever stepped on it. */
+object CageRules {
+    const val HOLD_TICKS = 160
+    /** Each bar as (dx, dy, dz) from the block the feet are in: four sides, two high, and a lid. */
+    val BARS: List<Triple<Int, Int, Int>> = listOf(1 to 0, -1 to 0, 0 to 1, 0 to -1).flatMap { (x, z) -> listOf(Triple(x, 0, z), Triple(x, 1, z)) } + Triple(0, 2, 0)
+    /** Is someone at ([dx], [dy], [dz]) from the middle of the trapdoor standing on it? */
+    fun steppedOn(dx: Double, dy: Double, dz: Double) = kotlin.math.abs(dx) <= 0.8 && kotlin.math.abs(dz) <= 0.8 && dy > -0.6 && dy < 1.2
 }
 
 /**
@@ -83,8 +179,62 @@ enum class DropFeel {
     }
 }
 
+/**
+ * Every item, a rarity at a time and in the order its row of the item menus shows it
+ * ([ItemMenuLayout]): seven to a rarity at most, six in the last one, which shares its row with
+ * the way back.
+ */
 enum class ArenaItem(val label: String, val material: Material, val uses: Int,
                      val rarity: ItemRarity, val description: String) {
+    // --- common
+    FRAG_GRENADE("Frag Grenade", Material.FIRE_CHARGE, 1, ItemRarity.COMMON,
+        "Right-click to throw. Explodes after two seconds for up to three hearts and breaks a few nearby blocks."),
+    SPEED("Speed", Material.SUGAR, 1, ItemRarity.COMMON,
+        "Right-click for 30 seconds of Speed II."),
+    INSTANT_TELEPORTER("Instant Teleporter", Material.ENDER_EYE, 1, ItemRarity.COMMON,
+        "Right-click to teleport up to 22 blocks in the direction you are looking. Stops before solid blocks."),
+    CLOUD_IN_A_BOTTLE("Cloud in a Bottle", Material.EXPERIENCE_BOTTLE, 1, ItemRarity.COMMON,
+        "Right-click to create a 5x5 platform beneath you. It begins fading after five seconds."),
+    HOMING_SNOWBALL("Homing Snowball of Doom", Material.SNOWBALL, 1, ItemRarity.COMMON,
+        "Right-click to throw a tracking snowball. Deals 15% health damage on contact."),
+    PORKCHOP("Porkchop", Material.COOKED_PORKCHOP, 1, ItemRarity.COMMON,
+        "Right-click to immediately restore 11% of your maximum health."),
+    STEAK("Steak", Material.COOKED_BEEF, 1, ItemRarity.COMMON,
+        "Right-click to immediately restore 12% of your maximum health."),
+
+    // --- uncommon
+    ICE_CUBE("Ice Cube", Material.ICE, 1, ItemRarity.UNCOMMON,
+        "Right-click to throw. After three seconds, freezes everyone within four blocks for ten seconds: Slowness III and no double jump."),
+    MONSTER_EGG("Monster Egg", Material.ZOMBIE_SPAWN_EGG, 1, ItemRarity.UNCOMMON,
+        "Right-click to throw. After three seconds, summons your fighting clone with 20% health and no regeneration."),
+    CLUSTER_GRENADE("Cluster Grenade", Material.SLIME_BALL, 1, ItemRarity.UNCOMMON,
+        "Right-click to throw. After three seconds, splits into five TNT bombs that scatter and explode on landing."),
+    JETPACK("Jetpack", Material.FLINT_AND_STEEL, 8, ItemRarity.UNCOMMON,
+        "Right-click for a small upward boost."),
+    POCKET_TRAMPOLINE("Pocket Trampoline", Material.SLIME_BLOCK, 1, ItemRarity.UNCOMMON,
+        "Right-click to put a 3x3 slime pad under your feet and launch yourself high into the air. The pad fades after five seconds."),
+    POISON_MIST("Poison Mist", Material.PUFFERFISH, 1, ItemRarity.UNCOMMON,
+        "Right-click to throw. After three seconds it bursts into a mist that lingers for five seconds and gives everyone who touches it Poison II for six seconds."),
+    CAGE_TRAP("Cage Trap", Material.JUNGLE_TRAPDOOR, 1, ItemRarity.UNCOMMON,
+        "Right-click to throw. Sets on the ground after three seconds, then cages whoever walks over it for eight seconds."),
+
+    // --- rare
+    SHOTBOW("The Shotbow", Material.BOW, 3, ItemRarity.RARE,
+        "Draw and release to fire a cone of sixteen arrows. Each opponent takes damage once per volley. Three shots."),
+    PROXIMITY_MINE("Proximity Mine", Material.OAK_PRESSURE_PLATE, 1, ItemRarity.RARE,
+        "Right-click to throw. Arms on a full block after three seconds, then explodes when any player walks over it."),
+    CRAFTY_BOMB("Crafty Bomb", Material.TNT, 1, ItemRarity.RARE,
+        "Place TNT on a block. It grows into a 2x2 floor, then a 2x2x2 cube, and explodes in four directions for up to 55% health damage."),
+    SINGULARITY_GRENADE("Singularity Grenade", Material.GUNPOWDER, 1, ItemRarity.RARE,
+        "Right-click to throw. After three seconds, pulls in blocks and players through a portal charge, then blasts them outward."),
+    REGENERATE("XP Fill", Material.EMERALD, 1, ItemRarity.RARE,
+        "Right-click to refill your XP bar. Does not work for Magma Cube."),
+    FIRST_AID_KIT("First Aid Kit", Material.PAPER, 1, ItemRarity.RARE,
+        "Right-click to heal 15% of your missing health and gain Regeneration I for 20 seconds."),
+    KNOCKBACK_ROD("Knockback Rod", Material.STICK, 8, ItemRarity.RARE,
+        "Hit an opponent for strong knockback without damage (one use). Right-click to fire a knockback projectile (two uses)."),
+
+    // --- epic
     DIAMOND_AXE("Axe Ability Upgrade", Material.DIAMOND_AXE, 4, ItemRarity.EPIC,
         "Upgrades four axe ability casts: 20% larger and faster projectiles, or 20% more movement and knockback. Adapts to a tool your kit can use."),
     DIAMOND_SHOVEL("Shovel Ability Upgrade", Material.DIAMOND_SHOVEL, 4, ItemRarity.EPIC,
@@ -93,88 +243,64 @@ enum class ArenaItem(val label: String, val material: Material, val uses: Int,
         "Upgrades four sword ability casts by 20%. Adapts to a tool your kit can use."),
     DIAMOND_HELMET("Armor Upgrade", Material.DIAMOND_HELMET, 4, ItemRarity.EPIC,
         "Automatically equips on pickup. Adds 2.5 armor bars for four damaging hits, up to the normal armor cap. Another pickup refreshes the four hits."),
-    SMASHER("The Smasher", Material.GOLDEN_AXE, 1, ItemRarity.ULTIMATE,
-        "Left-click to smash a large area of terrain, damaging and launching nearby opponents."),
-    HOMING_SNOWBALL("Homing Snowball of Doom", Material.SNOWBALL, 1, ItemRarity.RARE,
-        "Right-click to throw a tracking snowball. Deals 30% health damage on contact."),
-    SHOTBOW("The Shotbow", Material.BOW, 3, ItemRarity.RARE,
-        "Draw and release to fire a cone of sixteen arrows. Each opponent takes damage once per volley. Three shots."),
-    PLAYER_GRAPPLE("Player Grapple", Material.FISHING_ROD, 3, ItemRarity.LEGENDARY,
-        "Right-click to grapple an opponent and launch them far behind you."),
     FIRE_FLOWER("Fire Flower", Material.POPPY, 6, ItemRarity.EPIC,
         "Right-click to shoot a fireball that damages players and starts fires without destroying blocks."),
-    ROCKET_LAUNCHER("Rocket Launcher", Material.DIAMOND_PICKAXE, 1, ItemRarity.ULTIMATE,
-        "Right-click to fire a powerful explosive rocket. Direct hits burn for another 25% health damage."),
+    SINGULARITY_NUKE("Singularity Nuke", Material.CAKE, 1, ItemRarity.EPIC,
+        "A much larger singularity. Pulls in blocks and players through a portal charge, then throws them outward."),
+    GILDED_APPLE("Gilded Apple", Material.GOLDEN_APPLE, 1, ItemRarity.EPIC,
+        "Right-click to instantly eat for five absorption hearts. Stacks with other apples and Mooshroom absorption; does not heal your red hearts."),
+
+    // --- legendary
+    SHADOW_WALK("Shadow Walk", Material.SKELETON_SKULL, 1, ItemRarity.LEGENDARY,
+        "Right-click to become invisible for 30 seconds, including your disguise."),
+    PLAYER_GRAPPLE("Player Grapple", Material.FISHING_ROD, 3, ItemRarity.LEGENDARY,
+        "Right-click to grapple an opponent and launch them far behind you."),
     MISSILE_BATTERY("Missile Battery", Material.GOLDEN_PICKAXE, 16, ItemRarity.LEGENDARY,
         "Right-click to launch a miniature rocket that damages opponents and destroys terrain. You take half damage from nearby explosions."),
     AIR_STRIKE("Air Strike", Material.BLAZE_ROD, 1, ItemRarity.LEGENDARY,
         "Throw a signal flare. After three seconds, lightning tears through the marked area, dealing up to 97.5% health damage."),
-    ICE_CUBE("Ice Cube", Material.ICE, 1, ItemRarity.UNCOMMON,
-        "Right-click to throw. After three seconds, freezes everyone within four blocks for ten seconds: Slowness III and no double jump."),
-    PROXIMITY_MINE("Proximity Mine", Material.OAK_PRESSURE_PLATE, 1, ItemRarity.RARE,
-        "Right-click to throw. Arms on a full block after three seconds, then explodes when any player walks over it."),
-    MONSTER_EGG("Monster Egg", Material.ZOMBIE_SPAWN_EGG, 1, ItemRarity.UNCOMMON,
-        "Right-click to throw. After three seconds, summons your fighting clone with 20% health and no regeneration."),
-    CRAFTY_BOMB("Crafty Bomb", Material.TNT, 1, ItemRarity.RARE,
-        "Place TNT on a block. It grows into a 2x2 floor, then a 2x2x2 cube, and explodes in four directions for up to 55% health damage."),
-    FRAG_GRENADE("Frag Grenade", Material.FIRE_CHARGE, 1, ItemRarity.COMMON,
-        "Right-click to throw. Explodes after two seconds for up to three hearts and breaks a few nearby blocks."),
-    CLUSTER_GRENADE("Cluster Grenade", Material.SLIME_BALL, 1, ItemRarity.UNCOMMON,
-        "Right-click to throw. After three seconds, splits into five TNT bombs that scatter and explode on landing."),
-    SINGULARITY_GRENADE("Singularity Grenade", Material.GUNPOWDER, 1, ItemRarity.RARE,
-        "Right-click to throw. After three seconds, pulls in blocks and players through a portal charge, then blasts them outward."),
-    SINGULARITY_NUKE("Singularity Nuke", Material.CAKE, 1, ItemRarity.EPIC,
-        "A much larger singularity. Pulls in blocks and players through a portal charge, then throws them outward."),
-    SPEED("Speed", Material.SUGAR, 1, ItemRarity.COMMON,
-        "Right-click for 30 seconds of Speed II."),
-    INSTANT_TELEPORTER("Instant Teleporter", Material.ENDER_EYE, 1, ItemRarity.COMMON,
-        "Right-click to teleport up to 22 blocks in the direction you are looking. Stops before solid blocks."),
-    CLOUD_IN_A_BOTTLE("Cloud in a Bottle", Material.EXPERIENCE_BOTTLE, 1, ItemRarity.COMMON,
-        "Right-click to create a 5x5 platform beneath you. It begins fading after five seconds."),
-    JETPACK("Jetpack", Material.FLINT_AND_STEEL, 8, ItemRarity.UNCOMMON,
-        "Right-click for a small upward boost."),
-    FOOD("Food", Material.APPLE, 1, ItemRarity.COMMON,
-        "Right-click to immediately restore 10% of your maximum health."),
     AWESOME_SOUP("Awesome Soup", Material.MUSHROOM_STEW, 1, ItemRarity.LEGENDARY,
         "Right-click to immediately restore full health."),
-    GILDED_APPLE("Gilded Apple", Material.GOLDEN_APPLE, 1, ItemRarity.EPIC,
-        "Right-click to instantly eat for five absorption hearts. Stacks with other apples and Mooshroom absorption; does not heal your red hearts."),
-    REGENERATE("XP Fill", Material.EMERALD, 1, ItemRarity.RARE,
-        "Right-click to refill your XP bar. Does not work for Magma Cube."),
-    EXTRA_LIFE("Extra Life", Material.TOTEM_OF_UNDYING, 1, ItemRarity.ULTIMATE,
-        "Right-click, then stand still or move slowly for five seconds to gain a life. Maximum eight lives. Moving quickly interrupts the channel."),
-    SHADOW_WALK("Shadow Walk", Material.SKELETON_SKULL, 1, ItemRarity.EPIC,
-        "Right-click to become invisible for 15 seconds, including your disguise."),
-    FIRST_AID_KIT("First Aid Kit", Material.PAPER, 1, ItemRarity.RARE,
-        "Right-click to heal 15% of your missing health and gain Regeneration I for 20 seconds."),
     RAIN_STAFF("Rain Staff", Material.GOLDEN_HOE, 125, ItemRarity.LEGENDARY,
         "Hold right-click to rain projectiles where you aim. Contains 125 volleys of six mixed projectiles, each dealing 5% health damage."),
-    KNOCKBACK_ROD("Knockback Rod", Material.STICK, 8, ItemRarity.RARE,
-        "Hit an opponent for strong knockback without damage (one use). Right-click to fire a knockback projectile (two uses)."),
-    POCKET_TRAMPOLINE("Pocket Trampoline", Material.SLIME_BLOCK, 1, ItemRarity.UNCOMMON,
-        "Right-click to put a 3x3 slime pad under your feet and launch yourself high into the air. The pad fades after five seconds."),
-    POISON_MIST("Poison Mist", Material.PUFFERFISH, 1, ItemRarity.UNCOMMON,
-        "Right-click to throw. After three seconds it bursts into a mist that lingers for five seconds and gives everyone who touches it Poison II for six seconds."),
     MYSTERY_ABILITY("Mystery Ability", Material.ORANGE_BUNDLE, 1, ItemRarity.LEGENDARY,
-        "Right-click for a random ability from another kit, as a copper tool with seven uses and half the usual cooldown.");
+        "Right-click for a random ability from another kit, as a copper tool with seven uses and half the usual cooldown."),
+
+    // --- ultimate
+    SMASHER("The Smasher", Material.GOLDEN_AXE, 1, ItemRarity.ULTIMATE,
+        "Left-click to smash a large area of terrain, damaging and launching nearby opponents."),
+    ROCKET_LAUNCHER("Rocket Launcher", Material.DIAMOND_PICKAXE, 1, ItemRarity.ULTIMATE,
+        "Right-click to fire a powerful explosive rocket. Direct hits burn for another 25% health damage."),
+    EXTRA_LIFE("Extra Life", Material.TOTEM_OF_UNDYING, 1, ItemRarity.ULTIMATE,
+        "Right-click, then stand still or move slowly for five seconds to gain a life. Maximum eight lives. Moving quickly interrupts the channel."),
+    PERSONAL_ROCKET("Personal Rocket", Material.FIREWORK_ROCKET, 4, ItemRarity.ULTIMATE,
+        "Right-click to ride a rocket the way you are looking. It explodes on impact; the blast does not hurt you."),
+    ANVIL("Anvil", Material.ANVIL, 1, ItemRarity.ULTIMATE,
+        "Right-click to drop an anvil out of the sky onto every opponent. It lands in 0.8 seconds for 90% health damage."),
+    FLYING_CAR("Flying Car", Material.MINECART, 30, ItemRarity.ULTIMATE,
+        "Right-click to get in or out. Forward drives, jump rises, sneak sinks. Ramming an opponent hurts them.");
 
     val id get() = name.lowercase()
     val tool get() = this in setOf(DIAMOND_AXE, DIAMOND_SHOVEL, DIAMOND_SWORD)
+    /** Something to eat. The foods are one find between them: see [roll]. */
+    val food get() = healPercent > 0
+    /** Percent of a full health bar a food gives back. */
+    val healPercent get() = when (this) { PORKCHOP -> 11; STEAK -> 12; else -> 0 }
 
     /** What throwing this item away sounds like: the thing it is, not one sound for everything. */
     val dropFeel: DropFeel get() = when (this) {
         DIAMOND_AXE, DIAMOND_SHOVEL, DIAMOND_SWORD, SMASHER, SHOTBOW, ROCKET_LAUNCHER, MISSILE_BATTERY, RAIN_STAFF -> DropFeel.TOOL
-        DIAMOND_HELMET, JETPACK, EXTRA_LIFE -> DropFeel.METAL
-        FOOD, GILDED_APPLE -> DropFeel.FOOD
+        DIAMOND_HELMET, JETPACK, EXTRA_LIFE, ANVIL, FLYING_CAR -> DropFeel.METAL
+        PORKCHOP, STEAK, GILDED_APPLE -> DropFeel.FOOD
         AWESOME_SOUP -> DropFeel.SPILL
         ICE_CUBE, CLOUD_IN_A_BOTTLE -> DropFeel.GLASS
-        AIR_STRIKE, CRAFTY_BOMB, FRAG_GRENADE -> DropFeel.FUSE
+        AIR_STRIKE, CRAFTY_BOMB, FRAG_GRENADE, PERSONAL_ROCKET -> DropFeel.FUSE
         SINGULARITY_GRENADE, SPEED -> DropFeel.POWDER
         CLUSTER_GRENADE, POCKET_TRAMPOLINE -> DropFeel.SLIME
         HOMING_SNOWBALL -> DropFeel.SNOW
         PLAYER_GRAPPLE -> DropFeel.REEL
         FIRE_FLOWER -> DropFeel.PLANT
-        PROXIMITY_MINE, KNOCKBACK_ROD -> DropFeel.WOOD
+        PROXIMITY_MINE, KNOCKBACK_ROD, CAGE_TRAP -> DropFeel.WOOD
         MONSTER_EGG -> DropFeel.EGG
         SINGULARITY_NUKE -> DropFeel.CLOTH
         INSTANT_TELEPORTER -> DropFeel.ENDER
@@ -184,17 +310,29 @@ enum class ArenaItem(val label: String, val material: Material, val uses: Int,
         POISON_MIST -> DropFeel.FISH
         MYSTERY_ABILITY -> DropFeel.BAG
     }
-    val useLabel get() = if (this == DIAMOND_HELMET) "hits" else "uses"
+    /** "4 uses", "1 use", "3 hits", or for the Flying Car what is left in its tank. */
+    fun usesText(count: Int = uses) = when (this) {
+        FLYING_CAR -> "$count ${if (count == 1) "second" else "seconds"} of fuel"
+        DIAMOND_HELMET -> "$count ${if (count == 1) "hit" else "hits"}"
+        else -> "$count ${if (count == 1) "use" else "uses"}"
+    }
 
     companion object {
-        const val CATALOG_VERSION = 2
+        const val CATALOG_VERSION = 3
+        /** How long Shadow Walk lasts. */
+        const val SHADOW_WALK_TICKS = 600
+        /** Percent of a full health bar the Homing Snowball takes (30 while it was a rare find). */
+        const val SNOWBALL_DAMAGE = 15.0
         /** The items each catalogue version brought in. */
-        private val addedIn get() = mapOf(1 to setOf(DIAMOND_HELMET), 2 to setOf(POCKET_TRAMPOLINE, POISON_MIST, MYSTERY_ABILITY))
+        private val addedIn get() = mapOf(1 to setOf(DIAMOND_HELMET), 2 to setOf(POCKET_TRAMPOLINE, POISON_MIST, MYSTERY_ABILITY),
+            3 to setOf(CAGE_TRAP, PERSONAL_ROCKET, ANVIL, FLYING_CAR))
+        /** What the single item "Food" of the first two versions is now. */
+        val foods get() = entries.filter { it.food }
 
         /** Include new drops for previous Enable All selections without resetting custom lists. */
         fun restoreSelection(saved: String?, version: Int = 0): Set<ArenaItem> {
             if (saved == null) return entries.toSet()
-            var enabled = saved.split('|').mapNotNull(::parse).toSet()
+            var enabled = saved.split('|').flatMap { id -> if (id == "food") foods else listOfNotNull(parse(id)) }.toSet()
             for (step in version + 1..CATALOG_VERSION) {
                 // Everything that existed before this step was enabled: the new items join in.
                 val existed = entries.toSet() - addedIn.filterKeys { it >= step }.values.flatten().toSet()
@@ -209,13 +347,19 @@ enum class ArenaItem(val label: String, val material: Material, val uses: Int,
                 it.label.lowercase().replace(Regex("[^a-z0-9]"), "").removePrefix("the") == key }
         }
 
-        /** Roll a rarity once, then choose uniformly within that rarity. Disabled tiers renormalize. */
+        /**
+         * Roll a rarity once, then choose uniformly within that rarity. Disabled tiers renormalize.
+         * The foods count as one thing to find between them, however many there are: more kinds of
+         * food do not make food turn up more often.
+         */
         fun roll(enabled: Set<ArenaItem>, random: Random = Random.Default): ArenaItem? {
             if (enabled.isEmpty()) return null
             val tiers = ItemRarity.entries.filter { tier -> enabled.any { it.rarity == tier } }
             var roll = random.nextInt(tiers.sumOf { it.weight })
             val tier = tiers.first { roll -= it.weight; roll < 0 }
-            return entries.filter { it in enabled && it.rarity == tier }.random(random)
+            val (eaten, others) = entries.filter { it in enabled && it.rarity == tier }.partition { it.food }
+            val finds = others.map { listOf(it) } + listOfNotNull(eaten.takeIf { it.isNotEmpty() })
+            return finds.random(random).random(random)
         }
     }
 }

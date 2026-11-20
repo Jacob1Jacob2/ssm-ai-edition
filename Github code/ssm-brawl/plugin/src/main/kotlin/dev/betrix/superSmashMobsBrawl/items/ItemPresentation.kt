@@ -12,9 +12,7 @@ object ItemPresentation {
             "\"item.shotbow.wood$it\":{\"sounds\":[\"minecraft:step/wood$it\"]}"
         } + "}").toByteArray()
     }
-    val foods = listOf(Material.COOKED_BEEF, Material.COOKED_PORKCHOP, Material.COOKED_CHICKEN, Material.APPLE)
     fun material(kind: ArenaItem, player: Player? = null): Material = when (kind) {
-        ArenaItem.FOOD -> foods.random()
         ArenaItem.MONSTER_EGG -> {
             val id = player?.let { KitService.getKitForPlayer(it)?.id }
             val mob = when(id) { "sky_squid" -> "squid"; "sir_sheep" -> "sheep"; "snowman" -> "snow_golem"; "wolf" -> "wolf"; else -> id }

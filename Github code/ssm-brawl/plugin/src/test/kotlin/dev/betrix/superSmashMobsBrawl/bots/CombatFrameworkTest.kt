@@ -343,8 +343,10 @@ class CombatFrameworkTest : StringSpec({
     val fight = ItemSituation(health = 1.0, targetDistance = 10.0, targetVisible = true, targetSpeed = 0.2, nearestEnemy = 10.0)
 
     "heals are for when the bot is hurt, and the full heal waits until it is badly hurt" {
-        plan(ArenaItem.FOOD, calm) shouldBe null
-        plan(ArenaItem.FOOD, calm.copy(health = 0.8)) shouldBe ItemAim.NONE
+        for (food in ArenaItem.foods) {
+            plan(food, calm) shouldBe null
+            plan(food, calm.copy(health = 0.8)) shouldBe ItemAim.NONE
+        }
         plan(ArenaItem.AWESOME_SOUP, calm.copy(health = 0.5)) shouldBe null
         plan(ArenaItem.AWESOME_SOUP, calm.copy(health = 0.3)) shouldBe ItemAim.NONE
         plan(ArenaItem.AWESOME_SOUP, calm.copy(health = 0.5), BotDifficulty.NORMAL) shouldBe ItemAim.NONE
@@ -372,6 +374,32 @@ class CombatFrameworkTest : StringSpec({
         plan(ArenaItem.POISON_MIST, fight.copy(targetDistance = 30.0, targetSpeed = 0.0)) shouldBe null
         plan(ArenaItem.POISON_MIST, fight, BotDifficulty.NORMAL) shouldBe ItemAim.LOBBED
         plan(ArenaItem.MYSTERY_ABILITY, calm) shouldBe ItemAim.NONE
+    }
+    "the car, the rocket, the anvil and the cage trap each have their moment" {
+        // The Flying Car is got into for a chase, to reach a camper, or to be caught by when falling: and not got out of again by the same thought.
+        plan(ArenaItem.FLYING_CAR, fight) shouldBe ItemAim.NONE
+        plan(ArenaItem.FLYING_CAR, fight.copy(riding = true)) shouldBe null
+        plan(ArenaItem.FLYING_CAR, fight.copy(targetDistance = 3.0)) shouldBe null
+        plan(ArenaItem.FLYING_CAR, calm) shouldBe null
+        plan(ArenaItem.FLYING_CAR, calm.copy(falling = true, airJump = false)) shouldBe ItemAim.NONE
+        plan(ArenaItem.FLYING_CAR, fight.copy(targetDistance = 3.0, targetUnreachable = true)) shouldBe ItemAim.NONE
+        // The Personal Rocket is ridden at an opponent, seen or (with no way to them) not.
+        plan(ArenaItem.PERSONAL_ROCKET, fight) shouldBe ItemAim.TARGET
+        plan(ArenaItem.PERSONAL_ROCKET, fight.copy(targetDistance = 2.0)) shouldBe null
+        plan(ArenaItem.PERSONAL_ROCKET, fight.copy(targetVisible = false)) shouldBe null
+        plan(ArenaItem.PERSONAL_ROCKET, fight.copy(targetVisible = false, targetUnreachable = true)) shouldBe ItemAim.TARGET
+        plan(ArenaItem.PERSONAL_ROCKET, calm) shouldBe null
+        // An Anvil lands where they were: not on someone at a run, unless the bot knows no better.
+        plan(ArenaItem.ANVIL, fight.copy(targetSpeed = 0.28)) shouldBe null
+        plan(ArenaItem.ANVIL, fight.copy(targetSpeed = 0.28), BotDifficulty.NORMAL) shouldBe ItemAim.NONE
+        plan(ArenaItem.ANVIL, fight.copy(targetSpeed = 0.2)) shouldBe ItemAim.NONE
+        plan(ArenaItem.ANVIL, fight.copy(targetSpeed = 0.28, targetVisible = false, targetDistance = 50.0, heldSeconds = 90)) shouldBe ItemAim.NONE
+        plan(ArenaItem.ANVIL, calm) shouldBe null
+        // A Cage Trap goes where a mine would.
+        for (s in listOf(fight, fight.copy(targetDistance = 2.0), fight.copy(fleeing = true, targetDistance = 2.0), fight.copy(targetDistance = 30.0), calm))
+            plan(ArenaItem.CAGE_TRAP, s) shouldBe plan(ArenaItem.PROXIMITY_MINE, s)
+        ItemTactics.siegeValue(ArenaItem.FLYING_CAR) shouldBe 3
+        ItemTactics.siegeValue(ArenaItem.PERSONAL_ROCKET) shouldBe 3
     }
     "lives go up to eight: an extra life is worth taking until then, and each count has its colour" {
         plan(ArenaItem.EXTRA_LIFE, calm.copy(nearestEnemy = 30.0, lives = 7)) shouldBe ItemAim.NONE
@@ -418,8 +446,8 @@ class CombatFrameworkTest : StringSpec({
         ItemTactics.siegeValue(ArenaItem.JETPACK) shouldBe 3
         ItemTactics.siegeValue(ArenaItem.CLOUD_IN_A_BOTTLE) shouldBe 3
         ItemTactics.siegeValue(ArenaItem.ROCKET_LAUNCHER) shouldBe 2
-        ItemTactics.siegeValue(ArenaItem.FOOD) shouldBe 0
-        ItemTactics.usedUpFreely(ArenaItem.FOOD) shouldBe true
+        ItemTactics.siegeValue(ArenaItem.STEAK) shouldBe 0
+        ItemTactics.usedUpFreely(ArenaItem.STEAK) shouldBe true
         ItemTactics.usedUpFreely(ArenaItem.EXTRA_LIFE) shouldBe false
         // A needed item is fetched however far away it is; an ordinary one that far is left lying.
         val far = situation(distance = 12.0, item = 40.0, itemEnemy = 60.0)

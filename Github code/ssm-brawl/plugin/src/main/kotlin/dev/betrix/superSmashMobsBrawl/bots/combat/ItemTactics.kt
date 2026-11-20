@@ -44,6 +44,8 @@ data class ItemSituation(
     val nearestEnemy: Double = Double.MAX_VALUE,
     /** How long the item has been carried. */
     val heldSeconds: Int = 0,
+    /** Sitting in something (a Flying Car, as it is the only thing there is to sit in). */
+    val riding: Boolean = false,
 )
 
 /**
@@ -79,7 +81,7 @@ object ItemTactics {
             DIAMOND_AXE, DIAMOND_SHOVEL, DIAMOND_SWORD, DIAMOND_HELMET -> null // applied on pickup
 
             // --- healing: not at full health, and the big ones not until they are needed
-            FOOD -> at(ItemAim.NONE, s.health <= 0.9)
+            PORKCHOP, STEAK -> at(ItemAim.NONE, s.health <= 0.9)
             FIRST_AID_KIT -> at(ItemAim.NONE, s.health <= 0.75 - 0.25 * skill)
             AWESOME_SOUP -> at(ItemAim.NONE, s.health <= 0.6 - 0.25 * skill || (s.fleeing && s.health <= 0.5))
             GILDED_APPLE -> at(ItemAim.NONE, within(0.0..12.0) || s.health <= 0.6)
@@ -110,6 +112,16 @@ object ItemTactics {
             // One rocket: careful bots want a slow or close target, and never their own feet.
             ROCKET_LAUNCHER -> at(ItemAim.TARGET, within(8.0..28.0) && (!careful || still || dist!! < 14 || impatient || camped))
             SHOTBOW -> at(ItemAim.TARGET, within(0.0..9.0))
+            // The rider goes with the rocket, so it is also the way to someone no route leads to
+            // (seen or not: it goes off against whatever is between them, and that is near enough).
+            PERSONAL_ROCKET -> at(ItemAim.TARGET, !s.riding && (within(5.0..26.0) || (camped && dist != null && dist <= 26.0)))
+            // An anvil for every opponent, wherever they are. It lands where they stood 0.8 seconds
+            // before: wasted on someone at a run (a walk is not enough to get out from under it),
+            // so careful bots wait for them to slow down.
+            ANVIL -> at(ItemAim.NONE, dist != null && (!careful || s.targetSpeed < ANVIL_OUTRUN || impatient || camped))
+            // The best thing there is to find: half a minute of going anywhere and running people
+            // down. Got into for a chase, to reach a camper, or to be caught by when falling.
+            FLYING_CAR -> at(ItemAim.NONE, !s.riding && ((s.falling && !s.airJump) || (dist != null && dist > 5.0) || camped))
 
             // --- finishers: worth most when the opponent is at an edge or already hurt
             KNOCKBACK_ROD -> when {
@@ -136,13 +148,16 @@ object ItemTactics {
             FRAG_GRENADE -> at(ItemAim.LOBBED, within(4.0..14.0))
             CRAFTY_BOMB -> at(ItemAim.CONTACT, within(0.0..6.0) && (!careful || still || impatient))
             // A mine goes where the opponent is about to walk: at a chaser, or between the two.
-            PROXIMITY_MINE -> at(ItemAim.LOBBED, (s.fleeing && within(0.0..12.0)) || within(4.0..12.0))
+            PROXIMITY_MINE, CAGE_TRAP -> at(ItemAim.LOBBED, (s.fleeing && within(0.0..12.0)) || within(4.0..12.0))
             MONSTER_EGG -> at(ItemAim.LOBBED, within(0.0..20.0))
         }
     }
 
     /** Items a bot cannot spend should not block it from picking up others. */
     fun shouldDiscard(failedUses: Int) = failedUses >= 4
+
+    /** Blocks a tick: a walk is 0.22 and does not get out from under an Anvil, a run is 0.28 and does. */
+    const val ANVIL_OUTRUN = 0.24
 
     /** The Smasher's blast reaches 11 blocks; this close it still takes off a good part of a health bar. */
     const val SMASHER_THROUGH = 8.5
@@ -152,8 +167,8 @@ object ItemTactics {
      * 3 gets the bot to them, 2 hurts or moves them from where the bot can stand, 0 is no help.
      */
     fun siegeValue(item: ArenaItem): Int = when (item) {
-        INSTANT_TELEPORTER, JETPACK, CLOUD_IN_A_BOTTLE, POCKET_TRAMPOLINE -> 3
-        ROCKET_LAUNCHER, MISSILE_BATTERY, SMASHER, AIR_STRIKE, HOMING_SNOWBALL, FIRE_FLOWER, RAIN_STAFF,
+        INSTANT_TELEPORTER, JETPACK, CLOUD_IN_A_BOTTLE, POCKET_TRAMPOLINE, FLYING_CAR, PERSONAL_ROCKET -> 3
+        ROCKET_LAUNCHER, MISSILE_BATTERY, SMASHER, AIR_STRIKE, HOMING_SNOWBALL, FIRE_FLOWER, RAIN_STAFF, ANVIL,
         PLAYER_GRAPPLE, KNOCKBACK_ROD, SINGULARITY_NUKE, SINGULARITY_GRENADE, CLUSTER_GRENADE, FRAG_GRENADE,
         POISON_MIST, ICE_CUBE, MONSTER_EGG -> 2
         else -> 0
@@ -161,7 +176,9 @@ object ItemTactics {
 
     /** How far away an item still does something to an opponent the bot can see, for choosing where to stand. */
     fun reach(item: ArenaItem): Double = when (item) {
+        ANVIL, FLYING_CAR -> 40.0
         HOMING_SNOWBALL -> 30.0
+        PERSONAL_ROCKET -> 26.0
         ROCKET_LAUNCHER -> 28.0
         FIRE_FLOWER, MISSILE_BATTERY, RAIN_STAFF -> 24.0
         AIR_STRIKE -> 22.0
@@ -175,5 +192,5 @@ object ItemTactics {
 
     /** Things that cost nothing to use up on the spot, when the hand is wanted for something else. */
     fun usedUpFreely(item: ArenaItem): Boolean =
-        item in setOf(FOOD, FIRST_AID_KIT, AWESOME_SOUP, GILDED_APPLE, REGENERATE, SPEED, SHADOW_WALK)
+        item in setOf(PORKCHOP, STEAK, FIRST_AID_KIT, AWESOME_SOUP, GILDED_APPLE, REGENERATE, SPEED, SHADOW_WALK)
 }
