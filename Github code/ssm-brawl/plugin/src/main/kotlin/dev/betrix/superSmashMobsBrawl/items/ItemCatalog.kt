@@ -115,6 +115,24 @@ object CarRules {
     /** Is it time to start the car's noise again, [since] ticks after it was last started? (Straight away when it has just got going.) */
     fun hums(moving: Boolean, humming: Boolean, since: Long): Boolean = moving && (!humming || since >= HUM_TICKS)
 
+    /**
+     * Degrees a second the A and D keys swing the car round, and its driver's view with it: a full
+     * turn in three seconds. The mouse turns it as fast as it is moved; the keys are for turning
+     * without it, as in a boat.
+     */
+    const val TURN = 120.0
+    /** Seconds over which a turn by the keys gathers and loses that speed. */
+    const val TURN_EASE = 0.1
+
+    /** What the turn keys ask for, in degrees a second: right is clockwise (the yaw grows), left the other way, both at once nothing. */
+    fun turnWanted(left: Boolean, right: Boolean): Double = ((if (right) 1 else 0) - (if (left) 1 else 0)) * TURN
+
+    /** The turning speed [seconds] later, on its way from [now] to [wanted] (both in degrees a second). */
+    fun turnEased(now: Double, wanted: Double, seconds: Double): Double {
+        val next = now + (wanted - now) * (1 - kotlin.math.exp(-seconds / TURN_EASE))
+        return if (wanted == 0.0 && kotlin.math.abs(next) < 1.0) 0.0 else next
+    }
+
     /** One tick of gathering speed: from [now] toward [wanted], both in blocks a tick. */
     fun eased(now: Double, wanted: Double): Double = (now + (wanted - now) * EASE).let { if (kotlin.math.abs(it) < 0.002 && wanted == 0.0) 0.0 else it }
 
@@ -329,7 +347,7 @@ enum class ArenaItem(val label: String, val material: Material, val uses: Int,
     ANVIL("Falling Anvil", Material.ANVIL, 1, ItemRarity.ULTIMATE,
         "Right-click to drop an anvil out of the sky onto every opponent. It lands in half a second for 85% health damage and smashes the ground."),
     FLYING_CAR("Flying Car", Material.MINECART, CarRules.FUEL, ItemRarity.ULTIMATE,
-        "Right-click: in or out. Ramming hurts.\nW drives, jump rises, sneak sinks.\nFuel regens after 10 seconds parked.");
+        "Right-click: in or out. Ramming hurts.\nW drives, A/D turn, jump up, sneak down.\nFuel regens after 10 seconds parked.");
 
     val id get() = name.lowercase()
     /**

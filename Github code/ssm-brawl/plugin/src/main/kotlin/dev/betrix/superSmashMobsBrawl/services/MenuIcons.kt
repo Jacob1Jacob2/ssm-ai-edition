@@ -280,7 +280,9 @@ object MenuAssets {
     /** How far a veil stands off the surface it darkens, in pixels of the model. */
     const val VEIL_GAP = 0.02
     /** Flat icons (one picture, no block shape) that have a dark copy, by their item model name. */
-    val DARK_FLAT_ICONS = listOf("iron_sword", "copper_axe", "iron_axe", "copper_sword")
+    val DARK_FLAT_ICONS = listOf("iron_sword", "copper_axe", "iron_axe", "copper_sword",
+        // The difficulty row, dark in the sandbox: None and the five dyes.
+        "barrier", "lime_dye", "yellow_dye", "orange_dye", "red_dye", "magenta_dye")
     /** One flat see-through black: what a veiled icon is darkened with. */
     internal fun veil(): ByteArray {
         val image=java.awt.image.BufferedImage(16,16,java.awt.image.BufferedImage.TYPE_INT_ARGB)

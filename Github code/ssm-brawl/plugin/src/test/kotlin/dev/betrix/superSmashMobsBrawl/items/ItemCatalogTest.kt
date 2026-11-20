@@ -134,7 +134,30 @@ class ItemCatalogTest : StringSpec({
         }
         // (As one line this was 106 characters, and its last sentence was off the side of the screen.)
         ArenaItem.FLYING_CAR.descriptionLines shouldBe listOf("Right-click: in or out. Ramming hurts.",
-            "W drives, jump rises, sneak sinks.", "Fuel regens after 10 seconds parked.")
+            "W drives, A/D turn, jump up, sneak down.", "Fuel regens after 10 seconds parked.")
+    }
+    "A and D turn the flying car: left one way, right the other, a full turn in three seconds" {
+        CarRules.turnWanted(left = false, right = false) shouldBe 0.0
+        CarRules.turnWanted(left = true, right = true) shouldBe 0.0
+        // Right is clockwise, which is the way the game's yaw grows.
+        CarRules.turnWanted(left = false, right = true) shouldBe CarRules.TURN
+        CarRules.turnWanted(left = true, right = false) shouldBe -CarRules.TURN
+        (360 / CarRules.TURN) shouldBe (3.0 plusOrMinus 1e-9)
+        // It gathers the speed over a tenth of a second or so, a step of a few milliseconds at a time, and never overshoots.
+        var rate = 0.0
+        var turned = 0.0
+        val step = CarSteering.STEP_MILLIS / 1000.0
+        repeat((2.0 / step).toInt()) { rate = CarRules.turnEased(rate, CarRules.TURN, step); (rate <= CarRules.TURN) shouldBe true; turned += rate * step }
+        (rate > CarRules.TURN * 0.99) shouldBe true
+        // Two seconds with the key down: two thirds of a turn, less the little lost in getting going.
+        (turned in 220.0..240.0) shouldBe true
+        // Let go, it stops: within half a second, and for good.
+        repeat((0.5 / step).toInt()) { rate = CarRules.turnEased(rate, 0.0, step); turned += rate * step }
+        rate shouldBe 0.0
+        (turned in 236.0..244.0) shouldBe true
+        // A step that comes late turns as far as the time that passed, not as far as one on time.
+        val late = CarRules.turnEased(CarRules.TURN, CarRules.TURN, 0.05) * 0.05
+        late shouldBe (CarRules.TURN * 0.05 plusOrMinus 1e-9)
     }
     "the flying car's noise starts when it gets going, is kept up, and stops with it" {
         CarRules.hums(moving = true, humming = false, since = 0) shouldBe true

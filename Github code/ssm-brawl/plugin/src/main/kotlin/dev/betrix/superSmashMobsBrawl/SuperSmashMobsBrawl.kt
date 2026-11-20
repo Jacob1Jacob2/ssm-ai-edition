@@ -225,6 +225,7 @@ class SuperSmashMobsBrawl : SuspendingJavaPlugin(), KoinComponent {
         BotConversationService.shutdown()
         dev.betrix.superSmashMobsBrawl.services.BotSkinService.teardown()
         dev.betrix.superSmashMobsBrawl.items.ItemService.teardown()
+        dev.betrix.superSmashMobsBrawl.items.CarSteering.stop()
         dev.betrix.superSmashMobsBrawl.smash.SmashService.teardown()
 
         // Remove bots first so they don't get saved/kicked mid-game.

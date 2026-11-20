@@ -378,6 +378,10 @@ class BotsCommand : KoinComponent {
             var meddled = 0
             var wrong = 0
             val phase = 60
+            val pending = java.util.concurrent.atomic.DoubleAdder()
+            val keySteps = java.util.concurrent.atomic.AtomicInteger()
+            var keyed = 0.0
+            var lookAtKeys = 0f
             org.bukkit.Bukkit.getScheduler().runTaskTimer(plugin, java.util.function.Consumer { task ->
                 val car = driven ?: run {
                     // Not in yet: an item just used leaves the hand busy for a moment, so it is tried until it takes.
@@ -396,8 +400,14 @@ class BotsCommand : KoinComponent {
                     look = bot.location.yaw
                     effects.explicitTurns = false
                     dev.betrix.superSmashMobsBrawl.bots.nms.FakeConnection.sniff = { connection, packet ->
-                        if (connection === driver.connection.connection && packet is net.minecraft.network.protocol.game.ClientboundMoveEntityPacket &&
-                            packet.hasRotation() && packet.getEntity(driver.level()) === cart) told++
+                        if (connection === driver.connection.connection) {
+                            if (packet is net.minecraft.network.protocol.game.ClientboundMoveEntityPacket &&
+                                packet.hasRotation() && packet.getEntity(driver.level()) === cart) told++
+                            // What A and D send: "look this much further round". (From the steering timer, not the game's thread.)
+                            if (packet is net.minecraft.network.protocol.game.ClientboundPlayerRotationPacket && packet.relativeY()) {
+                                pending.add(packet.yRot().toDouble()); keySteps.incrementAndGet()
+                            }
+                        }
                     }
                     plugin.logger.info("[cartest] ${bot.name} in a Flying Car at %.1f %.1f %.1f after $waited ticks, standing, looking round at 6 degrees a tick".format(stood.x, stood.y, stood.z))
                     got
@@ -416,15 +426,30 @@ class BotsCommand : KoinComponent {
                     told = 0; wrong = 0; meddled = 0
                     effects.explicitTurns = true
                 }
-                if (tick >= phase * 2 || gone) {
+                // Then the D key, held for two seconds and let go: what the driver's game is told to
+                // turn by is what a game does with it (looks that much further round, and says so).
+                val hold = 40
+                val settle = 10
+                if (tick == phase * 2 && !gone) {
+                    effects.heldTurn[bot.uniqueId] = dev.betrix.superSmashMobsBrawl.items.CarRules.turnWanted(left = false, right = true)
+                    pending.reset(); keySteps.set(0); keyed = 0.0; lookAtKeys = look
+                }
+                if (tick == phase * 2 + hold) effects.heldTurn[bot.uniqueId] = 0.0
+                if (tick >= phase * 2 + hold + settle || gone) {
+                    if (!gone) plugin.logger.info(("[cartest] D held for $hold ticks: the driver's game was told to look further round ${keySteps.get()} times, %.0f degrees in all " +
+                        "(wants about %.0f); the look went from %.0f to %.0f, cart facing %.0f (wants %.0f); wrong on $wrong ticks; the car moved %.2f blocks").format(
+                        keyed, dev.betrix.superSmashMobsBrawl.items.CarRules.TURN * hold / 20, lookAtKeys, look, driven.cart.location.yaw,
+                        net.minecraft.util.Mth.wrapDegrees(look - 90f), driven.at.distance(stood)))
                     dev.betrix.superSmashMobsBrawl.bots.nms.FakeConnection.sniff = null
                     effects.explicitTurns = true
                     effects.handDriven -= bot.uniqueId
+                    effects.heldTurn -= bot.uniqueId
                     if (!gone) items.arena(bot)?.effects?.leaveCar(bot)
                     task.cancel()
                     return@Consumer
                 }
-                look = net.minecraft.util.Mth.wrapDegrees(look + 6f)
+                if (tick < phase * 2) look = net.minecraft.util.Mth.wrapDegrees(look + 6f)
+                else pending.sumThenReset().let { by -> keyed += by; look = net.minecraft.util.Mth.wrapDegrees(look + by.toFloat()) }
                 driver.absSnapTo(driver.x, driver.y, driver.z, look, 0f)
                 tick++
             }, 1L, 1L)
@@ -675,8 +700,9 @@ class BotsCommand : KoinComponent {
             setups.openMenu(bot)
             log("opened '${title()}', ${top().size} slots; ${state()}")
             dump("menu", 0..53)
-            click(1); log("click No Players -> ${state()}"); dump("sandbox", listOf(1, 37, 38, 39, 40, 41, 45))
-            click(2); log("click 2 players -> ${state()}"); dump("duel", listOf(2, 37, 39, 40, 41, 45))
+            click(1); log("click No Players -> ${state()}"); dump("sandbox", listOf(1, 10, 11, 12, 13, 14, 16, 17, 37, 38, 39, 40, 41, 45))
+            click(12); log("click a dark difficulty -> difficulty=${s.difficulty} idle=${s.botsIdle}")
+            click(2); log("click 2 players -> ${state()}"); dump("duel", listOf(2, 10, 11, 16, 37, 39, 40, 41, 45))
             click(4); log("click 8 players -> ${state()}")
             click(40); log("click two teams -> ${state()}"); dump("teams", listOf(4, 39, 40, 41, 43, 45))
             click(41); log("click Your Team -> '${title()}'"); dump("team menu", listOf(0, 1, 2, 45, 47, 49, 51, 53))

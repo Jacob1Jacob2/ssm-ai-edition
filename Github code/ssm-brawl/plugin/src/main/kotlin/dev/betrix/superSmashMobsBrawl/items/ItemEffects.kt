@@ -882,7 +882,11 @@ class ItemEffects(private val arena: ItemArena) {
         val bot=dev.betrix.superSmashMobsBrawl.bots.BotManager.isBot(p) && p.uniqueId !in handDriven
         // The sneak key takes the car down; it must not also be what it is in any other minecart, the way out.
         if(p.isSneaking) p.isSneaking=false
-        val keys=if(bot) botKeys(p,car) ?: return false else p.currentInput.let { Keys(p.location.yaw,it.isForward,it.isJump,it.isSneak) }
+        val keys=if(bot) botKeys(p,car) ?: return false else p.currentInput.let { input ->
+            // A and D swing the driver's view round, and the car with it (see CarSteering).
+            CarSteering.steer(p,heldTurn[p.uniqueId] ?: CarRules.turnWanted(input.isLeft,input.isRight))
+            Keys(p.location.yaw,input.isForward,input.isJump,input.isSneak)
+        }
         val (x,y,z)=CarRules.velocity(keys.yaw,keys.forward,keys.up,keys.down)
         car.speed.x=CarRules.eased(car.speed.x,x);car.speed.y=CarRules.eased(car.speed.y,y);car.speed.z=CarRules.eased(car.speed.z,z)
         carry(car)
@@ -918,10 +922,11 @@ class ItemEffects(private val arena: ItemArena) {
             if(debug || !bot && ++car.seconds%5==0) {
                 val at=car.at.toLocation(world)
                 val seat=p.location
-                log("[car] ${p.name} at %.1f %.1f %.1f: %.1f blocks since the last line (keys: %s%s%s), driver %.2f from the car, cart facing %.0f for a look of %.0f, looked round %.0f degrees while it stood, %d turns sent to %d who see it, fuel $left".format(
+                val (byKeys,steps)=CarSteering.taken(p.uniqueId)
+                log("[car] ${p.name} at %.1f %.1f %.1f: %.1f blocks since the last line (keys: %s%s%s), driver %.2f from the car, cart facing %.0f for a look of %.0f, looked round %.0f degrees while it stood, %d turns sent to %d who see it, turned %.0f degrees by A and D in %d steps, fuel $left".format(
                     at.x,at.y,at.z,car.lastAt?.takeIf { it.world==at.world }?.distance(at) ?: 0.0,
                     if(keys.forward) "forward " else "",if(keys.up) "up " else "",if(keys.down) "down" else "",
-                    hypot(seat.x-at.x,seat.z-at.z),cart.location.yaw,keys.yaw,car.turnedStill,car.turnsSent,cart.trackedBy.size))
+                    hypot(seat.x-at.x,seat.z-at.z),cart.location.yaw,keys.yaw,car.turnedStill,car.turnsSent,cart.trackedBy.size,byKeys,steps))
                 car.lastAt=at;car.turnedStill=0f;car.turnsSent=0
             }
             if(left<=0) {
@@ -1046,6 +1051,8 @@ class ItemEffects(private val arena: ItemArena) {
         var explicitTurns = true
         /** Debug: bots whose car goes by where they look and the keys they hold, as a player's does. */
         val handDriven = mutableSetOf<UUID>()
+        /** Debug: degrees a second a hand-driven bot's turn keys ask for, in place of keys it does not have. */
+        val heldTurn = mutableMapOf<UUID, Double>()
         /** The car is gone and its driver is where it was. (Safe to call twice.) */
         fun park(p: Player, car: Car) {
             if (car.parked) return
@@ -1053,6 +1060,8 @@ class ItemEffects(private val arena: ItemArena) {
             cars.remove(p.uniqueId, car)
             carts.remove(car.cart.uniqueId)
             handDriven.remove(p.uniqueId)
+            heldTurn.remove(p.uniqueId)
+            CarSteering.release(p.uniqueId)
             if (car.cart.isValid) { car.cart.eject(); car.cart.remove() }
             car.root.remove()
             p.fallDistance = 0f

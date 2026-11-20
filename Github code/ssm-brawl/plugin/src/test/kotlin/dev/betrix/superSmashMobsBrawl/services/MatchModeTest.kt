@@ -36,8 +36,23 @@ class MatchModeTest : StringSpec({
         // From four players on, and on Random (where the number is rolled for every match), all of them.
         for (players in GameSetupService.PLAYER_COUNTS.filter { it >= 4 }) MatchMode.entries.filter { it.available(players) } shouldBe MatchMode.entries
         for (players in listOf(1, 2, 16)) MatchMode.entries.filter { it.available(players, random = true) } shouldBe MatchMode.entries
-        // Every icon that can go dark has its dark copy in the pack.
-        MenuAssets.DARK_FLAT_ICONS.toSet() shouldBe setOf("copper_axe", "iron_axe", "copper_sword", "iron_sword")
+        // Every icon that can go dark has its dark copy in the pack: the four modes, and the difficulty row.
+        MenuAssets.DARK_FLAT_ICONS.toSet() shouldBe setOf("copper_axe", "iron_axe", "copper_sword", "iron_sword",
+            "barrier", "lime_dye", "yellow_dye", "orange_dye", "red_dye", "magenta_dye")
+        MenuAssets.DARK_FLAT_ICONS.size shouldBe MenuAssets.DARK_FLAT_ICONS.toSet().size
+    }
+
+    "the bots' difficulty is only there to set when the match has bots" {
+        // The sandbox has none; any real match has, and so has Random players, which never rolls the sandbox.
+        GameSetupService.Setup(players = 1).hasBots shouldBe false
+        for (players in GameSetupService.PLAYER_COUNTS) GameSetupService.Setup(players = players).hasBots shouldBe true
+        GameSetupService.Setup(players = 1, playersRandom = true).hasBots shouldBe true
+        // Going to the sandbox and back leaves the difficulty that was picked as it was.
+        val setup = GameSetupService.Setup(players = 8, difficulty = dev.betrix.superSmashMobsBrawl.bots.BotDifficulty.EXPERT)
+        setup.players = 1
+        setup.hasBots shouldBe false
+        setup.players = 8
+        setup.difficulty shouldBe dev.betrix.superSmashMobsBrawl.bots.BotDifficulty.EXPERT
     }
 
     "a setup knows its seats: who is a teammate, who an opponent" {

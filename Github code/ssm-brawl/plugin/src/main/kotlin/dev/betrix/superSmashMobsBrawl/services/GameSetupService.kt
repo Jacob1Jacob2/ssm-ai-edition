@@ -79,6 +79,10 @@ object GameSetupService : KoinComponent {
         val sandbox: Boolean
             get() = players <= 1
 
+        /** Is there a bot in the match this gives? Not in the sandbox (on Random players there always is: it rolls 2 or more). */
+        val hasBots: Boolean
+            get() = playersRandom || !sandbox
+
         /** True when this gives a match of two teams, which takes four fighters or more. */
         val teamGame: Boolean
             get() = teams && players >= 4
@@ -287,11 +291,16 @@ object GameSetupService : KoinComponent {
             }
 
             set(8, menuItem(Material.HOPPER, "Select Lives", lore = listOf("Current: ${s.lives} ${if (s.lives == 1) "life" else "lives"}", "How many lives every fighter starts with"))) { SetupSelectionMenus.lives(player) }
-            set(10,menuItem(Material.BARRIER,"None",NamedTextColor.RED,listOf("Bots stand still and do not attack"),"Difficulty" in chosen && s.botsIdle)) {s.botsIdle=true;changed(player)}
+            // Second row: how good the bots are. With no bots (the sandbox) there is nothing to set it
+            // on, so the row is there but dark, like the modes; what was picked is kept for a real match.
+            val noBots = listOf("The sandbox has no bots")
+            if (s.hasBots) set(10,menuItem(Material.BARRIER,"None",NamedTextColor.RED,listOf("Bots stand still and do not attack"),"Difficulty" in chosen && s.botsIdle)) {s.botsIdle=true;changed(player)}
+            else set(10, MenuIcons.dark(menuItem(Material.BARRIER, "None", NamedTextColor.DARK_GRAY, noBots))) { unavailable(player) }
             set(17,menuItem(Material.CHEST,"Choose Opponents",lore=listOf("Choose players from the bot roster",if(s.effectiveOpponents.isEmpty())"Random opponents" else "${s.effectiveOpponents.size}/${s.opponentSlots} chosen — random fills the rest"))) {SetupSelectionMenus.opponents(player)}
             DIFFICULTIES.forEachIndexed { i, difficulty ->
                 val name = difficulty?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: "Random"
-                set(9 + CHOICE_COLUMNS[i], menuItem(DYES[i], name, CHOICE_COLORS[i],
+                if (!s.hasBots) set(9 + CHOICE_COLUMNS[i], MenuIcons.dark(menuItem(DYES[i], name, NamedTextColor.DARK_GRAY, noBots))) { unavailable(player) }
+                else set(9 + CHOICE_COLUMNS[i], menuItem(DYES[i], name, CHOICE_COLORS[i],
                     listOf(if (difficulty == null) "Each bot uses a random difficulty" else "Set all bots to $name"), "Difficulty" in chosen && !s.botsIdle && s.difficulty == difficulty)) {
                     s.difficulty = difficulty
                     s.botsIdle = false
