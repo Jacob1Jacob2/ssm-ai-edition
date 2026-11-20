@@ -42,7 +42,7 @@ object MenuIcons {
     }
     fun star(item:ItemStack,index:Int) {SmashItems.styleStar(item,index)}
     /** The materials the pack has a dark copy of (see [MenuAssets]): a button that is there but cannot be used yet. */
-    private val darkIcons=setOf(Material.COPPER_CHEST,Material.PLAYER_HEAD)+MenuAssets.DARK_FLAT_ICONS.map { Material.valueOf(it.uppercase()) }
+    private val darkIcons=setOf(Material.COPPER_CHEST,Material.CHEST,Material.PLAYER_HEAD)+MenuAssets.DARK_FLAT_ICONS.map { Material.valueOf(it.uppercase()) }
     /** The same icon with the light off. It lights up again by being the plain item. */
     fun dark(item:ItemStack):ItemStack=item.apply {
         if(type in darkIcons)editMeta { it.itemModel=NamespacedKey("ssm","dark_${type.key.key}") }
@@ -137,6 +137,15 @@ object MenuAssets {
         for(flat in DARK_FLAT_ICONS)files["assets/ssm/items/dark_$flat.json"] =
             """{"model":{"type":"minecraft:model","model":"minecraft:item/$flat","tints":[{"type":"minecraft:constant","value":$shade}]}}""".toByteArray()
         files["assets/ssm/items/dark_copper_chest.json"] = """{"model":{"type":"minecraft:composite","models":[{"type":"minecraft:special","base":"minecraft:item/copper_chest","model":{"type":"minecraft:chest","texture":"minecraft:copper"}},{"type":"minecraft:model","model":"ssm:item/dark_chest_veil"}]}}""".toByteArray()
+        // The wooden chest (Choose Opponents, dark in the sandbox): the same shape and the same veil,
+        // on the chest's own base model. The chest itself is the game's own, the one it wears over
+        // Christmas included, so that the dark one is never a different chest from the lit one.
+        files["assets/ssm/models/item/dark_plain_chest_veil.json"] = veilModel("minecraft:item/chest",
+            listOf(1-gap,-gap,1-gap) to listOf(15+gap,14+gap,15+gap), listOf(7-gap,7-gap,15.0) to listOf(9+gap,11+gap,16+gap))
+        fun woodenChest(texture:String)="""{"type":"minecraft:special","base":"minecraft:item/chest","model":{"type":"minecraft:chest","texture":"minecraft:$texture"}}"""
+        files["assets/ssm/items/dark_chest.json"] = ("""{"model":{"type":"minecraft:composite","models":[{"type":"minecraft:select","property":"minecraft:local_time","pattern":"MM-dd",""" +
+            """"cases":[{"when":["12-24","12-25","12-26"],"model":${woodenChest("christmas")}}],"fallback":${woodenChest("normal")}},""" +
+            """{"type":"minecraft:model","model":"ssm:item/dark_plain_chest_veil"}]}}""").toByteArray()
         files["assets/ssm/items/dark_player_head.json"] = """{"model":{"type":"minecraft:composite","models":[$head,{"type":"minecraft:model","model":"ssm:item/dark_head_veil"}]}}""".toByteArray()
         // Shadow Walk keeps the vanilla skeleton skull, with an animated glint when enabled.
         files["assets/ssm/textures/item/shadow_walk_enabled.png"] = selectionShimmer(showCheck=false)
@@ -282,7 +291,9 @@ object MenuAssets {
     /** Flat icons (one picture, no block shape) that have a dark copy, by their item model name. */
     val DARK_FLAT_ICONS = listOf("iron_sword", "copper_axe", "iron_axe", "copper_sword",
         // The difficulty row, dark in the sandbox: None and the five dyes.
-        "barrier", "lime_dye", "yellow_dye", "orange_dye", "red_dye", "magenta_dye")
+        "barrier", "lime_dye", "yellow_dye", "orange_dye", "red_dye", "magenta_dye",
+        // And the personality column, dark there too: a bot that is not there says nothing.
+        "minecart", "furnace_minecart", "chest_minecart", "tnt_minecart", "command_block_minecart")
     /** One flat see-through black: what a veiled icon is darkened with. */
     internal fun veil(): ByteArray {
         val image=java.awt.image.BufferedImage(16,16,java.awt.image.BufferedImage.TYPE_INT_ARGB)

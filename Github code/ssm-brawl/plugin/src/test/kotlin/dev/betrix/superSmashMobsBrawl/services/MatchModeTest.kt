@@ -36,13 +36,31 @@ class MatchModeTest : StringSpec({
         // From four players on, and on Random (where the number is rolled for every match), all of them.
         for (players in GameSetupService.PLAYER_COUNTS.filter { it >= 4 }) MatchMode.entries.filter { it.available(players) } shouldBe MatchMode.entries
         for (players in listOf(1, 2, 16)) MatchMode.entries.filter { it.available(players, random = true) } shouldBe MatchMode.entries
-        // Every icon that can go dark has its dark copy in the pack: the four modes, and the difficulty row.
+        // Every icon that can go dark has its dark copy in the pack: the four modes, the difficulty row, the personality column.
         MenuAssets.DARK_FLAT_ICONS.toSet() shouldBe setOf("copper_axe", "iron_axe", "copper_sword", "iron_sword",
-            "barrier", "lime_dye", "yellow_dye", "orange_dye", "red_dye", "magenta_dye")
+            "barrier", "lime_dye", "yellow_dye", "orange_dye", "red_dye", "magenta_dye",
+            "minecart", "furnace_minecart", "chest_minecart", "tnt_minecart", "command_block_minecart")
         MenuAssets.DARK_FLAT_ICONS.size shouldBe MenuAssets.DARK_FLAT_ICONS.toSet().size
     }
 
-    "the bots' difficulty is only there to set when the match has bots" {
+    "every dark icon is in the pack, as something the game can read" {
+        val files = mutableMapOf<String, ByteArray>()
+        MenuAssets.addTo(files)
+        // The flat ones, and the three that are drawn as blocks: both chests and the head.
+        for (icon in MenuAssets.DARK_FLAT_ICONS + listOf("chest", "copper_chest", "player_head")) {
+            val definition = files["assets/ssm/items/dark_$icon.json"]?.toString(Charsets.UTF_8)
+            (definition != null) shouldBe true
+            val model = (kotlinx.serialization.json.Json.parseToJsonElement(definition!!) as kotlinx.serialization.json.JsonObject)["model"] as kotlinx.serialization.json.JsonObject
+            (model["type"].toString().trim('"') in setOf("minecraft:model", "minecraft:composite")) shouldBe true
+        }
+        // The dark wooden chest is the game's own chest under a veil made on the chest's own model.
+        val chest = files.getValue("assets/ssm/items/dark_chest.json").toString(Charsets.UTF_8)
+        (chest.contains("\"texture\":\"minecraft:normal\"") && chest.contains("ssm:item/dark_plain_chest_veil")) shouldBe true
+        val veil = kotlinx.serialization.json.Json.parseToJsonElement(files.getValue("assets/ssm/models/item/dark_plain_chest_veil.json").toString(Charsets.UTF_8)) as kotlinx.serialization.json.JsonObject
+        veil["parent"].toString() shouldBe "\"minecraft:item/chest\""
+    }
+
+    "the bots' difficulty, their chat and who they are is only there to set when the match has bots" {
         // The sandbox has none; any real match has, and so has Random players, which never rolls the sandbox.
         GameSetupService.Setup(players = 1).hasBots shouldBe false
         for (players in GameSetupService.PLAYER_COUNTS) GameSetupService.Setup(players = players).hasBots shouldBe true

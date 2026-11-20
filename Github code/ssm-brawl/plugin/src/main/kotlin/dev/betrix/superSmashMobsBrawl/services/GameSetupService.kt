@@ -296,7 +296,8 @@ object GameSetupService : KoinComponent {
             val noBots = listOf("The sandbox has no bots")
             if (s.hasBots) set(10,menuItem(Material.BARRIER,"None",NamedTextColor.RED,listOf("Bots stand still and do not attack"),"Difficulty" in chosen && s.botsIdle)) {s.botsIdle=true;changed(player)}
             else set(10, MenuIcons.dark(menuItem(Material.BARRIER, "None", NamedTextColor.DARK_GRAY, noBots))) { unavailable(player) }
-            set(17,menuItem(Material.CHEST,"Choose Opponents",lore=listOf("Choose players from the bot roster",if(s.effectiveOpponents.isEmpty())"Random opponents" else "${s.effectiveOpponents.size}/${s.opponentSlots} chosen — random fills the rest"))) {SetupSelectionMenus.opponents(player)}
+            if (s.hasBots) set(17,menuItem(Material.CHEST,"Choose Opponents",lore=listOf("Choose players from the bot roster",if(s.effectiveOpponents.isEmpty())"Random opponents" else "${s.effectiveOpponents.size}/${s.opponentSlots} chosen — random fills the rest"))) {SetupSelectionMenus.opponents(player)}
+            else set(17, MenuIcons.dark(menuItem(Material.CHEST, "Choose Opponents", NamedTextColor.DARK_GRAY, noBots))) { unavailable(player) }
             DIFFICULTIES.forEachIndexed { i, difficulty ->
                 val name = difficulty?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: "Random"
                 if (!s.hasBots) set(9 + CHOICE_COLUMNS[i], MenuIcons.dark(menuItem(DYES[i], name, NamedTextColor.DARK_GRAY, noBots))) { unavailable(player) }
@@ -351,7 +352,9 @@ object GameSetupService : KoinComponent {
                 Triple(Material.COMMAND_BLOCK_MINECART, BotPersonality.RANDOM, listOf("Each bot gets its own personality",
                     "They argue, take sides and go after each other", "No more than half are Silent")),
             ).forEachIndexed { row, (material, personality, lore) ->
-                set(row * 9, menuItem(material, personality.label, PERSONALITY_COLORS[row], lore,
+                // (Dark in the sandbox, as the difficulties are: nobody is there to say anything.)
+                if (!s.hasBots) set(row * 9, MenuIcons.dark(menuItem(material, personality.label, NamedTextColor.DARK_GRAY, noBots))) { unavailable(player) }
+                else set(row * 9, menuItem(material, personality.label, PERSONALITY_COLORS[row], lore,
                     "Personality" in chosen && s.botPersonality == personality)) { s.botPersonality = personality; changed(player) }
             }
             val kit = KitService.currentSelectedKitForPlayer(player)
