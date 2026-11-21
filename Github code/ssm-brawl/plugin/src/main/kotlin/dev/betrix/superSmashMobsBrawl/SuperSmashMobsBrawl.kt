@@ -223,6 +223,8 @@ class SuperSmashMobsBrawl : SuspendingJavaPlugin(), KoinComponent {
 
     override suspend fun onDisableAsync() {
         logger.info("SSMB shutting down")
+        // (A balance run cut short by the server stopping keeps what it had recorded.)
+        dev.betrix.superSmashMobsBrawl.bots.BalanceRunner.stop("the server is stopping")
         BotConversationService.shutdown()
         dev.betrix.superSmashMobsBrawl.services.BotSkinService.teardown()
         dev.betrix.superSmashMobsBrawl.items.ItemService.teardown()

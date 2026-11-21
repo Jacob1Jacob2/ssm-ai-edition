@@ -1193,6 +1193,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             if (ItemService.kind(player.inventory.getItem(slot)) != null) {
                 player.inventory.setItem(slot, null)
                 dbg("letting go of ${have.label}: ${best.first.label} is more use against someone it cannot get to")
+                if (dev.betrix.superSmashMobsBrawl.items.ItemStats.on) dev.betrix.superSmashMobsBrawl.items.ItemStats.row(ItemService.arena(player)?.game, "discard", have, player, extra = "swapped for a better one")
             }
             carried = null
         }
@@ -2358,6 +2359,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         if (kind == ArenaItem.FLYING_CAR && charge <= 0 && !player.isInsideVehicle) {
             dbg("the Flying Car is out of fuel: thrown away")
             player.inventory.setItem(slot, null)
+            if (dev.betrix.superSmashMobsBrawl.items.ItemStats.on) dev.betrix.superSmashMobsBrawl.items.ItemStats.row(ItemService.arena(player)?.game, "discard", kind, player, extra = "out of fuel")
             carried = null
             return
         }
@@ -2412,6 +2414,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             // An item this bot cannot spend would block every later pickup: let it go.
             dbg("discarding unusable item ${kind.label}")
             player.inventory.setItem(slot, null)
+            if (dev.betrix.superSmashMobsBrawl.items.ItemStats.on) dev.betrix.superSmashMobsBrawl.items.ItemStats.row(ItemService.arena(player)?.game, "discard", kind, player, extra = "no use found")
             carried = null
         }
     }

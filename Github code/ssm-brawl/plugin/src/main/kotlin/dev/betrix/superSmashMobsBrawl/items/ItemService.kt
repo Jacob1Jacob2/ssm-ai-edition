@@ -131,6 +131,7 @@ object ItemService : KoinComponent {
         }
         player.playSound(player.location, Sound.ENTITY_ITEM_PICKUP, .65f, 1f)
         player.sendMessage(Component.text("Item> ", NamedTextColor.BLUE).append(Component.text(kind.label, kind.rarity.color)))
+        if (ItemStats.on) ItemStats.row(games.getMinigameForPlayer(player), "pickup", kind, player)
         return true
     }
 
@@ -232,9 +233,14 @@ object ItemService : KoinComponent {
         val cost = if (kind == ArenaItem.KNOCKBACK_ROD && !left) 2 else 1
         // (An empty Flying Car is still a click: it says it is out of fuel.)
         if (uses(item) < cost && kind != ArenaItem.FLYING_CAR) return false
+        val healthBefore = if (ItemStats.on) player.health + player.absorptionAmount else 0.0
         if (!arena.effects.use(player, kind, actualTarget)) {
             if (kind == ArenaItem.FLYING_CAR) cooldowns[player.uniqueId] = now + 12
             return false
+        }
+        // (For a balance run: what the use gave its user back there and then, as a share of a full bar.)
+        if (ItemStats.on) (player.health + player.absorptionAmount - healthBefore).takeIf { it > 0.01 }?.let { gained ->
+            ItemStats.row(arena.game, "heal", kind, player, value = ItemStats.percent(player, gained))
         }
         // The Flying Car is not used up by getting in or out of it, only by the flying.
         if (kind != ArenaItem.FLYING_CAR) consume(player, cost)
@@ -314,6 +320,7 @@ object ItemService : KoinComponent {
         if (count < amount) return false
         player.inventory.setItem(slot, if (count == amount) null else stack(kind, count - amount).also { it.type = item.type })
         if (kind == ArenaItem.SHOTBOW && count == amount) clearShotbowAmmo(player)
+        if (ItemStats.on) ItemStats.row(games.getMinigameForPlayer(player), "use", kind, player, value = amount.toDouble())
         return true
     }
 

@@ -75,6 +75,10 @@ object CombatLogService : KoinComponent {
                         BrawlDamageType.MeleeAttack -> "Attack"
                     }
         append(victim, Hit(attacker.uniqueId, BotManager.displayNameOf(attacker), amount, label, now))
+        // (For a balance run: every hit, by what it was done with, as a share of the victim's full bar.)
+        val stats = dev.betrix.superSmashMobsBrawl.items.ItemStats
+        if (stats.on) stats.row(minigameService.getMinigameForPlayer(victim), "damage", stats.itemOf(label), attacker, victim,
+            stats.percent(victim, amount), label)
         // A bot remembers who hit it where, and what it did back: how it tells a trap from a fight when it dies.
         BotManager.brainOf(victim)?.struck(attacker)
         BotManager.brainOf(attacker)?.dealt(victim, amount)
@@ -92,6 +96,8 @@ object CombatLogService : KoinComponent {
     fun recordKnockback(victim: Player, attacker: Player, sourceName: String) {
         if(attacker==victim)return
         append(victim, Hit(attacker.uniqueId, BotManager.displayNameOf(attacker), 0.0, sourceName, System.currentTimeMillis(), true))
+        val stats = dev.betrix.superSmashMobsBrawl.items.ItemStats
+        if (stats.on) stats.row(minigameService.getMinigameForPlayer(victim), "knock", stats.itemOf(sourceName), attacker, victim, extra = sourceName)
         BotManager.brainOf(victim)?.struck(attacker)
     }
 
@@ -114,6 +120,11 @@ object CombatLogService : KoinComponent {
         BotConversationService.death(game, victim, lastHit?.attackerId, lastHit?.label ?:
             if ((reason as? DeathReason.Hazard)?.type == HazardType.VOID) "Void" else "the environment")
         val recipients = game.allPlayers().mapNotNull {it.player}.filter { !BotManager.isBot(it) }
+        // (For a balance run: who died, by whom, and with what; "Void" or the cause when by nobody.)
+        dev.betrix.superSmashMobsBrawl.items.ItemStats.let { stats ->
+            if (stats.on) stats.row(game, "death", stats.itemOf(lastHit?.label), lastHit?.attackerId?.let(Bukkit::getPlayer), victim,
+                extra = lastHit?.label ?: if ((reason as? DeathReason.Hazard)?.type == HazardType.VOID) "Void" else "the environment")
+        }
 
         lastHit?.let { hit ->
             Bukkit.getPlayer(hit.attackerId)?.takeIf {

@@ -524,6 +524,53 @@ class BotsCommand : KoinComponent {
         sender.sendMessage("Item game: ${bots.joinToString { it.name }}")
     }
 
+    @Execute(name = "balance")
+    @Description("Debug: a long run of bots-only free-for-alls with items on, several at a time, recorded for an item balance report. drops is 'real' (by rarity) or 'equal' (every item as often as any other); without is 'none' or item ids with commas. Progress and the end are logged as [balance]")
+    fun balance(
+        @Context sender: CommandSender,
+        @Arg run: String,
+        @Arg matches: Int,
+        @Arg concurrent: Int,
+        @Arg players: Int,
+        @Arg difficulty: String,
+        @Arg drops: String,
+        @Arg seconds: Int,
+        @Arg lives: Int,
+        @Arg without: String,
+    ) {
+        if (!allowed(sender)) return
+        val left = if (without.equals("none", true)) emptySet() else without.split(',').mapNotNull { dev.betrix.superSmashMobsBrawl.items.ArenaItem.parse(it.trim()) }.toSet()
+        sender.sendMessage(dev.betrix.superSmashMobsBrawl.bots.BalanceRunner.start(dev.betrix.superSmashMobsBrawl.bots.BalanceRunner.Plan(
+            run.filter { it.isLetterOrDigit() || it == '-' || it == '_' }.ifEmpty { "run" }, matches.coerceIn(1, 5000), concurrent.coerceIn(1, 5),
+            players.coerceIn(2, 16), if (difficulty == "any") null else BotDifficulty.parse(difficulty), drops.equals("equal", true),
+            seconds.coerceAtLeast(1), lives.coerceIn(1, 8), left)))
+    }
+
+    @Execute(name = "balancestop")
+    @Description("Debug: ends a balance run where it stands (matches still being played are not counted)")
+    fun balanceStop(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        dev.betrix.superSmashMobsBrawl.bots.BalanceRunner.stop("stopped by hand")
+    }
+
+    @Execute(name = "itemreport")
+    @Description("Debug: adds up the records of one or more balance runs (run names with commas, from this server's item-stats folder) into <name>.md and <name>.csv there")
+    fun itemReport(@Context sender: CommandSender, @Arg name: String, @Arg runs: String, @dev.rollczi.litecommands.annotations.join.Join("title") title: String) {
+        if (!allowed(sender)) return
+        val runner = dev.betrix.superSmashMobsBrawl.bots.BalanceRunner
+        val report = dev.betrix.superSmashMobsBrawl.items.ItemReport
+        val rows = runs.split(',').filter { it.isNotBlank() }.flatMapIndexed { index, run ->
+            val file = runner.file(run.trim())
+            if (!file.exists()) { plugin.logger.info("[itemreport] no record of a run called ${run.trim()} (${file.path})"); emptyList() }
+            else file.useLines { report.parse(it, "$index:") }
+        }
+        val built = report.build(rows)
+        val folder = runner.file("x").parentFile
+        java.io.File(folder, "$name.md").writeText(report.markdown(title, built))
+        java.io.File(folder, "$name.csv").writeText(report.csv(built))
+        plugin.logger.info("[itemreport] $name: ${rows.size} events of ${built.totals.matches} matches -> ${java.io.File(folder, "$name.md").path}")
+    }
+
     @Execute(name = "crystalgame")
     @Description("Debug: a bots-only game where a Smash Crystal of one rarity falls every few seconds (kit 'any' for mixed)")
     fun crystalGame(

@@ -84,8 +84,9 @@ class ItemArena(val game: BrawlMinigame) {
         tick++
         if (tick >= nextDrop) {
             if (game.settings.items) {
-                val kind = ArenaItem.roll(game.settings.enabledItems)
-                if (kind != null) spawnDrop(kind)
+                // (A balance run can ask for every item equally often, to see enough of the rare ones.)
+                val kind = if (game.settings.equalItemDrops) game.settings.enabledItems.randomOrNull() else ArenaItem.roll(game.settings.enabledItems)
+                if (kind != null && spawnDrop(kind) && ItemStats.on) ItemStats.row(game, "drop", kind)
             }
             nextDrop = tick + game.settings.itemDelaySeconds().coerceAtLeast(1) * 20L
         }

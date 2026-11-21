@@ -305,17 +305,23 @@ object BotManager : KoinComponent {
 
     fun brainOf(player: Player): BotBrain? = bots[player.uniqueId]?.brain
 
-    /** Test helper: start a game made only of bots. [kits] fixes the kit of each bot by position. */
+    /**
+     * Test helper: start a game made only of bots. [kits] fixes the kit of each bot by position.
+     * With [anyProfile] the bots are anybody on the roster, playing at [difficulty] whatever their
+     * own is: for many matches at once at one difficulty, which has only a quarter of the roster.
+     */
     fun startBotGame(def: MinigameDef, count: Int, difficulty: BotDifficulty? = null, mapId: String? = null,
                      kits: List<String> = emptyList(), lobby: Int? = null,
-                     setup: dev.betrix.superSmashMobsBrawl.services.GameSetupService.Setup? = null): List<Player> {
+                     setup: dev.betrix.superSmashMobsBrawl.services.GameSetupService.Setup? = null,
+                     anyProfile: Boolean = false): List<Player> {
         val lobbyId = lobby ?: dev.betrix.superSmashMobsBrawl.services.LobbyRouting.ids.firstOrNull { !dev.betrix.superSmashMobsBrawl.services.LobbyService.busy(it) } ?: return emptyList()
         val spawned = freeProfiles()
-            .filter { difficulty == null || it.difficulty == difficulty }
+            .filter { anyProfile || difficulty == null || it.difficulty == difficulty }
             .shuffled()
             .take(count)
             .mapIndexedNotNull { i, profile ->
-                spawn(profile.copy(level = BotIdentity.rollLevel(profile.difficulty)), kits.getOrNull(i) ?: randomKitId())
+                val plays = if (anyProfile && difficulty != null) difficulty else profile.difficulty
+                spawn(profile.copy(difficulty = plays, level = BotIdentity.rollLevel(plays)), kits.getOrNull(i) ?: randomKitId())
             }
         spawned.forEach {
             dev.betrix.superSmashMobsBrawl.services.LobbyService.assign(it, lobbyId)

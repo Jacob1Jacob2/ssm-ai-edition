@@ -809,6 +809,8 @@ class ItemEffects(private val arena: ItemArena) {
         val car=Car(root,cart,slot,home,start.toVector())
         if(!root.addPassenger(cart) || !cart.addPassenger(p)) { park(p,car);return false }
         cars[p.uniqueId]=car
+        // (Getting in is the car's "use": what it burns is counted apart, a second at a time.)
+        if(ItemStats.on) ItemStats.row(arena.game,"use",ArenaItem.FLYING_CAR,p,value=1.0)
         world.playSound(p.location,Sound.BLOCK_PISTON_EXTEND,.8f,1.4f)
         if(debug || !dev.betrix.superSmashMobsBrawl.bots.BotManager.isBot(p)) log("[car] ${p.name} in, ${ItemService.uses(p.inventory.getItem(slot))} seconds of fuel")
         arena.loop(Int.MAX_VALUE,finish={ park(p,car) }) { drive(p,car) }
@@ -917,6 +919,7 @@ class ItemEffects(private val arena: ItemArena) {
         if(++car.burnt>=20) {
             car.burnt=0
             val left=ItemService.charge(p,car.slot,-1)
+            if(ItemStats.on) ItemStats.row(arena.game,"fuel",ArenaItem.FLYING_CAR,p,value=1.0)
             // (A player's car leaves a line every five seconds whether or not anything is being
             // debugged: what the server saw of a drive is the only account of it there is afterwards.)
             if(debug || !bot && ++car.seconds%5==0) {
@@ -963,7 +966,10 @@ class ItemEffects(private val arena: ItemArena) {
             if(debug) log("[car] ${p.name} (bot) back where it can stand, getting out with $fuel seconds left" +
                 if(car.gaveUp) ": no way to ${prey?.name} by car" else if(prey==null) ": nobody to chase" else "")
             // Too little left to go anywhere and come back: the rest is not worth keeping the hand full for.
-            if(low && prey!=null) p.inventory.setItem(car.slot,null)
+            if(low && prey!=null) {
+                p.inventory.setItem(car.slot,null)
+                if(ItemStats.on) ItemStats.row(arena.game,"discard",ArenaItem.FLYING_CAR,p,extra="tank nearly dry")
+            }
             return null
         }
         val keys=Keys(Math.toDegrees(atan2(-dx,dz)).toFloat(),flat>.5,dy>.35,dy< -.35)

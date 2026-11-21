@@ -205,7 +205,11 @@ class FissureAbility(player: Player) : BrawlAbility("fissure", player) {
         private fun handleDamage(base: Block, up: Block) {
             val upCenter = up.location.clone().add(0.5, 0.5, 0.5)
             Bukkit.getOnlinePlayers().forEach { target ->
-                if (target == owner) {
+                // Everybody online is gone through, and that is everybody in every match and in the
+                // lobbies: somebody in another world is nowhere near this one. (Measuring the
+                // distance to them is an error, which ended the fissure's damage for everyone after
+                // them in the list, every tick, whenever a second match was on.)
+                if (target == owner || target.world != up.world) {
                     return@forEach
                 }
                 if (target.location.block == base) {

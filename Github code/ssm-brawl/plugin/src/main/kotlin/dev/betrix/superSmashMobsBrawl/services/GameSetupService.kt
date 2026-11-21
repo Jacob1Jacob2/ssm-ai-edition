@@ -69,6 +69,11 @@ object GameSetupService : KoinComponent {
         var playersRandom: Boolean = false,
         /** Two teams: the colour of the player's own side (Blue, Red, or either one, settled as the match is made). */
         var teamColor: dev.betrix.superSmashMobsBrawl.minigames.TeamColor = dev.betrix.superSmashMobsBrawl.minigames.TeamColor.BLUE,
+        /**
+         * For a balance run only (it is not in the menu and is not saved): every enabled item drops
+         * equally often, whatever its rarity, so that the rare ones are seen often enough to measure.
+         */
+        var equalItemDrops: Boolean = false,
     ) {
         /** How the fighters stand to each other. */
         var matchMode: MatchMode
