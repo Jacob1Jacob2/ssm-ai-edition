@@ -23,8 +23,8 @@ object SmashService : KoinComponent {
     private val sessions=mutableMapOf<UUID,SmashSession>()
     private val previewDrops=mutableMapOf<UUID,CrystalDrop>()
     fun session(player:Player)=sessions[player.uniqueId]
-    fun permitsStorm(world:World)=arenas.values.any {it.world==world && it.hasStorm}
-    fun existingArena(world:World)=arenas.values.firstOrNull {it.world==world}
+    fun permitsStorm(world:World)=arenas.values.any {it.worldOrNull==world && it.hasStorm}
+    fun existingArena(world:World)=arenas.values.firstOrNull {it.worldOrNull==world}
     fun arena(game:BrawlMinigame)=arenas.getOrPut(game) { SmashArena(game) }
     fun has(player:Player,key:String)=session(player)?.has(key)==true
     fun ownsXp(player:Player)=session(player)?.powers?.values?.any {it.spec.fuelSeconds>0 || it.spec.key in setOf("enderman:0","zombie:0","polar_bear:3") || (it.spec.key=="slime:1" && it.active)}==true

@@ -133,7 +133,9 @@ class BatWaveAbility(player: Player) : BrawlAbility("bat_wave", player) {
                     it.world.playSound(it.location,Sound.ENTITY_BAT_AMBIENT,.65f,1.2f)
                 }
 
-                for (bat in bats) {
+                // A copy: a bat's hit can be the one that ends the match, which clears the list
+                // while it is being gone through here.
+                for (bat in bats.toList()) {
                     if (!bat.isValid) {
                         continue
                     }

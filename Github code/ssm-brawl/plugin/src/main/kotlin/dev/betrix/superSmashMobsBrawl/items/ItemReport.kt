@@ -210,18 +210,21 @@ object ItemReport {
         t.baseline?.let { appendLine("The holder of an average item won ${percent(it)} of the matches they had it in: that is what \"Lift\" is measured from.") }
         appendLine()
         appendLine("Damage, healing and self-damage are in percent of a full health bar, per pickup. Kills are per 100 pickups.")
-        appendLine("Lift is how much more (or less) often than that average the item's holder won, in points, with its margin of error.")
+        appendLine("Lift is how much more (or less) often than that average the item's holder won, in points, give or take the figure after it;")
+        appendLine("a lift smaller than twice that figure is as likely chance as the item.")
         for (tier in ItemRarity.entries.reversed()) {
             val lines = report.lines.filter { it.item.rarity == tier }.sortedWith(compareByDescending<Line> { it.killsEach ?: -1.0 }.thenByDescending { it.damageEach ?: -1.0 })
             appendLine()
             appendLine("## ${tier.label}")
             appendLine()
-            appendLine("| Item | Dropped | Picked up | Uses | Hit someone | Damage | Kills /100 | Of all kills | Healed | Hurt its user | Thrown away | Lift |")
+            // Of the kills items made, not of every kill: kits make most kills, and against all of
+            // them every item rounded to nothing.
+            appendLine("| Item | Dropped | Picked up | Uses | Hit someone | Damage | Kills /100 | Of item kills | Healed | Hurt its user | Thrown away | Lift |")
             appendLine("|---|---|---|---|---|---|---|---|---|---|---|---|")
             for (line in lines) {
                 val lifted = lift(line, t)?.let { (points, margin) -> "${if (points >= 0) "+" else ""}${one(points)} ±${one(margin)}" } ?: "-"
                 appendLine("| ${line.item.label} | ${line.drops} | ${line.pickups} | ${figure(line.usesEach)} | ${percent(line.hitShare)} | " +
-                    "${figure(line.damageEach)} | ${figure(line.killsEach?.times(100))} | ${percent(share(line.kills.toDouble(), t.deaths))} | " +
+                    "${figure(line.damageEach)} | ${figure(line.killsEach?.times(100))} | ${percent(share(line.kills.toDouble(), t.itemKills))} | " +
                     "${figure(line.healEach)} | ${figure(line.selfDamageEach)} | ${percent(line.discardShare)} | $lifted |")
             }
         }
@@ -250,7 +253,20 @@ object ItemReport {
             appendLine()
             report.otherDamage.entries.sortedByDescending { it.value }.take(12).forEach { appendLine("- ${it.key}: ${percent(it.value / t.damage)} of all damage") }
         }
+        appendLine()
+        appendLine("## What these figures leave out")
+        appendLine()
+        NOTES.forEach { appendLine("- $it") }
     }
+
+    /** What a reader has to know before taking a figure at its word: what was not counted, and who was playing. */
+    val NOTES = listOf(
+        "Bots played every fighter, so each figure is the item in a bot's hands: an item the bots use badly looks weaker than it is, and one they cannot answer looks stronger.",
+        "A tool upgrade becomes the upgrade for a tool the fighter's kit has. A dropped Shovel upgrade can be picked up as an Axe upgrade, so read the three together.",
+        "The tool upgrades, the Armor Upgrade and the Mystery Ability do their damage through the kit's own abilities, where it is counted as the kit's: only Lift says anything about them.",
+        "Poison is not counted as damage, so the Poison Mist shows who it reached but not what it did to them.",
+        "Healing is what the item gave back at once: the First Aid Kit's twenty seconds of regeneration are not in its figure, and the Gilded Apple's is its absorption hearts.",
+    )
 
     /** Every figure, one item a line, for sorting and charting elsewhere. */
     fun csv(report: Report): String = buildString {

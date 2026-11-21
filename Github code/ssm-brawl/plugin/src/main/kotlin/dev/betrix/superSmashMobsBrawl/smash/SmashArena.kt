@@ -13,6 +13,12 @@ import net.kyori.adventure.text.Component
 /** One scheduler per arena, with bounded effects and reversible landing platforms. */
 class SmashArena(val game: BrawlMinigame) {
     val world get() = game.worldManager.getWorld()!!.world
+    /**
+     * The arena's world, or nothing once its match has given the world back. An arena is only taken
+     * off the list on the tick after its match ends, so anything that goes through every arena (to
+     * find the one a block is in) meets one with no world; asking it for [world] is an error.
+     */
+    val worldOrNull get() = game.worldManager.getWorld()?.world
     var tick = 0L; private set
     private var nextDrop = interval()
     private val effects = mutableListOf<SmashEffect>()

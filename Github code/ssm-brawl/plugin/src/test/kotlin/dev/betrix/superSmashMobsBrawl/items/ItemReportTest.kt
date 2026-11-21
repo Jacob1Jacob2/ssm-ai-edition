@@ -143,10 +143,15 @@ class ItemReportTest : StringSpec({
         page shouldContain "8 items dropped, 6 were picked up (75%)."
         page shouldContain "4 deaths: 2 by an item (50%), 0 by a kit, 2 that were nobody's kill."
         for (tier in ItemRarity.entries) page shouldContain "## ${tier.label}"
-        // Frag Grenade: 4 dropped, 4 picked up, half a use each, half hit someone, 10% damage, 50 kills per 100, half of all deaths.
-        page shouldContain "| Frag Grenade | 4 | 4 | 0.5 | 50% | 10.0 | 50.0 | 50% | - | 2.5 | 50% |"
+        // Frag Grenade: 4 dropped, 4 picked up, half a use each, half hit someone, 10% damage, 50 kills per 100,
+        // and every kill an item made (half of all the deaths, which is not what the column is of).
+        page shouldContain "| Frag Grenade | 4 | 4 | 0.5 | 50% | 10.0 | 50.0 | 100% | - | 2.5 | 50% |"
         page shouldContain "| Steak | 4 | 2 | 1.0 | 0% | - | - | 0% | 12.0 | - | 0% |"
         page shouldContain "Milk Spiral: 60% of all damage"
+        // What was not counted is said on the page, not left for the reader to find out.
+        page shouldContain "## What these figures leave out"
+        for (note in ItemReport.NOTES) page shouldContain "- $note"
+        page shouldContain "Poison is not counted as damage"
         val table = ItemReport.csv(built(match("m1")))
         table.lines().first() shouldContain "item,rarity,drops,pickups"
         table.lines().count { it.isNotBlank() } shouldBe ArenaItem.entries.size + 1
