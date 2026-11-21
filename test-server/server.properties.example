@@ -1,5 +1,4 @@
 #Minecraft server properties
-#Fri Nov 20 15:10:59 EST 2026
 accepts-transfers=false
 allow-flight=false
 broadcast-console-to-ops=true

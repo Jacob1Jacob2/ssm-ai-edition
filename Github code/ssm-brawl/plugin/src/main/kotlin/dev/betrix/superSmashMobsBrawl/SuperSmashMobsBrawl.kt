@@ -92,6 +92,7 @@ class SuperSmashMobsBrawl : SuspendingJavaPlugin(), KoinComponent {
         runCatching { GameSetupService.setup() }.onFailure { logger.warning("Game setups not loaded: ${it.message}") }
         runCatching { dev.betrix.superSmashMobsBrawl.services.KitStatsService.setup() }.onFailure { logger.warning("Kit stats not loaded: ${it.message}") }
         runCatching { dev.betrix.superSmashMobsBrawl.services.AutoL.setup(dataFolder) }.onFailure { logger.warning("Auto L choices not loaded: ${it.message}") }
+        dev.betrix.superSmashMobsBrawl.services.LobbyEdits.setup(dataFolder)
         ScoreboardService.setup()
         CombatLogService.setup()
         dev.betrix.superSmashMobsBrawl.smash.SmashService.setup()

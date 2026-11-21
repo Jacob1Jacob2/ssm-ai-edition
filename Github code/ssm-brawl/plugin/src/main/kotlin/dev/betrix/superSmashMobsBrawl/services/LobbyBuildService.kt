@@ -114,6 +114,8 @@ object LobbyBuildService : KoinComponent {
             player.sendMessage("Build mode off. Your lobby changes are saved.")
         } else {
             builders += player.uniqueId
+            // (From here on the lobby may not be what the backup has: see LobbyEdits.)
+            LobbyEdits.mark()
             HotbarService.clearHotbar(player)
             player.closeInventory()
             player.inventory.clear()
@@ -133,6 +135,7 @@ object LobbyBuildService : KoinComponent {
         player.isFlying = false
         player.gameMode = GameMode.SURVIVAL
         player.inventory.clear()
+        LobbyEdits.mark()
         if (HubService.isPlayerInHub(player)) {
             player.world.save()
             HotbarService.applyPreset(player, HubHotbarPreset)
@@ -144,6 +147,7 @@ object LobbyBuildService : KoinComponent {
             player.sendMessage("Only operators in the lobby can save lobby builds."); return
         }
         player.world.save()
+        LobbyEdits.mark()
         player.sendMessage("Lobby saved. Mob placements also survive restarts.")
     }
 
@@ -281,6 +285,7 @@ object LobbyBuildService : KoinComponent {
                 player.gameMode = GameMode.SURVIVAL
                 player.inventory.clear()
                 player.world.save()
+                LobbyEdits.mark()
             }
         }
     }

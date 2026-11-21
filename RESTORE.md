@@ -28,6 +28,20 @@ The built plugin jar is already in `test-server/plugins`. To rebuild it from sou
 `gradlew.bat build` in `Github code/ssm-brawl/plugin` with `JAVA_HOME` pointing at JDK 25 and copy
 `build/libs/super-smash-mobs-brawl-0.1.0-ai-all.jar` over it.
 
+## How the backup is kept
+
+`backup-to-github.ps1 "what changed"` saves everything that changed and pushes it.
+
+The lobbies (`test-server/world`) are the exception. The server writes those files again every time
+it runs, with nothing in them changed but times, so they are saved only when the lobby was really
+changed: the plugin notes every use of build mode (`/chatgptbuild`) in
+`test-server/plugins/super-smash-mobs-brawl/lobby-edited.txt`, and the script saves the lobby files
+whenever that note has changed. They are also saved if a week has gone by without it, and whenever
+the script is run with `-Lobby`. So the lobby in this repository is the lobby as last built, never
+more than a week behind in anything else.
+
+`-DryRun` shows what a run would save without saving it.
+
 ## Not in the backup (on purpose)
 
 - Player data: who joined, wins, saved game settings, operators, bans.
