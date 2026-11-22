@@ -265,13 +265,30 @@ object ItemService : KoinComponent {
         return true
     }
 
-    /** A bot's Crafty Bomb: placed on the free block at or beside [at], as a player's click would. */
-    fun botPlaceCrafty(player: Player, at: Location): Boolean {
-        val arena = arena(player) ?: return false
-        if (kind(player.inventory.itemInMainHand) != ArenaItem.CRAFTY_BOMB) return false
+    /**
+     * A bot's Crafty Bomb: placed on the free block at or beside [at], as a player's click would.
+     * Returns the block it went on (its owner has three seconds to be somewhere else), or null.
+     */
+    fun botPlaceCrafty(player: Player, at: Location): Location? {
+        val arena = arena(player) ?: return null
+        if (kind(player.inventory.itemInMainHand) != ArenaItem.CRAFTY_BOMB) return null
         val base = at.block.location
         val spots = listOf(0 to 0, 1 to 0, -1 to 0, 0 to 1, 0 to -1).map { (x, z) -> base.clone().add(x.toDouble(), 0.0, z.toDouble()) }
-        return spots.any { arena.effects.placeCrafty(player, it) } && consume(player, 1)
+        val placed = spots.firstOrNull { arena.effects.placeCrafty(player, it) } ?: return null
+        return placed.takeIf { consume(player, 1) }
+    }
+
+    /**
+     * Every Monster Egg clone in [player]'s match that is not their own or their team's: what
+     * there is to be hit back at. (A clone outlives its owner's death, so the owner need not be
+     * standing; one from another match is in another world.)
+     */
+    fun hostileClones(player: Player): List<org.bukkit.entity.LivingEntity> {
+        if (ItemEffects.cloneOwners.isEmpty()) return emptyList()
+        val game = arena(player)?.game ?: return emptyList()
+        return ItemEffects.cloneOwners.entries.filter { (_, owner) -> owner != player && !game.arePlayersOnSameTeam(player, owner) }
+            .mapNotNull { Bukkit.getEntity(it.key) as? org.bukkit.entity.LivingEntity }
+            .filter { it.isValid && !it.isDead && it.world == player.world }
     }
 
     /** Debug: a Shotbow volley from [player] as if the bow had been held drawn for [ticks] ticks. */

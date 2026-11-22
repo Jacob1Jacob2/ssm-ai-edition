@@ -5,6 +5,7 @@ import dev.betrix.superSmashMobsBrawl.bots.combat.*
 import dev.betrix.superSmashMobsBrawl.bots.nms.BotPlayer
 import dev.betrix.superSmashMobsBrawl.extensions.disguise
 import dev.betrix.superSmashMobsBrawl.items.ArenaItem
+import dev.betrix.superSmashMobsBrawl.items.ItemEffects
 import dev.betrix.superSmashMobsBrawl.items.ItemService
 import dev.betrix.superSmashMobsBrawl.services.BotConversationService
 import dev.betrix.superSmashMobsBrawl.services.CombatLogService
@@ -111,6 +112,39 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     private var channelUntil = 0L
     private var wasRiding = false
     private var carRestUntil = 0L
+    /** A Rain Staff being held on somebody: see [tickRain]. */
+    private class Rain(val slot: Int, val born: Long) {
+        /** The tick the first volley went (the button is down from then), or -1 while the eye is still getting onto the spot. */
+        var since = -1L
+        /** Ticks in a row with no rain to be had on the opponent. */
+        var off = 0
+        /** The last tick this was looked after: a bot busy with something else (falling, typing) lets go. */
+        var served = born
+        /** The slot that was in hand before the staff. */
+        var back = 0
+        /** Volleys the staff had in it when the button went down (debug: how many this hold let go). */
+        var charge = 0
+        /** Damage this bot had done to anybody when the rain last landed on somebody, and the tick it did. */
+        var dealt = 0.0
+        var wet = 0L
+    }
+    private var rain: Rain? = null
+    /** A Crafty Bomb of this bot's own that has not gone off yet: its middle, when it blows, and where the bot is going to be out of it. */
+    private class Bomb(val centre: Location, val until: Long) {
+        var refuge: Location? = null
+        var refugeTick = 0L
+        var gap = Double.MAX_VALUE
+        val tried = HashSet<Pair<Int, Int>>()
+        var said = false
+    }
+    private var bomb: Bomb? = null
+    /** A Monster Egg clone that has come for this bot: see [swatClone]. */
+    private var pest: org.bukkit.entity.LivingEntity? = null
+    private var pestTick = -1000L
+    /** The last sign this bot had of where each opponent was: in view as its target, hit by them, or hit by it. See [ShadowTactics]. */
+    private class Sign(val tick: Long, val at: Location)
+    private val sensed = HashMap<java.util.UUID, Sign>()
+    private var unseenSaidTick = -1000L
     /** The stretch of ticks this bot spends standing still, typing a chat message. */
     private var typingFrom = 0L
     private var typingUntil = 0L
@@ -639,6 +673,15 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     /** Called for every hit this bot takes from somebody else. */
     fun struck(attacker: Player) {
         if (attacker.uniqueId == player.uniqueId) return
+        // A hit from nearby says where it came from, seen or not. (One from across the map, an
+        // anvil or a clone's, says only that they are somewhere.)
+        if (near(attacker)) sensed[attacker.uniqueId] = Sign(tick, attacker.location)
+        // A hit put down to them with their clone standing next to this bot is the clone's: felt, if not seen.
+        if (ItemEffects.cloneOwners.isNotEmpty()) {
+            val here = player.location
+            if (ItemService.hostileClones(player).any { ItemEffects.cloneOwners[it.uniqueId] == attacker &&
+                    it.location.distanceSquared(here) <= CloneTactics.FELT_RANGE * CloneTactics.FELT_RANGE }) pestFelt = tick
+        }
         blows.addLast(Blow(tick, attacker.uniqueId, player.location.clone(), nms.onGround()))
         while (blows.size > 48 || tick - blows.first().tick > 400) blows.removeFirst()
         // Shot at by somebody it is keeping its distance from, and down to half health: the
@@ -654,7 +697,14 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     }
 
     /** Called for damage this bot does to somebody else. */
-    fun dealt(victim: Player, amount: Double) { dealtThisLife.merge(victim.uniqueId, amount, Double::plus) }
+    fun dealt(victim: Player, amount: Double) {
+        dealtThisLife.merge(victim.uniqueId, amount, Double::plus)
+        // A hit that lands on somebody nearby says where they are, seen or not.
+        if (near(victim)) sensed[victim.uniqueId] = Sign(tick, victim.location)
+    }
+
+    /** Close enough that a hit given or taken shows where the other one is. */
+    private fun near(other: Player) = other.world == player.world && other.location.distanceSquared(player.location) <= 144.0
 
     /** Called as this bot dies: was that something it should not walk into a second time? [fell] is a death by the void or water. */
     fun died(fell: Boolean) {
@@ -873,6 +923,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             nms.stopUsingItem()
             holdUntilTick = -1
         }
+        // A Rain Staff held down while the bot was busy with something else (knocked off the map,
+        // typing, out of the match) is let go: it rains wherever the eye wanders otherwise.
+        rain?.let { if (tick - it.served > 1) endRain("busy with something else") }
 
         val game = minigameService.getMinigameForPlayer(player)
         if (game == null && BotManager.isLobbyBot(player)) {
@@ -898,6 +951,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             blockedSteps.clear();blockedEdges.clear();missedLongJumps.clear();refusedJumps.clear();lineUp=null;stuckRef=null
             comboQueue.clear();bowReleaseTick=0;player.isSneaking=false
             shot=null;carried=null;channelUntil=0;perch=null;bridge=null;crossing=null;leap=null
+            bomb=null;pest=null;sensed.clear()
             enterState(CombatState.IDLE)
             opponents=emptyList();healthLosses.clear();lastHealth=0.0
             itemGoal=null;ignoredItems.clear();fleeFailedUntil=0;trackedId=null
@@ -940,8 +994,10 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             teamOrderNow = if (game.sides.isEmpty()) null
                 else dev.betrix.superSmashMobsBrawl.services.BotConversationService.orderFor(game, player.uniqueId)
             chooseTarget(game)
-            yawError = (rng.nextGaussian() * d.aimErrorDegrees).toFloat()
-            pitchError = (rng.nextGaussian() * d.aimErrorDegrees * 0.5).toFloat()
+            // Swinging at somebody who cannot be seen is swinging at where they probably are.
+            val unsteady = d.aimErrorDegrees + if (target?.let { ItemService.hidden(it) } == true) ShadowTactics.BLUR else 0.0
+            yawError = (rng.nextGaussian() * unsteady).toFloat()
+            pitchError = (rng.nextGaussian() * unsteady * 0.5).toFloat()
         }
 
         if (bowReleaseTick>0 && tick>=bowReleaseTick) {
@@ -1053,6 +1109,12 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
 
         val t = target?.takeIf { it.isOnline && it.world == player.world }
         if (decide || states.state == CombatState.IDLE || states.state == CombatState.RECOVER) updateState(t)
+        // Its own Crafty Bomb is about to go off: out from under it before anything else.
+        if (tickBomb(t, map)) return
+        // A Monster Egg clone has come for it: that is dealt with before the fight goes on.
+        if (swatClone(decide, map)) return
+        // Holding a Rain Staff on somebody.
+        rain?.let { if (tickRain(it, map)) return }
         // Two teams: where a player on this bot's side asked it to be comes before its own plan.
         if (obeyTeam(game, t, decide, map)) return
         when (states.state) {
@@ -1083,6 +1145,22 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             else Vector()
         trackedId = t?.uniqueId
         trackedAt = at
+        // Watching them: should they vanish, this is where it last knew them to be.
+        if (t != null && at != null && !ItemService.hidden(t)) sensed[t.uniqueId] = Sign(tick, at)
+    }
+
+    /**
+     * Whether this bot can go for [p] at all. Somebody in a Shadow Walk is not there to be seen, but
+     * a bot that was watching them, was just hit by them or just hit them knows where to swing for a
+     * moment longer, as a player does. (It used to forget them the instant they vanished.)
+     */
+    private fun knows(p: Player): Boolean {
+        if (!ItemService.hidden(p)) return true
+        if (BotManager.oldItemPlay) return false
+        // (Somebody is also unseen for two seconds after coming back to life, somewhere else on
+        // the map: the last sign of them is from before, and is no guide to where they are now.)
+        val sign = sensed[p.uniqueId]?.takeIf { it.at.world == p.world } ?: return false
+        return ShadowTactics.knows(true, tick - sign.tick, d) && ShadowTactics.followed(sign.at.distance(p.location), tick - sign.tick)
     }
 
     private fun updateState(t: Player?) {
@@ -1888,7 +1966,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             game.allPlayers().mapNotNull { it.player }.filter {
                 it != player &&
                     it.world == player.world &&
-                    it.gameMode == GameMode.SURVIVAL && !dev.betrix.superSmashMobsBrawl.items.ItemService.hidden(it) &&
+                    it.gameMode == GameMode.SURVIVAL && knows(it) &&
                     !game.arePlayersOnSameTeam(player, it) &&
                     !game.respawnManager.isRespawning(it)
             }
@@ -1922,6 +2000,10 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         val next = candidates.find { it.uniqueId == chosen }
         if(next != target) {
             route.clear();routeSearch=null;routeGoal=null;nextRouteTick=tick
+        }
+        if (next != null && ItemService.hidden(next) && tick - unseenSaidTick > 40) {
+            unseenSaidTick = tick
+            dbg("${next.name} cannot be seen: going for where they were ${tick - (sensed[next.uniqueId]?.tick ?: tick)} ticks ago")
         }
         setTarget(next)
     }
@@ -2342,7 +2424,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
      * state, because the moment for a heal is while fleeing and for a cloud is while falling.
      */
     private fun considerItem(t: Player?, map: GameMapDef) {
-        if (tick < nextItemTick || shot != null || holdUntilTick >= 0 || bowReleaseTick > 0L) return
+        if (tick < nextItemTick || shot != null || holdUntilTick >= 0 || bowReleaseTick > 0L || rain != null) return
         nextItemTick = tick + 5
         val slot = (0..8).firstOrNull { ItemService.kind(player.inventory.getItem(it)) != null }
         val kind = slot?.let { ItemService.kind(player.inventory.getItem(it)) }
@@ -2371,7 +2453,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         if (kind == ArenaItem.FLYING_CAR && tick < carRestUntil && !(situation.falling && !situation.airJump)) return
         // Against someone no route leads to, a few items are used with more care than a throw in their direction.
         if (t != null && d.smartTargeting && situation.targetUnreachable && !situation.falling && siegeItem(slot, kind, t, situation)) return
-        when (val aim = ItemTactics.plan(kind, situation, d) ?: return) {
+        when (val aim = ItemTactics.plan(kind, situation, d, BotManager.oldItemPlay) ?: return) {
             ItemAim.NONE -> spendItem(slot, kind, null)
             ItemAim.ESCAPE -> {
                 // Nobody fumbles the aim when it is their life: point straight at solid ground.
@@ -2390,7 +2472,264 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                 }
                 shot = Shot(kind.label, speed, aim == ItemAim.LOBBED, tick) { spendItem(slot, kind, t.takeIf { aim == ItemAim.CONTACT }) }
             }
+            // Not a shot to line up and let go: the eye goes to the ground under them and the button stays down.
+            ItemAim.GROUND -> if (t != null && BotManager.oldItemPlay) {
+                shot = Shot(kind.label, 1.2, false, tick) { spendItem(slot, kind, null) }
+            } else if (t != null && nms.onGround() && gapJump == null && climb == null && !recovering && rainSpot(t) != null) {
+                // (From the ground, and not in the middle of a jump or a climb: those steer themselves, and the staff would rain where they look.)
+                rain = Rain(slot, tick)
+                dbg("Rain Staff: onto the ground under ${t.name}, %.1f blocks off".format(t.location.distance(player.location)))
+            }
         }
+    }
+
+    // ------------------------------------------------------------------ the Rain Staff
+
+    /** The top of the ground under [at], no more than [depth] blocks down; null over a drop. */
+    private fun floorUnder(at: Location, depth: Double): Location? {
+        val world = at.world ?: return null
+        val hit = world.rayTraceBlocks(at.clone().add(0.0, 0.6, 0.0), Vector(0, -1, 0), depth + 0.6, org.bukkit.FluidCollisionMode.NEVER, true)
+            ?.hitPosition ?: return null
+        return Location(world, hit.x, hit.y, hit.z)
+    }
+
+    /**
+     * Where to point a Rain Staff so that it rains on [t]: the ground they will be over when a volley
+     * let go now comes down, a little off for an unsteady hand. Null when there is no such shot:
+     * nothing under them, something between the bot's eye and that ground, or a roof over it.
+     * The staff rains on the first block its holder's look meets, which is what is checked here.
+     */
+    private fun rainSpot(t: Player): Location? {
+        val world = player.world
+        val at = t.location
+        val (x, z) = RainTactics.lead(at.x, at.z, trackedVelocity.x, trackedVelocity.z, d.smartTargeting)
+        // Where they are going, or (should that be out over nothing) where they are.
+        val under = floorUnder(Location(world, x, at.y, z), 8.0) ?: floorUnder(at, 8.0) ?: return null
+        val want = Location(world, under.x + yawError * RainTactics.SLIP, under.y + 0.05, under.z + pitchError * 2 * RainTactics.SLIP)
+        val eye = player.eyeLocation
+        val line = want.toVector().subtract(eye.toVector())
+        if (line.lengthSquared() < 1.0) return null
+        val met = world.rayTraceBlocks(eye, line.clone().normalize(), 24.0, org.bukkit.FluidCollisionMode.NEVER, true)?.hitPosition ?: return null
+        if (!RainTactics.catches(hypot(met.x - under.x, met.z - under.z)) || abs(met.y - under.y) > 3.0) return null
+        // The volley starts twelve blocks over what the look meets: a roof between there and them, and nothing arrives.
+        val top = Location(world, met.x, met.y + 12.0, met.z)
+        val roof = world.rayTraceBlocks(top, Vector(0, -1, 0), 12.5, org.bukkit.FluidCollisionMode.NEVER, true)?.hitPosition
+        if (roof != null && roof.y > under.y + 2.2) return null
+        return want
+    }
+
+    /**
+     * Holds a Rain Staff on the bot's opponent: the eye on the ground under them, following as they
+     * move, the button down (a volley every two ticks) for as long as there is rain to be had on
+     * them. Returns true while it is doing that; it owns where the bot looks and stands.
+     */
+    private fun tickRain(r: Rain, map: GameMapDef): Boolean {
+        r.served = tick
+        val t = target?.takeIf { it.isOnline && it.world == player.world }
+        val staff = ItemService.kind(player.inventory.getItem(r.slot)) == ArenaItem.RAIN_STAFF
+        if (!staff) return endRain("the staff is used up")
+        if (t == null) return endRain("nobody to rain on")
+        // Something else took the hand off it (a combo's second press): the rain has stopped with that.
+        if (r.since >= 0 && (player.inventory.heldItemSlot != r.slot || !nms.isUsingItem)) return endRain("the hand came off it")
+        if (r.since >= 0 && tick - r.since >= RainTactics.HOLD_TICKS) return endRain("held long enough")
+        // Twenty volleys with nothing landing on anybody: whatever the eye says, the rain is not
+        // getting to them (a roof, a lip of rock). Not more of the same: let go, and not again for a while.
+        if (r.since >= 0) {
+            val dealt = dealtThisLife.values.sum()
+            if (dealt > r.dealt) { r.dealt = dealt; r.wet = tick }
+            if (RainTactics.dry(tick - maxOf(r.since, r.wet))) return endRain("nothing is landing on ${t.name}", RainTactics.DRY_REST)
+        }
+        val spot = rainSpot(t)?.takeIf { RainTactics.inReach(t.location.distance(player.location), r.since >= 0) }
+        if (spot == null) {
+            // Not yet raining: there is nothing to start on. Raining: a moment's grace (they jumped a gap, went behind a pillar).
+            if (r.since < 0 || ++r.off > RainTactics.PATIENCE) return endRain("no rain to be had on ${t.name}")
+        } else {
+            r.off = 0
+            val (yaw, pitch) = lookAngles(player.eyeLocation, spot)
+            turnTowards(yaw, pitch, d.turnSpeed * 2)
+            if (r.since < 0 && abs(wrapDegrees(yaw - nms.yRot)) < 1f && abs(pitch - nms.xRot) < 0.5f) {
+                // On the spot: the first volley, and the button stays down.
+                comboQueue.clear()
+                r.back = player.inventory.heldItemSlot
+                r.charge = ItemService.uses(player.inventory.getItem(r.slot))
+                player.inventory.heldItemSlot = r.slot
+                if (!ItemService.use(player, false, null)) {
+                    player.inventory.heldItemSlot = r.back
+                    return endRain("the staff would not go off")
+                }
+                nms.startUsingItem(InteractionHand.MAIN_HAND)
+                r.since = tick
+                r.dealt = dealtThisLife.values.sum()
+                carriedFails = 0
+                dbg("used item ${ArenaItem.RAIN_STAFF.label}: holding it on ${t.name}")
+            }
+        }
+        if (r.since < 0 && tick - r.born > RainTactics.SETTLE_TICKS) return endRain("could not get the eye onto the spot")
+        // The feet: side to side, as anybody holding a button down on somebody does, and never off an edge.
+        if (d.strafes) {
+            if (tick >= nextStrafeFlip) { strafeDir = if (rng.nextBoolean()) 1f else -1f; nextStrafeFlip = tick + 20 }
+            applyMovement(null, 0f, strafeDir * .5f, false, map)
+        } else setInputs(0f, 0f, false)
+        return true
+    }
+
+    /** Lets go of the Rain Staff, and leaves it alone for [rest] ticks. Always false, for [tickRain] to hand back. */
+    private fun endRain(why: String, rest: Int = 10): Boolean {
+        val r = rain ?: return false
+        rain = null
+        if (r.since >= 0) {
+            nms.stopUsingItem()
+            if (player.inventory.heldItemSlot == r.slot) player.inventory.heldItemSlot = r.back
+            val staff = player.inventory.getItem(r.slot)?.takeIf { ItemService.kind(it) == ArenaItem.RAIN_STAFF }
+            val volleys = staff?.let { "${(r.charge - ItemService.uses(it)).coerceAtLeast(0)} volleys" } ?: "with the staff gone (used up, or lost with a life)"
+            dbg("Rain Staff let go after ${tick - r.since} ticks and $volleys: $why")
+        } else dbg("Rain Staff not used: $why")
+        nextItemTick = tick + rest
+        return false
+    }
+
+    // ------------------------------------------------------------------ a clone, and the bot's own bomb
+
+    /**
+     * A Monster Egg clone that has got to this bot: turned on and hit until it is gone, which is one
+     * or two hits. Returns true while that is what the bot is doing (it owns the look and the feet).
+     */
+    private fun swatClone(decide: Boolean, map: GameMapDef): Boolean {
+        if (BotManager.oldItemPlay) return false
+        if (decide || tick - pestTick > 10) {
+            pestTick = tick
+            val here = player.location
+            pestsLeftAlone.values.removeIf { it <= tick }
+            pest = ItemService.hostileClones(player)
+                .filter { it.uniqueId !in pestsLeftAlone && it.location.distanceSquared(here) <= CloneTactics.NOTICE * CloneTactics.NOTICE }
+                .minByOrNull { it.location.distanceSquared(here) }
+        }
+        val clone = pest?.takeIf { it.isValid && !it.isDead && it.world == player.world } ?: run { pest = null; pestOn = null; return false }
+        val reach = KitService.getKitForPlayer(player)?.getMeleeReach() ?: 3.0
+        val box = clone.boundingBox
+        val aim = Location(clone.world, box.centerX, box.minY + box.height * 0.6, box.centerZ)
+        val dist = player.eyeLocation.distance(aim)
+        // Only a clone it knows about: one coming at it from where it is looking, or one that has
+        // just hit it. One coming up behind gets its first swing in, as it would on anybody.
+        if (pestNoticed != clone.uniqueId) {
+            val (toward, _) = lookAngles(player.eyeLocation, aim)
+            val seen = CloneTactics.inView(wrapDegrees(toward - nms.yRot).toDouble()) && player.hasLineOfSight(clone)
+            if (!seen && tick - pestFelt > CloneTactics.FELT_TICKS) return false
+            pestNoticed = clone.uniqueId
+            pestNoticedTick = tick
+        }
+        if (tick - pestNoticedTick < CloneTactics.readyAfter(d)) return false
+        // Mid-shot, mid-charge or drawing a bow, the hands are full.
+        if (holdUntilTick >= 0 || bowReleaseTick > 0L || shot != null) return false
+        if (!CloneTactics.turnsOn(dist, reach) || !player.hasLineOfSight(clone)) { pestOn = null; return false }
+        // One it cannot get a hit on (up on a ledge, behind a fence) is not stood under and swung at
+        // for ever: with nothing to show for it after a couple of seconds, it is left alone a while.
+        if (pestOn != clone.uniqueId || clone.health < pestHealth) { pestOn = clone.uniqueId; pestSince = tick; pestHealth = clone.health }
+        if (CloneTactics.givesUp(tick - pestSince)) {
+            pestsLeftAlone[clone.uniqueId] = tick + CloneTactics.LEFT_ALONE_TICKS
+            dbg("cannot get a hit on the clone of ${ItemEffects.cloneOwners[clone.uniqueId]?.name}: leaving it alone")
+            pest = null; pestOn = null
+            return false
+        }
+        rain?.let { endRain("a clone is on it") }
+        val (yaw, pitch) = lookAngles(player.eyeLocation, aim)
+        turnTowards(yaw + yawError, pitch + pitchError, d.turnSpeed * 2)
+        if (CloneTactics.swings(dist, reach) && tick >= nextClickTick) {
+            meleeClick()
+            val interval = 20.0 / d.clicksPerSecond
+            nextClickTick = tick + (interval * (0.7 + rng.nextDouble() * 0.6)).toLong().coerceAtLeast(1)
+            if (tick - pestSaidTick > 40) { pestSaidTick = tick; dbg("a clone of ${ItemEffects.cloneOwners[clone.uniqueId]?.name} is on it: hitting it") }
+        }
+        // It comes to the bot. A step toward it if it hangs back, a sidestep otherwise.
+        var forward = 0f
+        var strafe = 0f
+        if (dist > reach - .4) { val input = inputToward(clone.location); forward = input.first; strafe = input.second }
+        else if (d.strafes) {
+            if (tick >= nextStrafeFlip) { strafeDir = if (rng.nextBoolean()) 1f else -1f; nextStrafeFlip = tick + 20 }
+            strafe = strafeDir * .65f
+        }
+        applyMovement(null, forward, strafe, false, map)
+        return true
+    }
+    private var pestSaidTick = -1000L
+    /** The clone being hit at, since when without a hit landing, and what health it had then. */
+    private var pestOn: java.util.UUID? = null
+    private var pestSince = 0L
+    private var pestHealth = 0.0
+    /** Clones this bot could not get a hit on, and until when it leaves each alone. */
+    private val pestsLeftAlone = HashMap<java.util.UUID, Long>()
+    /** The clone this bot has noticed (seen coming, or felt), and when; and when it was last hit with a clone beside it. */
+    private var pestNoticed: java.util.UUID? = null
+    private var pestNoticedTick = 0L
+    private var pestFelt = -1000L
+
+    /**
+     * The bot's own Crafty Bomb has three seconds on it and hurts whoever set it down like anybody
+     * else. Out from under it, between two of its four lines, and no going back in until it has gone
+     * off. Returns true while the bot is getting clear or standing clear.
+     */
+    private fun tickBomb(t: Player?, map: GameMapDef): Boolean {
+        val b = bomb ?: return false
+        if (BotManager.oldItemPlay) { bomb = null; return false }
+        val here = player.location
+        if (tick >= b.until || b.centre.world != here.world) { bomb = null; return false }
+        val c = b.centre
+        if (!CraftyTactics.inBlast(here.x - c.x, here.y - c.y, here.z - c.z, CraftyTactics.MARGIN)) {
+            if (!b.said) { b.said = true; dbg("clear of its own Crafty Bomb with ${b.until - tick} ticks to go") }
+            // Clear: the bang is waited for here. Anybody who comes within a hit is hit, and nobody
+            // is followed back in (the fight used to walk the bot back under its own bomb).
+            val reach = KitService.getKitForPlayer(player)?.getMeleeReach() ?: 3.0
+            val aim = t?.let { aimPointOf(it) }
+            val (yaw, pitch) = lookAngles(player.eyeLocation, aim ?: c)
+            turnTowards(yaw + yawError, pitch + pitchError, d.turnSpeed)
+            if (t != null && aim != null && holdUntilTick < 0 && bowReleaseTick == 0L && tick >= nextClickTick &&
+                player.eyeLocation.distance(aim) <= reach + 0.6 && player.hasLineOfSight(t)) {
+                meleeClick()
+                val interval = 20.0 / d.clicksPerSecond
+                nextClickTick = tick + (interval * (0.7 + rng.nextDouble() * 0.6)).toLong().coerceAtLeast(1)
+            }
+            setInputs(0f, 0f, false)
+            return true
+        }
+        // Somewhere to go: the nearest clear ground that can be walked to in a straight line.
+        var goal = b.refuge
+        if (goal != null && tick - b.refugeTick >= 12) {
+            // Not getting any nearer to it (a wall, a drop in the way): somewhere else.
+            val gap = hypot(goal.x - here.x, goal.z - here.z)
+            if (gap > b.gap - 0.6) { b.tried += goal.blockX to goal.blockZ; b.refuge = null; goal = null }
+            else { b.gap = gap; b.refugeTick = tick }
+        }
+        if (goal == null) {
+            goal = CraftyTactics.refuges(here.x - c.x, here.z - c.z).asSequence()
+                .map { (dx, dz) -> Location(here.world, c.x + dx, here.y, c.z + dz) }
+                .filter { (it.blockX to it.blockZ) !in b.tried && walkable(here, it) }
+                .firstOrNull()
+            // Nowhere to go: the fight goes on where it is.
+            if (goal == null) { dbg("no clear ground near its own Crafty Bomb: staying in the fight"); bomb = null; return false }
+            b.refuge = goal; b.refugeTick = tick; b.gap = hypot(goal.x - here.x, goal.z - here.z)
+            dbg("its own Crafty Bomb goes off in ${b.until - tick} ticks: out to ${goal.blockX},${goal.blockY},${goal.blockZ}")
+        }
+        val (yaw, _) = lookAngles(player.eyeLocation, goal.clone().add(0.0, 1.2, 0.0))
+        turnTowards(yaw, 0f, d.turnSpeed * 2)
+        val input = inputToward(goal)
+        applyMovement(null, input.first, input.second, nms.horizontalCollision && nms.onGround(), map)
+        return true
+    }
+
+    /** Level ground all the way from [from] to [to], a block at a time: somewhere that can be walked straight to. */
+    private fun walkable(from: Location, to: Location): Boolean {
+        val dx = to.x - from.x
+        val dz = to.z - from.z
+        val length = hypot(dx, dz)
+        if (length < 0.5) return true
+        val steps = ceil(length).toInt()
+        for (i in 1..steps) {
+            val at = from.clone().add(dx / steps * i, 0.0, dz / steps * i)
+            // Floor no more than a couple of blocks down, and nothing solid at the feet or the head.
+            if (!hasSolidBelow(at.clone().add(0.0, -0.1, 0.0), 2)) return false
+            if (!at.clone().add(0.0, 0.1, 0.0).block.isPassable || !at.clone().add(0.0, 1.1, 0.0).block.isPassable) return false
+        }
+        return true
     }
 
     /** Uses the item in [slot]. [contact] is the opponent for items applied in melee range. */
@@ -2400,7 +2739,12 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         player.inventory.heldItemSlot = slot
         val used = when (kind) {
             dev.betrix.superSmashMobsBrawl.items.ArenaItem.PLAYER_GRAPPLE -> contact != null && ItemService.botGrapple(player, contact)
-            dev.betrix.superSmashMobsBrawl.items.ArenaItem.CRAFTY_BOMB -> contact != null && ItemService.botPlaceCrafty(player, contact.location)
+            // (On the ground under them: somebody in the middle of a jump has no block beneath their feet to set it on.)
+            dev.betrix.superSmashMobsBrawl.items.ArenaItem.CRAFTY_BOMB -> contact?.let { ItemService.botPlaceCrafty(player, floorUnder(it.location, 4.0) ?: it.location) }?.let { placed ->
+                // Its middle is the middle of the cube it grows into, and it is the bot's to get away from.
+                bomb = Bomb(placed.block.location.add(1.0, 1.0, 1.0), tick + CraftyTactics.FUSE_TICKS + 2)
+                true
+            } ?: false
             dev.betrix.superSmashMobsBrawl.items.ArenaItem.SMASHER -> ItemService.use(player, true, null)
             dev.betrix.superSmashMobsBrawl.items.ArenaItem.KNOCKBACK_ROD -> ItemService.use(player, contact != null, contact)
             else -> ItemService.use(player, false, null)

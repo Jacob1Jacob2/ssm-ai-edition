@@ -80,7 +80,7 @@ class ItemEffects(private val arena: ItemArena) {
                     val angle=i*Math.PI*(3.0-sqrt(5.0)); val radius=5.5*sqrt(i/31.0)
                     val strike=at.clone().add(cos(angle)*radius,0.0,sin(angle)*radius)
                     world.strikeLightningEffect(strike)
-                    arena.terrain.destroy(strike,1.6,itemSound=true)
+                    arena.destroy(strike,1.6)
                     world.spawnParticle(Particle.EXPLOSION,strike,8,.7,.6,.7,0.0)
                     ignite(strike,2)
                 } }
@@ -423,6 +423,12 @@ class ItemEffects(private val arena: ItemArena) {
         val now=org.bukkit.Bukkit.getCurrentTick()
         if(now-(rainSoundAt[p.uniqueId] ?: -100)>=10) {
             rainSoundAt[p.uniqueId]=now
+            // Where it is raining against where anybody is: the rain falls 2.5 blocks either way of its middle.
+            if (dev.betrix.superSmashMobsBrawl.bots.BotManager.debug) {
+                val off = arena.enemies(p).minOfOrNull { kotlin.math.hypot(it.location.x - target.x, it.location.z - target.z) }
+                ItemService.plugin.logger.info("[rain] ${p.name} is raining on %.1f %.1f %.1f, %.1f blocks from where they stand: the nearest opponent is %s from the middle of it"
+                    .format(target.x, target.y, target.z, target.distance(p.location), off?.let { "%.1f blocks".format(it) } ?: "nowhere"))
+            }
             world.playSound(target,Sound.WEATHER_RAIN,SoundCategory.PLAYERS,2.2f,1f)
             p.playSound(p.location,Sound.WEATHER_RAIN_ABOVE,SoundCategory.PLAYERS,.7f,1f)
         }
@@ -503,7 +509,8 @@ class ItemEffects(private val arena: ItemArena) {
             for(direction in listOf(Vector(1,0,0),Vector(-1,0,0),Vector(0,0,1),Vector(0,0,-1))) {
                 for(distance in 1..18) {
                     val blast=center.clone().subtract(0.0,.5,0.0).add(direction.clone().multiply(distance))
-                    arena.terrain.destroy(blast,1.5,itemSound=true)
+                    // (Through the arena, which does nothing once the blast's middle has ended the match.)
+                    arena.destroy(blast,1.5)
                     world.spawnParticle(Particle.EXPLOSION,blast,1)
                     world.spawnParticle(Particle.FLAME,blast,12,.6,.5,.6,.08)
                     arena.players().filter { it.location.distanceSquared(blast)<4.0 && damaged.add(it.uniqueId) }

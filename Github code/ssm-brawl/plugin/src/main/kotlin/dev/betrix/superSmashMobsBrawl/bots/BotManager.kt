@@ -72,6 +72,12 @@ object BotManager : KoinComponent {
     @Volatile var forcePerch = false
     /** Debug: bots forget how they died, the way they played before they learned from it. */
     @Volatile var noLearning = false
+    /**
+     * Debug: bots play the four items the way they did before November 2026, to measure the
+     * difference: a Rain Staff pointed at the opponent and clicked, a Crafty Bomb kept for somebody
+     * standing still and not walked away from, a clone left alone, a Shadow Walker forgotten.
+     */
+    @Volatile var oldItemPlay = false
     private var roster: List<BotProfile> = emptyList()
     private var rankStyles: Map<String, String> = emptyMap()
 

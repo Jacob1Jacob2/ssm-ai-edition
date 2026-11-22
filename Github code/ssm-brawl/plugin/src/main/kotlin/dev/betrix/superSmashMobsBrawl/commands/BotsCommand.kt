@@ -153,6 +153,14 @@ class BotsCommand : KoinComponent {
         sender.sendMessage("Bot debug logging ${if (BotManager.debug) "ON" else "OFF"}.")
     }
 
+    @Execute(name = "olditems")
+    @Description("Debug: bots play the Rain Staff, Crafty Bomb, Monster Egg clones and Shadow Walkers the way they did before November 2026 (to measure the difference); again to switch back")
+    fun oldItems(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        BotManager.oldItemPlay = !BotManager.oldItemPlay
+        plugin.logger.info("[olditems] bots play the four items ${if (BotManager.oldItemPlay) "the old way" else "as they do now"}")
+    }
+
     @Execute(name = "testhit")
     @Description("Debug: make one bot do a vanilla (client-style) attack on another")
     fun testHit(@Context sender: CommandSender, @Arg attacker: String, @Arg victim: String) {
@@ -555,10 +563,14 @@ class BotsCommand : KoinComponent {
 
     @Execute(name = "itemreport")
     @Description("Debug: adds up the records of one or more balance runs (run names with commas, from this server's item-stats folder) into <name>.md and <name>.csv there")
-    fun itemReport(@Context sender: CommandSender, @Arg name: String, @Arg runs: String, @dev.rollczi.litecommands.annotations.join.Join("title") title: String) {
+    fun itemReport(@Context sender: CommandSender, @Arg asked: String, @Arg runs: String, @dev.rollczi.litecommands.annotations.join.Join("title") title: String) {
         if (!allowed(sender)) return
         val runner = dev.betrix.superSmashMobsBrawl.bots.BalanceRunner
         val report = dev.betrix.superSmashMobsBrawl.items.ItemReport
+        // A report named after one of its own runs would write its table over that run's record
+        // (both are <name>.csv, in the one folder): it is given a name of its own.
+        val name = dev.betrix.superSmashMobsBrawl.items.ItemReport.fileName(asked, runs.split(','))
+        if (name != asked) plugin.logger.info("[itemreport] '$asked' is the name of a run: the report is written as '$name', and the run's record is left as it is")
         val rows = runs.split(',').filter { it.isNotBlank() }.flatMapIndexed { index, run ->
             val file = runner.file(run.trim())
             if (!file.exists()) { plugin.logger.info("[itemreport] no record of a run called ${run.trim()} (${file.path})"); emptyList() }

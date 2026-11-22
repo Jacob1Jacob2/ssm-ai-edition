@@ -498,6 +498,117 @@ class CombatFrameworkTest : StringSpec({
         plan(ArenaItem.EXTRA_LIFE, calm.copy(nearestEnemy = 8.0)) shouldBe null
         plan(ArenaItem.EXTRA_LIFE, calm.copy(nearestEnemy = 30.0, lives = 8)) shouldBe null
     }
+
+    // What 500 recorded bot matches showed the bots doing wrong with four items (November 2026).
+
+    "a Rain Staff is pointed at the ground under an opponent, from near enough, and held there" {
+        // (Pointed at the opponent, as a rocket is, it rained on whatever was behind them: 2 projectiles in 120 landed.)
+        plan(ArenaItem.RAIN_STAFF, fight) shouldBe ItemAim.GROUND
+        plan(ArenaItem.RAIN_STAFF, fight, BotDifficulty.NORMAL) shouldBe ItemAim.GROUND
+        plan(ArenaItem.RAIN_STAFF, fight.copy(targetDistance = 2.0)) shouldBe null
+        plan(ArenaItem.RAIN_STAFF, fight.copy(targetDistance = 20.0)) shouldBe null
+        plan(ArenaItem.RAIN_STAFF, fight.copy(targetVisible = false)) shouldBe null
+        plan(ArenaItem.RAIN_STAFF, calm) shouldBe null
+        ItemTactics.reach(ArenaItem.RAIN_STAFF) shouldBe RainTactics.FAR
+        // A volley is ten ticks coming down: it goes where a runner will be by then, for those who lead a shot at all.
+        RainTactics.lead(10.0, 5.0, 0.25, -0.5, leads = true) shouldBe (12.5 to 0.0)
+        RainTactics.lead(10.0, 5.0, 0.25, -0.5, leads = false) shouldBe (10.0 to 5.0)
+        // It falls 2.5 blocks either way of where it is pointed.
+        RainTactics.catches(1.5) shouldBe true
+        RainTactics.catches(3.0) shouldBe false
+        // Once it is raining, somebody who backs off a little is still rained on; somebody in the bot's face is hit instead.
+        RainTactics.inReach(17.0, raining = false) shouldBe false
+        RainTactics.inReach(17.0, raining = true) shouldBe true
+        RainTactics.inReach(3.0, raining = true) shouldBe false
+        RainTactics.inReach(10.0, raining = false) shouldBe true
+        // Twenty volleys with nothing landing: the rain is not reaching them, and more of it will not either.
+        RainTactics.dry(40) shouldBe false
+        RainTactics.dry(41) shouldBe true
+        (RainTactics.DRY_REST > RainTactics.DRY_TICKS) shouldBe true
+        // How both were played before, kept to measure against: the staff anywhere inside 24 blocks, the bomb only on somebody standing still.
+        ItemTactics.plan(ArenaItem.RAIN_STAFF, fight.copy(targetDistance = 20.0), BotDifficulty.EXPERT, old = true) shouldBe ItemAim.GROUND
+        ItemTactics.plan(ArenaItem.CRAFTY_BOMB, fight.copy(targetDistance = 3.0, targetSpeed = 0.25), BotDifficulty.EXPERT, old = true) shouldBe null
+        ItemTactics.plan(ArenaItem.CRAFTY_BOMB, fight.copy(targetDistance = 3.0, targetSpeed = 0.0), BotDifficulty.EXPERT, old = true) shouldBe ItemAim.CONTACT
+    }
+    "a Crafty Bomb is set down beside whoever is in the fight, not saved for somebody standing still" {
+        // (Within six blocks and standing still is nobody: two in three were still in the hand when their owner died.)
+        val close = fight.copy(targetDistance = 3.0, targetSpeed = 0.25)
+        plan(ArenaItem.CRAFTY_BOMB, close) shouldBe ItemAim.CONTACT
+        // Further off, a careful bot wants them slow, or to have carried it too long.
+        plan(ArenaItem.CRAFTY_BOMB, close.copy(targetDistance = 5.5)) shouldBe null
+        plan(ArenaItem.CRAFTY_BOMB, close.copy(targetDistance = 5.5, targetSpeed = 0.1)) shouldBe ItemAim.CONTACT
+        plan(ArenaItem.CRAFTY_BOMB, close.copy(targetDistance = 5.5, heldSeconds = 90)) shouldBe ItemAim.CONTACT
+        plan(ArenaItem.CRAFTY_BOMB, close.copy(targetDistance = 5.5), BotDifficulty.NORMAL) shouldBe ItemAim.CONTACT
+        plan(ArenaItem.CRAFTY_BOMB, close.copy(targetDistance = 8.0)) shouldBe null
+        plan(ArenaItem.CRAFTY_BOMB, close.copy(targetVisible = false)) shouldBe null
+    }
+    "whoever sets a Crafty Bomb down gets out between two of its lines" {
+        // Feet on the ground the bomb stands on are a block under its middle.
+        fun hit(dx: Double, dz: Double, margin: Double = 0.0) = CraftyTactics.inBlast(dx, -1.0, dz, margin)
+        hit(0.0, 0.0) shouldBe true
+        hit(3.0, 2.0) shouldBe true        // within four blocks of the middle
+        hit(10.0, 0.0) shouldBe true       // out along a line
+        hit(-17.0, 1.0) shouldBe true
+        hit(0.0, -12.0) shouldBe true
+        hit(21.0, 0.0) shouldBe false      // past the end of a line
+        hit(10.0, 2.5) shouldBe false      // beside one
+        hit(4.0, 4.0) shouldBe false       // between two
+        // Clear is clear by a block: just outside is no place to stand and wait.
+        hit(10.0, 2.5, CraftyTactics.MARGIN) shouldBe true
+        // A floor well over or under a line is out of it; one over the bomb itself is not.
+        CraftyTactics.inBlast(10.0, 3.0, 0.0) shouldBe false
+        CraftyTactics.inBlast(1.0, 3.0, 1.0) shouldBe true
+        // Everywhere offered is clear by that block, and the first is the nearest to where the bot stands.
+        val offered = CraftyTactics.refuges(2.0, 1.0)
+        offered.size shouldBe 28
+        offered.all { (x, z) -> !hit(x, z, CraftyTactics.MARGIN) } shouldBe true
+        offered.first() shouldBe (4.0 to 4.0)
+        CraftyTactics.refuges(-2.0, -1.0).first() shouldBe (-4.0 to -4.0)
+        CraftyTactics.refuges(1.0, -3.0).first() shouldBe (4.0 to -4.0)
+        // Three seconds is long enough to walk there: four or five blocks at 0.22 a tick.
+        (CraftyTactics.FUSE_TICKS * 0.22 > 8.0) shouldBe true
+    }
+    "a Monster Egg clone that has come for a bot is turned on and hit" {
+        // (Bots used to hit one only when it stood between them and a player, and took every swing it had.)
+        CloneTactics.turnsOn(4.4, 3.0) shouldBe true
+        CloneTactics.turnsOn(5.0, 3.0) shouldBe false
+        CloneTactics.swings(3.5, 3.0) shouldBe true
+        CloneTactics.swings(3.7, 3.0) shouldBe false
+        // It swings from 2.65 blocks: by then it has been turned on, and is within a hit.
+        CloneTactics.swings(2.65, 3.0) shouldBe true
+        (CloneTactics.NOTICE > 3.0 + 1.5) shouldBe true
+        // One it cannot get a hit on (up on a ledge) is not swung at for ever: given up on after a couple of seconds, for ten.
+        // Nobody has eyes in the back of their head: a clone coming from behind or the side gets its
+        // first swing in, and is turned on once it has been felt. The slower the player, the later.
+        CloneTactics.inView(0.0) shouldBe true
+        CloneTactics.inView(-59.0) shouldBe true
+        CloneTactics.inView(61.0) shouldBe false
+        CloneTactics.inView(180.0) shouldBe false
+        CloneTactics.readyAfter(BotDifficulty.EXPERT) shouldBe 4
+        CloneTactics.readyAfter(BotDifficulty.NORMAL) shouldBe 18
+        (CloneTactics.FELT_RANGE >= 2.65) shouldBe true
+        CloneTactics.givesUp(50) shouldBe false
+        CloneTactics.givesUp(51) shouldBe true
+        (CloneTactics.LEFT_ALONE_TICKS >= 4 * CloneTactics.PATIENCE) shouldBe true
+    }
+    "somebody in a Shadow Walk is swung at for a moment longer, and again whenever a hit gives them away" {
+        // In plain sight there is nothing to remember.
+        for (d in BotDifficulty.entries) ShadowTactics.knows(false, 10_000, d) shouldBe true
+        ShadowTactics.knows(true, 0, BotDifficulty.EXPERT) shouldBe true
+        ShadowTactics.knows(true, 45, BotDifficulty.EXPERT) shouldBe true
+        ShadowTactics.knows(true, 46, BotDifficulty.EXPERT) shouldBe false
+        // The better the player, the longer they keep their bearings.
+        BotDifficulty.entries.map { ShadowTactics.memoryTicks(it) } shouldBe listOf(15, 25, 35, 45)
+        ShadowTactics.knows(true, 20, BotDifficulty.NORMAL) shouldBe false
+        // Never anything like the whole thirty seconds: somebody who gets away unseen is lost.
+        (ShadowTactics.memoryTicks(BotDifficulty.EXPERT) < ArenaItem.SHADOW_WALK_TICKS / 4) shouldBe true
+        (ShadowTactics.BLUR > 0.0) shouldBe true
+        // Lost, too, if they went some way no legs take them: a teleport, or a death and a new life
+        // across the map (everybody is unseen for their first two seconds back).
+        ShadowTactics.followed(3.0, 0) shouldBe true
+        ShadowTactics.followed(6.0, 10) shouldBe true
+        ShadowTactics.followed(30.0, 10) shouldBe false
+    }
     "skill combos are flawless for Expert and often dropped by Normal" {
         val kit = object : KitBehavior {
             override val combos = listOf(Combo("needler", listOf(ComboStep.Melee(4), ComboStep.Ability("spin_web", 6))))

@@ -46,6 +46,13 @@ class ItemReportTest : StringSpec({
         ItemStats.itemOf(null) shouldBe null
     }
 
+    "a report named after one of its own runs does not write its table over that run's record" {
+        // (Both are <name>.csv in the one folder. It happened: a 30-match record was lost to its own report.)
+        ItemReport.fileName("balance-real", listOf("real")) shouldBe "balance-real"
+        ItemReport.fileName("real", listOf("real")) shouldBe "real-report"
+        ItemReport.fileName("Real", listOf("equal", " real ")) shouldBe "Real-report"
+    }
+
     "one match is added up item by item" {
         val report = built(match("m1"))
         val grenade = report.line(frag)

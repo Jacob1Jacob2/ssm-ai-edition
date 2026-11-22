@@ -153,6 +153,14 @@ object ItemReport {
         return Report(totals, lines.values.toList(), other)
     }
 
+    /**
+     * The name a report's two files go by. A run's record and a report's table are both
+     * `<name>.csv` in the one folder, so a report asked for under the name of one of its own runs
+     * would write its table over that run's record: it gets "-report" on the end instead.
+     */
+    fun fileName(asked: String, runs: List<String>): String =
+        if (runs.any { it.trim().equals(asked.trim(), ignoreCase = true) }) "${asked.trim()}-report" else asked.trim()
+
     /** Fewer pickups than this and an item's figures are too few to say anything by. */
     const val ENOUGH = 20
 

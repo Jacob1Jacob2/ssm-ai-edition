@@ -125,7 +125,10 @@ class SmashArena(val game: BrawlMinigame) {
         return true
     }
     @JvmOverloads fun destroy(center: Location, radius: Double, maxBlocks: Int = Int.MAX_VALUE, itemSound: Boolean = false, itemSoundVolume: Float = .65f) {
-        if(center.world != world) return
+        // (Nothing once the match has given its world back: a blast with several parts, a Crafty
+        // Bomb's four lines or an Air Strike's bolts, can end the match with its first part and
+        // still have the rest to go. Asking for the world then was an error, twice in 30 matches.)
+        if(center.world != (worldOrNull ?: return)) return
         dev.betrix.superSmashMobsBrawl.services.ScaledMapPlants.destroy(center,radius)
         dev.betrix.superSmashMobsBrawl.services.ScaledMapDetails.destroy(center,radius,itemSound)
         val r = kotlin.math.ceil(radius).toInt()
