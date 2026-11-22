@@ -72,7 +72,7 @@ class ItemEffects(private val arena: ItemArena) {
                     if (kind == ArenaItem.FIRE_FLOWER) ignite(at)
                 }
             }
-            ArenaItem.AIR_STRIKE -> thrown(p,kind,60) { at ->
+            ArenaItem.AIR_STRIKE -> thrown(p,kind,60,reach=6.0) { at ->
                 // One damage pulse; the many visible lightning strikes must not stack damage.
                 arena.blast(p,at,6.0,97.5,2.8,kind,true,destroy=false,selfScale=.5)
                 fieryBurst(at,6.0)
@@ -85,7 +85,7 @@ class ItemEffects(private val arena: ItemArena) {
                     ignite(strike,2)
                 } }
             }
-            ArenaItem.ICE_CUBE -> thrown(p, kind, 60) { at ->
+            ArenaItem.ICE_CUBE -> thrown(p, kind, 60, reach = 4.0, everybody = true) { at ->
                 world.playSound(at, Sound.BLOCK_GLASS_BREAK, 1f, .7f)
                 world.spawnParticle(Particle.BLOCK,at,150,2.0,1.0,2.0,.1,Material.ICE.createBlockData())
                 world.spawnParticle(Particle.SNOWFLAKE,at,90,2.0,1.0,2.0,.08)
@@ -108,8 +108,9 @@ class ItemEffects(private val arena: ItemArena) {
             ArenaItem.FLYING_CAR -> return car(p)
             ArenaItem.MONSTER_EGG -> thrown(p, kind, 60) { at -> clone(p, at) }
             ArenaItem.CRAFTY_BOMB -> return false // Requires an actual clicked block face.
-            ArenaItem.FRAG_GRENADE -> thrown(p, kind, 40) { arena.blast(p, it, 3.0, 30.0, 1.2, kind, true, maxBlocks=7, damageCap=6.0) }
-            ArenaItem.CLUSTER_GRENADE -> thrown(p, kind, 60) { at ->
+            ArenaItem.FRAG_GRENADE -> thrown(p, kind, 40, reach = 3.0) { arena.blast(p, it, 3.0, 30.0, 1.2, kind, true, maxBlocks=7, damageCap=6.0) }
+            // (Its five bombs come down within a couple of blocks of it, each reaching 2.8: about five in all, for two seconds.)
+            ArenaItem.CLUSTER_GRENADE -> thrown(p, kind, 60, reach = 5.0, linger = 40) { at ->
                 repeat(5) { i ->
                     val direction = Vector(cos(i * Math.PI * 2 / 5)*.165, .24, sin(i * Math.PI * 2 / 5)*.165)
                     thrown(p, kind, 200, at, direction, Material.TNT, onLanding=true, throwSound=false) {
@@ -118,7 +119,9 @@ class ItemEffects(private val arena: ItemArena) {
                     }
                 }
             }
-            ArenaItem.SINGULARITY_GRENADE, ArenaItem.SINGULARITY_NUKE -> thrown(p, kind, 60) { at -> singularity(p, at, kind) }
+            // (Once it opens, whoever is inside is held there for the four seconds until it blows.)
+            ArenaItem.SINGULARITY_GRENADE, ArenaItem.SINGULARITY_NUKE -> thrown(p, kind, 60, reach = singularityReach(kind),
+                linger = SINGULARITY_TICKS, everybody = true, holds = true) { at -> singularity(p, at, kind) }
             ArenaItem.SPEED -> { potion(p, PotionEffectType.SPEED, 600, 1); world.playSound(p.location,Sound.ENTITY_GENERIC_EAT,1f,1f) }
             ArenaItem.INSTANT_TELEPORTER -> {
                 var destination = p.location
@@ -136,7 +139,7 @@ class ItemEffects(private val arena: ItemArena) {
             }
             ArenaItem.CLOUD_IN_A_BOTTLE -> cloud(p)
             ArenaItem.POCKET_TRAMPOLINE -> trampoline(p)
-            ArenaItem.POISON_MIST -> thrown(p, kind, 60) { at -> mist(p, at) }
+            ArenaItem.POISON_MIST -> thrown(p, kind, 60, reach = MIST_RADIUS, linger = MIST_TICKS, everybody = true) { at -> mist(p, at) }
             // Swaps itself for the borrowed tool, so there is nothing left to use up afterwards.
             ArenaItem.MYSTERY_ABILITY -> return dev.betrix.superSmashMobsBrawl.abilities.MysteryAbility.grant(p)
             ArenaItem.JETPACK -> { p.velocity = p.velocity.setY(.9); p.fallDistance = 0f
@@ -227,19 +230,28 @@ class ItemEffects(private val arena: ItemArena) {
     private fun thrown(p: Player, kind: ArenaItem, fuse: Int, start: Location = p.eyeLocation,
                        initial: Vector = p.eyeLocation.direction.multiply(.7).add(Vector(0.0,.18,0.0)),
                        material: Material = ItemPresentation.material(kind,p), onLanding: Boolean = false,
-                       throwSound: Boolean = true, waitForGround: Boolean = false, explode: (Location) -> Unit) {
+                       throwSound: Boolean = true, waitForGround: Boolean = false,
+                       reach: Double = 0.0, linger: Int = 0, everybody: Boolean = false, holds: Boolean = false,
+                       explode: (Location) -> Unit) {
         val body=world.dropItem(start,ItemStack.of(material)) {
             it.pickupDelay=Int.MAX_VALUE; it.setCanPlayerPickup(false); it.setCanMobPickup(false)
             it.isInvulnerable=true; it.isPersistent=false; it.velocity=initial
         }
         arena.track(body)
         if (throwSound) world.playSound(start,Sound.ENTITY_SNOWBALL_THROW,.6f,.8f)
+        // What it is going to do to whoever is within [reach] of it when its fuse runs out, and
+        // for [linger] ticks after that where it went off (a mist, the pull of a singularity):
+        // listed for anybody who can see it coming. See ItemArena.Danger.
+        var settled: Location? = null
+        if (reach > 0) arena.danger(ItemArena.Danger(kind, p.uniqueId, reach, arena.tick + fuse, arena.tick + fuse + linger,
+            everybody = everybody, holds = holds) { settled ?: body.takeIf { it.isValid }?.location })
         var age=0
         arena.add(object: SmashEffect {
             override fun step(): Boolean {
                 if (!body.isValid || body.location.y < world.minHeight) return false
                 age++
                 if (if (onLanding) age > 1 && body.isOnGround else age >= fuse && (!waitForGround || body.isOnGround)) {
+                    settled = body.location
                     explode(body.location); return false
                 }
                 if (waitForGround && age >= 1200) return false
@@ -264,7 +276,8 @@ class ItemEffects(private val arena: ItemArena) {
         arena.track(body)
         val trigger=pos.clone().add(.5,0.0,.5)
         world.playSound(pos,Sound.BLOCK_WOODEN_BUTTON_CLICK_ON,.7f,1.3f)
-        arena.loop(1200,finish={body.remove()}) { age ->
+        arena.danger(ItemArena.Danger(kind,owner.uniqueId,MINE_TRIGGER,arena.tick,arena.tick+TRIGGER_TICKS,trigger=true,everybody=true) { trigger.takeIf { body.isValid } })
+        arena.loop(TRIGGER_TICKS,finish={body.remove()}) { age ->
             if(!body.isValid) false
             else if(age>5 && arena.players().any { it.location.distanceSquared(trigger)<1.8 }) {
                 arena.blast(owner,trigger,4.0,80.0,1.8,kind,true);false
@@ -311,7 +324,7 @@ class ItemEffects(private val arena: ItemArena) {
     }
     private fun singularity(owner: Player, at: Location, kind: ArenaItem) {
         val nuke=kind==ArenaItem.SINGULARITY_NUKE
-        val radius=if(nuke)12.0 else 6.0
+        val radius=singularityReach(kind)
         val blocks=mutableListOf<BlockDisplay>()
         val targets=mutableListOf<org.bukkit.block.Block>()
         val r=radius.toInt()
@@ -486,6 +499,9 @@ class ItemEffects(private val arena: ItemArena) {
             arena.track(visual);visuals+=visual
         }
         block(0,0,0);world.playSound(at,Sound.BLOCK_GRASS_PLACE,1f,1f)
+        // Round its middle and out along its four lines, in three seconds: listed for whoever sees it.
+        val middle=at.clone().add(1.0,1.0,1.0)
+        arena.danger(ItemArena.Danger(ArenaItem.CRAFTY_BOMB,p.uniqueId,4.0,arena.tick+60,arena.tick+62,cross=true) { middle })
         arena.loop(60,finish={visuals.forEach { it.remove() }}) { age ->
             if(age==20) {block(1,0,0);block(0,0,1);block(1,0,1)}
             if(age==40)for(x in 0..1)for(z in 0..1)block(x,1,z)
@@ -533,7 +549,8 @@ class ItemEffects(private val arena: ItemArena) {
         val trigger=pos.clone().add(.5,0.0,.5)
         world.playSound(pos,Sound.BLOCK_WOODEN_TRAPDOOR_CLOSE,.8f,1.2f)
         if(debug) log("[cage] trap set at ${trigger.blockX} ${trigger.blockY} ${trigger.blockZ}")
-        arena.loop(1200,finish={body.remove()}) { age ->
+        arena.danger(ItemArena.Danger(ArenaItem.CAGE_TRAP,NOBODY,CAGE_TRIGGER,arena.tick,arena.tick+TRIGGER_TICKS,trigger=true,everybody=true) { trigger.takeIf { body.isValid } })
+        arena.loop(TRIGGER_TICKS,finish={body.remove()}) { age ->
             if(!body.isValid) return@loop false
             val caught=if(age<=5) null else arena.players().filter { it.uniqueId !in caged }.filter {
                 val l=it.location
@@ -1090,6 +1107,15 @@ class ItemEffects(private val arena: ItemArena) {
         const val TRAMPOLINE_LAUNCH = 1.6
         const val MIST_RADIUS = 3.5
         const val MIST_TICKS = 100
+        /** How far a singularity pulls from, and how long it pulls before it blows. */
+        fun singularityReach(kind: ArenaItem) = if (kind == ArenaItem.SINGULARITY_NUKE) 12.0 else 6.0
+        const val SINGULARITY_TICKS = 80
+        /** How near a mine somebody has to step to set it off, and how near the middle of a Cage Trap to be caught. */
+        const val MINE_TRIGGER = 1.35
+        const val CAGE_TRIGGER = 1.15
+        /** How long a mine or a trap lies waiting. */
+        const val TRIGGER_TICKS = 1200
+        private val NOBODY = UUID(0L, 0L)
         const val POISON_TICKS = 120
     }
 }

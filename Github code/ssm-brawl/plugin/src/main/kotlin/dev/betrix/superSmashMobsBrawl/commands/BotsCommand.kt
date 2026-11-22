@@ -161,6 +161,65 @@ class BotsCommand : KoinComponent {
         plugin.logger.info("[olditems] bots play the four items ${if (BotManager.oldItemPlay) "the old way" else "as they do now"}")
     }
 
+    @Execute(name = "balancekits")
+    @Description("Debug: kits the first fighters of every match of a balance run play (commas), the rest left to chance; 'none' for all left to chance")
+    fun balanceKits(@Context sender: CommandSender, @Arg kits: String) {
+        if (!allowed(sender)) return
+        val list = if (kits == "none") emptyList() else kits.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        val unknown = list.filter { dataService.getKit(it) == null }
+        if (unknown.isNotEmpty()) { plugin.logger.info("[balancekits] no such kit: ${unknown.joinToString()}"); return }
+        dev.betrix.superSmashMobsBrawl.bots.BalanceRunner.fixedKits = list
+        plugin.logger.info("[balancekits] " + if (list.isEmpty()) "every kit left to chance" else "every match has ${list.joinToString()}, the rest left to chance")
+    }
+
+    @Execute(name = "kitgame")
+    @Description("Debug: a bots-only game in which the bots play the kits given (commas, gone through again to fill the match), with no items and movement logging on")
+    fun kitGame(@Context sender: CommandSender, @Arg count: Int, @Arg difficulty: String, @Arg map: String, @Arg kits: String) {
+        if (!allowed(sender)) return
+        val def = dataService.getMinigame("super_smash_mobs") ?: return
+        val list = kits.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        val unknown = list.filter { dataService.getKit(it) == null }
+        if (list.isEmpty() || unknown.isNotEmpty()) { plugin.logger.info("[kitgame] no such kit: ${unknown.joinToString()}"); return }
+        BotManager.debug = true
+        val size = count.coerceIn(2, 16)
+        val setup = dev.betrix.superSmashMobsBrawl.services.GameSetupService.Setup(
+            difficulty = if (difficulty == "any") null else BotDifficulty.parse(difficulty), players = size, items = false, crystals = false)
+        val bots = BotManager.startBotGame(def, size, setup.difficulty, map, kits = List(size) { list[it % list.size] }, setup = setup)
+        plugin.logger.info("[kitgame] ${bots.joinToString { it.name }} as ${list.joinToString()}")
+    }
+
+    @Execute(name = "oldkitplay")
+    @Description("Debug: bots play Enderman and Phantom the way they did before they could work them (to measure the difference); again to switch back")
+    fun oldKitPlay(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        BotManager.oldKitPlay = !BotManager.oldKitPlay
+        plugin.logger.info("[oldkitplay] bots play Enderman and Phantom ${if (BotManager.oldKitPlay) "the old way" else "as they do now"}")
+    }
+
+    @Execute(name = "nododge")
+    @Description("Debug: bots take no notice of anything about to go off near them, as before they could dodge (to measure the difference); again to switch back")
+    fun noDodge(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        BotManager.noDodging = !BotManager.noDodging
+        plugin.logger.info("[nododge] bots ${if (BotManager.noDodging) "take no notice of" else "get out of the way of"} what is about to go off")
+    }
+
+    @Execute(name = "plainpickups")
+    @Description("Debug: bots go for the nearest pickup and keep whatever they have, as before they chose between them (to measure the difference); again to switch back")
+    fun plainPickups(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        BotManager.plainPickups = !BotManager.plainPickups
+        plugin.logger.info("[plainpickups] bots ${if (BotManager.plainPickups) "take whatever is nearest" else "choose between the things lying about"}")
+    }
+
+    @Execute(name = "stifflook")
+    @Description("Debug: bots turn their heads the old way, at one speed to a dead stop (to measure the difference); again to switch back")
+    fun stiffLook(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        BotManager.stiffLook = !BotManager.stiffLook
+        plugin.logger.info("[stifflook] bots turn their heads ${if (BotManager.stiffLook) "the old way, at one speed to a dead stop" else "as a hand does"}")
+    }
+
     @Execute(name = "testhit")
     @Description("Debug: make one bot do a vanilla (client-style) attack on another")
     fun testHit(@Context sender: CommandSender, @Arg attacker: String, @Arg victim: String) {

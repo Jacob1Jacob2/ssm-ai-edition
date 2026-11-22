@@ -4,6 +4,7 @@ import dev.betrix.superSmashMobsBrawl.bots.chat.CombatChatBridge
 import dev.betrix.superSmashMobsBrawl.bots.combat.*
 import dev.betrix.superSmashMobsBrawl.items.ArenaItem
 import io.kotest.core.spec.style.StringSpec
+import io.kotest.matchers.doubles.plusOrMinus
 import io.kotest.matchers.doubles.shouldBeLessThan
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
@@ -541,6 +542,10 @@ class CombatFrameworkTest : StringSpec({
         plan(ArenaItem.CRAFTY_BOMB, close.copy(targetDistance = 5.5), BotDifficulty.NORMAL) shouldBe ItemAim.CONTACT
         plan(ArenaItem.CRAFTY_BOMB, close.copy(targetDistance = 8.0)) shouldBe null
         plan(ArenaItem.CRAFTY_BOMB, close.copy(targetVisible = false)) shouldBe null
+        // With no room to set it down here it is kept for somewhere else, not thrown away after four tries like something of no use.
+        ItemTactics.shouldDiscard(4, ArenaItem.CRAFTY_BOMB) shouldBe false
+        ItemTactics.shouldDiscard(ItemTactics.CRAFTY_TRIES, ArenaItem.CRAFTY_BOMB) shouldBe true
+        ItemTactics.shouldDiscard(4, ArenaItem.FRAG_GRENADE) shouldBe true
     }
     "whoever sets a Crafty Bomb down gets out between two of its lines" {
         // Feet on the ground the bomb stands on are a block under its middle.
@@ -567,6 +572,111 @@ class CombatFrameworkTest : StringSpec({
         CraftyTactics.refuges(1.0, -3.0).first() shouldBe (4.0 to -4.0)
         // Three seconds is long enough to walk there: four or five blocks at 0.22 a tick.
         (CraftyTactics.FUSE_TICKS * 0.22 > 8.0) shouldBe true
+    }
+    "a bot goes for the rarer of two things lying about, and lets go of what it has for something much better" {
+        // (It used to go for whatever was nearest and keep whatever it had: every item was picked up as often as every other.)
+        // Worth is rarity: 0 for Common up to 5 for Ultimate.
+        ItemChoice.worth(ArenaItem.SPEED, 1.0) shouldBe 0
+        ItemChoice.worth(ArenaItem.MISSILE_BATTERY, 1.0) shouldBe 4
+        ItemChoice.worth(ArenaItem.ANVIL, 1.0) shouldBe 5
+        // Food counts for more to somebody badly hurt, and for less to somebody who is not hurt at all.
+        ItemChoice.worth(ArenaItem.STEAK, 0.3) shouldBe 2
+        ItemChoice.worth(ArenaItem.STEAK, 0.7) shouldBe 0
+        ItemChoice.worth(ArenaItem.STEAK, 1.0) shouldBe -1
+        ItemChoice.worth(ArenaItem.AWESOME_SOUP, 0.3) shouldBe 6
+        // A rarity is worth five blocks of walking: the Legendary twelve blocks off, over the Common three blocks off.
+        (ItemChoice.pull(4, 12.0) > ItemChoice.pull(0, 3.0)) shouldBe true
+        (ItemChoice.pull(1, 9.0) > ItemChoice.pull(0, 3.0)) shouldBe false
+        // What is in the hand goes for something two rarities better, if it is near: not for one better, and not across the map.
+        ItemChoice.swaps(held = 0, found = 5, distance = 6.0) shouldBe true
+        ItemChoice.swaps(held = 2, found = 4, distance = 6.0) shouldBe true
+        ItemChoice.swaps(held = 2, found = 3, distance = 6.0) shouldBe false
+        ItemChoice.swaps(held = 0, found = 5, distance = 20.0) shouldBe false
+        ItemChoice.swaps(held = 5, found = 5, distance = 1.0) shouldBe false
+    }
+    "an ability that starts by picking up a block is clicked on a block, not on thin air" {
+        // (An Enderman's Block Toss does nothing on a click at the air, which is all a bot's click ever was:
+        // over 500 matches Enderman bots did 1% of their damage with abilities and won 1.9% of the time.)
+        ("block_toss" in KitPlay.NEEDS_A_BLOCK) shouldBe true
+        ("blink" in KitPlay.NEEDS_A_BLOCK) shouldBe false
+        // And it is one the bots are told to hold: picked up, charged, let go.
+        (AbilityHints.of("block_toss").holdTicks.first > 0) shouldBe true
+        (KitPlay.ARM > 3.0) shouldBe true
+    }
+    "a Phantom is flown out of reach, over where its bombs will land, and brought down before the tank is dry" {
+        // (It used to hover three blocks up, in reach of a hit from the ground, slower than its opponent ran: 0.5% of its matches won.)
+        // Out of reach: a hit reaches about three blocks from eyes 1.6 up, and a jump adds 1.25.
+        (PhantomPlay.HEIGHT > 3.0 + 1.6 + 1.25) shouldBe true
+        // Faster than a run (0.28 blocks a tick), within what the kit allows (0.52).
+        (PhantomPlay.SPEED > 0.36) shouldBe true
+        (PhantomPlay.SPEED <= 0.52) shouldBe true
+        // Under a roof it hovers as high as there is room for, and never so low as to be standing in the fight.
+        PhantomPlay.height(null) shouldBe PhantomPlay.HEIGHT
+        PhantomPlay.height(4.0) shouldBe 4.0
+        PhantomPlay.height(0.5) shouldBe PhantomPlay.LOWEST
+        PhantomPlay.height(30.0) shouldBe PhantomPlay.HEIGHT
+        // A bomb goes when they are underneath and near enough for its 3.5 blocks to reach; not from beside them, and not on the last of the tank.
+        PhantomPlay.bombs(flatGap = 1.0, above = 6.0, fuel = 0.8) shouldBe true
+        PhantomPlay.bombs(flatGap = 5.0, above = 6.0, fuel = 0.8) shouldBe false
+        PhantomPlay.bombs(flatGap = 1.0, above = 0.5, fuel = 0.8) shouldBe false
+        PhantomPlay.bombs(flatGap = 1.0, above = 6.0, fuel = 0.1) shouldBe false
+        // The last of the tank is for getting back to the ground; and it does not take off to attack on less than half.
+        PhantomPlay.headsHome(0.1) shouldBe true
+        PhantomPlay.headsHome(0.5) shouldBe false
+        (PhantomPlay.TAKE_OFF > PhantomPlay.RESERVE * 2) shouldBe true
+    }
+    "a careful bot fires the Rocket Launcher from outside its own blast" {
+        // (Ten blocks, its owner included: from eight it cost the bot a fifth of a health bar of its own.)
+        plan(ArenaItem.ROCKET_LAUNCHER, fight.copy(targetDistance = 9.0)) shouldBe null
+        plan(ArenaItem.ROCKET_LAUNCHER, fight.copy(targetDistance = 12.0)) shouldBe ItemAim.TARGET
+        // Further off it still wants somebody slow, or to have carried it too long.
+        plan(ArenaItem.ROCKET_LAUNCHER, fight.copy(targetDistance = 22.0)) shouldBe null
+        plan(ArenaItem.ROCKET_LAUNCHER, fight.copy(targetDistance = 22.0, targetSpeed = 0.0)) shouldBe ItemAim.TARGET
+        // A Normal bot knows no better, and the old rule is kept to measure against.
+        plan(ArenaItem.ROCKET_LAUNCHER, fight.copy(targetDistance = 9.0), BotDifficulty.NORMAL) shouldBe ItemAim.TARGET
+        ItemTactics.plan(ArenaItem.ROCKET_LAUNCHER, fight.copy(targetDistance = 9.0), BotDifficulty.EXPERT, old = true) shouldBe ItemAim.TARGET
+        (ItemTactics.ROCKET_CLEAR > 10.0) shouldBe true
+    }
+    "what is about to go off is noticed when it is seen coming or heard landing, and then got away from" {
+        // Its own a bot knows about. Anybody else's it has to see (in front of it, nothing in the way) or hear land beside it.
+        DangerTactics.noticed(12.0, inView = true, openLine = true) shouldBe true
+        DangerTactics.noticed(12.0, inView = true, openLine = false) shouldBe false
+        DangerTactics.noticed(12.0, inView = false, openLine = true) shouldBe false
+        DangerTactics.noticed(3.0, inView = false, openLine = false) shouldBe true
+        DangerTactics.noticed(25.0, inView = true, openLine = true) shouldBe false
+        // Then a moment passes before it moves: none for its own, longer the slower the player.
+        DangerTactics.readyAfter(BotDifficulty.EXPERT, own = true) shouldBe 0
+        DangerTactics.readyAfter(BotDifficulty.EXPERT, own = false) shouldBe 4
+        DangerTactics.readyAfter(BotDifficulty.NORMAL, own = false) shouldBe 18
+        // A Frag Grenade reaches three blocks: a bot wants to be a block past that.
+        DangerTactics.inRound(2.0, 0.0, 2.0, 3.0) shouldBe true
+        DangerTactics.inRound(3.0, 0.0, 2.0, 3.0) shouldBe false
+        DangerTactics.inRound(3.0, 0.0, 2.0, 3.0, DangerTactics.MARGIN) shouldBe true
+        // A mine is stepped on: on the flat, and at about its height.
+        DangerTactics.onTrigger(1.0, 0.0, 0.5, 1.35) shouldBe true
+        DangerTactics.onTrigger(1.0, 3.0, 0.5, 1.35) shouldBe false
+        DangerTactics.onTrigger(2.0, 0.0, 0.5, 1.35) shouldBe false
+        // Out is straight away from it first, just past its reach, then round to either side: and every way offered is clear.
+        val out = DangerTactics.waysOut(1.0, 0.0, 3.0)
+        out.size shouldBe 7
+        out.first().first shouldBe (4.5 plusOrMinus 1e-9)
+        out.first().second shouldBe (0.0 plusOrMinus 1e-9)
+        out.all { (x, z) -> !DangerTactics.inRound(x, 0.0, z, 3.0, DangerTactics.MARGIN) } shouldBe true
+        // Standing on its very middle, any way is away.
+        DangerTactics.waysOut(0.0, 0.0, 3.0).size shouldBe 7
+    }
+    "a mine or a trap lying in the way is gone round, on the side the way already leans to" {
+        // Walking east with a mine dead ahead and a little to the south: past it on the north.
+        val (x, z) = DangerTactics.round(0.0, 0.0, 4.0, 0.0, 2.0, 0.3, 1.95)!!
+        x shouldBe (2.0 plusOrMinus 1e-9)
+        (z < -1.9) shouldBe true
+        // A little to the north: past it on the south.
+        (DangerTactics.round(0.0, 0.0, 4.0, 0.0, 2.0, -0.3, 1.95)!!.second > 1.9) shouldBe true
+        // Off to one side, behind, or beyond where the bot is going: nothing to go round.
+        DangerTactics.round(0.0, 0.0, 4.0, 0.0, 2.0, 3.0, 1.95) shouldBe null
+        DangerTactics.round(0.0, 0.0, 4.0, 0.0, -4.0, 0.0, 1.95) shouldBe null
+        DangerTactics.round(0.0, 0.0, 4.0, 0.0, 9.0, 0.0, 1.95) shouldBe null
+        DangerTactics.round(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.95) shouldBe null
     }
     "a Monster Egg clone that has come for a bot is turned on and hit" {
         // (Bots used to hit one only when it stood between them and a player, and took every swing it had.)

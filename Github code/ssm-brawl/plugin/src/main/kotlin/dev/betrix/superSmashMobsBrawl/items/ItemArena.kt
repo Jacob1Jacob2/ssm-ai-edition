@@ -79,9 +79,42 @@ class ItemArena(val game: BrawlMinigame) {
     }
     fun dropCount() = drops.size
     fun effectCount() = active.size + pending.size
+
+    /**
+     * Something thrown or set down that is going to hurt whoever is near it: a grenade on its
+     * fuse, a Crafty Bomb growing, a mine waiting, a cloud of poison. A player sees these and gets
+     * out of the way; they are kept here so that a bot can do the same (it used to have no idea
+     * they were there). See [dev.betrix.superSmashMobsBrawl.bots.combat.DangerTactics].
+     */
+    class Danger(
+        val kind: ArenaItem,
+        val owner: java.util.UUID,
+        /** How far from its middle it reaches. */
+        val radius: Double,
+        /** The arena tick it goes off, or begins to hurt (a trap is live from when it is set). */
+        val from: Long,
+        /** The arena tick after which it is over. */
+        val until: Long,
+        /** A Crafty Bomb's four lines as well as its round blast. */
+        val cross: Boolean = false,
+        /** Waits for somebody to step on it, rather than going off by the clock. */
+        val trigger: Boolean = false,
+        /** Does the same to its owner's side as to anybody else: a cage, a mist, ice, the pull of a singularity. */
+        val everybody: Boolean = false,
+        /** Once it has gone off there is no walking out of it (a singularity holds whoever it has). */
+        val holds: Boolean = false,
+        /** Where its middle is now (a thrown one is still moving), or null once it is gone. */
+        val at: () -> Location?,
+    )
+    private val listed = mutableListOf<Danger>()
+    /** What is about to go off, or is going on, in this match right now. */
+    val dangers: List<Danger> get() = listed
+    fun danger(d: Danger) { listed += d }
+
     fun step() {
         if (closed) return
         tick++
+        if (listed.isNotEmpty()) listed.removeIf { tick > it.until || it.at() == null }
         if (tick >= nextDrop) {
             if (game.settings.items) {
                 // (A balance run can ask for every item equally often, to see enough of the rare ones.)
@@ -114,6 +147,7 @@ class ItemArena(val game: BrawlMinigame) {
     }
     private fun shut() {
         (active + pending).forEach { it.close() }; active.clear(); pending.clear()
+        listed.clear()
         drops.forEach { it.close() }; drops.clear()
         entities.forEach { it.remove() }; entities.clear()
     }

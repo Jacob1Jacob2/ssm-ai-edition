@@ -119,7 +119,10 @@ object ItemTactics {
             // Not a shot at all: see [RainTactics].
             RAIN_STAFF -> at(ItemAim.GROUND, if (old) within(3.0..24.0) else within(RainTactics.NEAR..RainTactics.FAR))
             // One rocket: careful bots want a slow or close target, and never their own feet.
-            ROCKET_LAUNCHER -> at(ItemAim.TARGET, within(8.0..28.0) && (!careful || still || dist!! < 14 || impatient || camped))
+            // (Its blast reaches ten blocks and takes its owner too: from eight it cost a bot a fifth of a
+            // health bar of its own, 7% a pickup over 500 matches. Careful bots fire it from outside that.)
+            ROCKET_LAUNCHER -> if (old || !careful) at(ItemAim.TARGET, within(8.0..28.0) && (!careful || still || dist!! < 14 || impatient || camped))
+                else at(ItemAim.TARGET, within(ROCKET_CLEAR..28.0) && (still || dist!! < 17 || impatient || camped))
             SHOTBOW -> at(ItemAim.TARGET, within(0.0..9.0))
             // The rider goes with the rocket, so it is also the way to someone no route leads to
             // (seen or not: it goes off against whatever is between them, and that is near enough).
@@ -169,13 +172,20 @@ object ItemTactics {
         }
     }
 
-    /** Items a bot cannot spend should not block it from picking up others. */
-    fun shouldDiscard(failedUses: Int) = failedUses >= 4
+    /**
+     * Items a bot cannot spend should not block it from picking up others. A Crafty Bomb gets far
+     * more tries than the rest: it fails for want of room to set it down, next to this opponent,
+     * here, and the next place may have room. (At four tries one in ten was thrown away.)
+     */
+    fun shouldDiscard(failedUses: Int, item: ArenaItem? = null) = failedUses >= if (item == CRAFTY_BOMB) CRAFTY_TRIES else 4
+    const val CRAFTY_TRIES = 16
 
     /** Blocks a tick: a walk is 0.22 and a run 0.28, and neither gets out from under a Falling Anvil; a running jump, 0.36, does. */
     const val ANVIL_OUTRUN = 0.33
     /** Seconds of fuel a Flying Car wants in it before a bot gets in to chase somebody. */
     const val CAR_WORTH = 12
+    /** The nearest a careful bot fires the Rocket Launcher from: its blast reaches ten blocks. */
+    const val ROCKET_CLEAR = 11.0
 
     /** The Smasher's blast reaches 11 blocks; this close it still takes off a good part of a health bar. */
     const val SMASHER_THROUGH = 8.5
@@ -212,6 +222,44 @@ object ItemTactics {
     /** Things that cost nothing to use up on the spot, when the hand is wanted for something else. */
     fun usedUpFreely(item: ArenaItem): Boolean =
         item in setOf(PORKCHOP, STEAK, FIRST_AID_KIT, AWESOME_SOUP, GILDED_APPLE, REGENERATE, SPEED, SHADOW_WALK)
+}
+
+/**
+ * Which of the things lying about a bot goes for, and whether it lets go of what it has for one.
+ * Every pickup shows what it is and how rare it is, and a player goes by that: past the Speed to
+ * the Missile Battery, and with a Cloud in a Bottle in hand and a Falling Anvil at their feet, the
+ * bottle is dropped. A bot used to go for whatever was nearest and keep whatever it had: over 500
+ * matches every item was picked up as often as every other.
+ */
+object ItemChoice {
+    /** How many blocks further a bot will walk for something one rarity better. */
+    const val TIER_BLOCKS = 5.0
+    /** How much rarer than what is in the hand something has to be to let go of it: two rarities. */
+    const val SWAP_BY = 2
+    /** No further than this for something to swap to: it is not worth crossing the map with nothing in hand. */
+    const val SWAP_REACH = 14.0
+    /** How near the new thing the old one is let go: at the last moment, not on setting off. */
+    const val LET_GO_AT = 3.0
+
+    private val heals = setOf(PORKCHOP, STEAK, FIRST_AID_KIT, AWESOME_SOUP, GILDED_APPLE)
+
+    /**
+     * What something is worth to a fighter with [health] (0 to 1) of their health left: its rarity,
+     * from 0 for Common to 5 for Ultimate, with anything that heals counting for two rarities more
+     * to somebody badly hurt and one less to somebody who is not hurt at all.
+     */
+    fun worth(item: ArenaItem, health: Double): Int = item.rarity.ordinal + when {
+        item !in heals -> 0
+        health < 0.5 -> 2
+        health >= 0.9 -> -1
+        else -> 0
+    }
+
+    /** How strongly something [distance] blocks off pulls at a bot: the further it would walk for it, the higher. */
+    fun pull(worth: Int, distance: Double) = worth * TIER_BLOCKS - distance
+
+    /** Whether what is in the hand is let go for something lying [distance] blocks off. */
+    fun swaps(held: Int, found: Int, distance: Double) = found >= held + SWAP_BY && distance <= SWAP_REACH
 }
 
 /**
@@ -313,6 +361,85 @@ object ShadowTactics {
     fun followed(moved: Double, sinceSign: Long) = moved <= 4.0 + sinceSign * 0.6
     /** Degrees of unsteadiness added to a swing or a shot at somebody who cannot be seen. */
     const val BLUR = 8.0
+}
+
+/**
+ * What a bot does about something that is about to go off near it, or is lying in wait: a grenade
+ * on its fuse, an Air Strike's flare, a singularity, a cloud of poison, a Crafty Bomb, a mine or a
+ * Cage Trap on the ground. A player sees these and gets out of the way. A bot used to have no idea
+ * they were there, its own included: a Singularity Nuke cost the bot that threw it 12% of a health
+ * bar a time, and anything on a fuse only missed because bots never stand still.
+ */
+object DangerTactics {
+    /** Half the angle a fighter sees in front of them, in degrees. */
+    const val VIEW = CloneTactics.VIEW
+    /** How far off something thrown is noticed, in view and with nothing in the way. */
+    const val SIGHT = 20.0
+    /** Nearer than this it is heard landing, wherever the bot is looking. Further off and behind, it is not noticed at all. */
+    const val HEARD = 3.5
+    /** How far past its reach a bot wants to be before it calls itself clear. */
+    const val MARGIN = 1.0
+    /** Ticks a bot gives itself to get nearer to where it is running to before it tries somewhere else. */
+    const val STUCK_TICKS = 12
+    /** This close to the edge of something its opponent is standing in, a bot stops and waits instead of going in after them. */
+    const val NEAR_EDGE = 3.0
+    /** How far ahead of its feet a bot looks for something lying on the ground. */
+    const val AHEAD = 3.5
+    /** How much wider than a mine or a trap a bot steps round it. */
+    const val STEP_WIDE = 0.6
+    /** Ticks a step to the side is kept to, so that going round something is one move and not a wobble. */
+    const val ROUND_TICKS = 8
+
+    /** Whether something a bot did not throw itself has come to its notice. */
+    fun noticed(distance: Double, inView: Boolean, openLine: Boolean) =
+        distance <= HEARD || (inView && openLine && distance <= SIGHT)
+
+    /** How long after noticing it a bot is on its way: twice its reaction time. Its own it knew about before it landed. */
+    fun readyAfter(d: BotDifficulty, own: Boolean) = if (own) 0 else d.reactionTicks * 2
+
+    /** Is a spot [dx], [dy], [dz] from the middle of something round that reaches [radius] inside it, with [margin] to spare? */
+    fun inRound(dx: Double, dy: Double, dz: Double, radius: Double, margin: Double = 0.0) =
+        dx * dx + dy * dy + dz * dz <= (radius + margin) * (radius + margin)
+
+    /** Is a spot on something that waits to be stepped on? On the flat, and at about its height. */
+    fun onTrigger(dx: Double, dy: Double, dz: Double, radius: Double, margin: Double = 0.0) =
+        dx * dx + dz * dz <= (radius + margin) * (radius + margin) && dy > -1.0 && dy < 1.6
+
+    /**
+     * Where to run to get out of something round: spots just past its reach, as steps east and
+     * south of its middle, for somebody now [dx], [dz] from it. Straight away from it first, then
+     * further and further round to either side.
+     */
+    fun waysOut(dx: Double, dz: Double, radius: Double): List<Pair<Double, Double>> {
+        val far = radius + MARGIN + 0.5
+        val bearing = if (dx * dx + dz * dz < 0.01) 0.0 else kotlin.math.atan2(dz, dx)
+        return listOf(0.0, 35.0, -35.0, 70.0, -70.0, 105.0, -105.0).map { turn ->
+            val a = bearing + Math.toRadians(turn)
+            kotlin.math.cos(a) * far to kotlin.math.sin(a) * far
+        }
+    }
+
+    /**
+     * Something lying on the ground, [radius] round a point [cx], [cz], on the way from [x], [z]
+     * to [toX], [toZ]: the spot to walk to first, so as to pass it on the side the way already
+     * leans to. Null if the way misses it.
+     */
+    fun round(x: Double, z: Double, toX: Double, toZ: Double, cx: Double, cz: Double, radius: Double): Pair<Double, Double>? {
+        val wayX = toX - x
+        val wayZ = toZ - z
+        val length = kotlin.math.hypot(wayX, wayZ)
+        if (length < 0.01) return null
+        val ux = wayX / length
+        val uz = wayZ / length
+        // How far along the way its middle is, and how far to the side of it.
+        val along = (cx - x) * ux + (cz - z) * uz
+        if (along < -radius || along > length + radius) return null
+        val side = (cx - x) * uz - (cz - z) * ux
+        if (kotlin.math.abs(side) >= radius) return null
+        // The middle is to one side of the way: step out past it on the other.
+        val out = (radius + 0.5) * if (side >= 0) -1.0 else 1.0
+        return cx + uz * out to cz - ux * out
+    }
 }
 
 /**

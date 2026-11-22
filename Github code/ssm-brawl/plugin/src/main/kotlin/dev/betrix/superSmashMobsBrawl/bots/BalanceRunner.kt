@@ -60,6 +60,13 @@ object BalanceRunner : KoinComponent {
 
     val running: Boolean get() = plan != null
 
+    /**
+     * Debug: kits the first fighters of every match play, the rest being left to chance. For
+     * looking at how the bots do with one kit or two (every match then has one of each) without
+     * waiting for chance to deal them out: with 25 kits, one turns up in about a third of matches.
+     */
+    @Volatile var fixedKits: List<String> = emptyList()
+
     /** Where a run's record is kept. */
     fun file(run: String) = File(File(plugin.dataFolder, "item-stats"), "$run.csv")
 
@@ -161,7 +168,7 @@ object BalanceRunner : KoinComponent {
             difficulty = current.difficulty, players = current.players, items = true, crystals = false,
             itemIntervalSeconds = current.intervalSeconds, lives = current.lives,
             enabledItems = ArenaItem.entries.toSet() - current.without, equalItemDrops = current.equalDrops))
-        val bots = BotManager.startBotGame(def, current.players, current.difficulty, map, lobby = lobby, setup = setup, anyProfile = true)
+        val bots = BotManager.startBotGame(def, current.players, current.difficulty, map, kits = fixedKits, lobby = lobby, setup = setup, anyProfile = true)
         asked++
         if (bots.size < current.players) {
             // Not enough names free on the roster just now: these go back, and it is tried again in a second.

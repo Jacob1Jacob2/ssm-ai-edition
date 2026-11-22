@@ -78,6 +78,21 @@ object BotManager : KoinComponent {
      * standing still and not walked away from, a clone left alone, a Shadow Walker forgotten.
      */
     @Volatile var oldItemPlay = false
+    /**
+     * Debug: bots take no notice of anything that is about to go off near them (a grenade, a mine,
+     * their own singularity), as they did before they could, to measure what the dodging is worth.
+     */
+    @Volatile var noDodging = false
+    /** Debug: bots go for whatever pickup is nearest and keep whatever they have, as before they chose between them. */
+    @Volatile var plainPickups = false
+    /** Debug: bots turn their heads at one speed to a dead stop, with a fresh aim error at every decision, as they used to. */
+    @Volatile var stiffLook = false
+    /**
+     * Debug: bots play the kits they could not work the way they did before: an Enderman's Block
+     * Toss clicked on thin air (so never thrown), a Phantom hovering three blocks over its opponent
+     * at two thirds of its speed. To measure the difference; the kits themselves are never changed.
+     */
+    @Volatile var oldKitPlay = false
     private var roster: List<BotProfile> = emptyList()
     private var rankStyles: Map<String, String> = emptyMap()
 
