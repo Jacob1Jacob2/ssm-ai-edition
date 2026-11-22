@@ -71,6 +71,8 @@ class MagmaBlastAbility(player: Player) : ClassicKitAbility("magma_blast", playe
 class FlameDashAbility(player: Player) : ClassicKitAbility("flame_dash", player) {
     private var dashing = false
     private var endRequested = false
+    /** Whether the dash is under way at this moment. Only read (by bots, to know when to end it). */
+    val dashingNow get() = dashing
     override fun canActivate(sendMessage: Boolean) = dashing || super.canActivate(sendMessage)
     override fun activate() {
         if (dashing) { endRequested = true; return }

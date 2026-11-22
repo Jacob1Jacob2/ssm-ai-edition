@@ -24,6 +24,8 @@ class MilkSpiralAbility(player: Player) : BrawlAbility("milk_spiral", player) {
 
     private var spiralRunnable: TwilightRunnable? = null
     private var riding = false
+    /** Whether the spiral is carrying its player along at this moment. Only read (by bots, to know when to get off). */
+    val ridingNow get() = riding
     override fun canActivate(sendMessage: Boolean) = riding || super.canActivate(sendMessage)
 
     override fun activate() {

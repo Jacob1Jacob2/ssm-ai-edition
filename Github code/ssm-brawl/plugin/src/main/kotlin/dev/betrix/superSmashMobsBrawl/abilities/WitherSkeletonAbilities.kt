@@ -8,6 +8,9 @@ import org.bukkit.util.Vector
 
 class GuidedWitherSkullAbility(player: Player) : ClassicKitAbility("guided_wither_skull", player) {
     private var guiding = false
+    /** Where each skull of this player's that is still in the air is now. Only read (by bots, which have no eyes to see it with). */
+    private val flying = mutableListOf<Location>()
+    fun skullsInFlight(): List<Location> = flying.map { it.clone() }
     override fun canActivate(sendMessage: Boolean) = !guiding && super.canActivate(sendMessage)
     override fun activate() {
         super.activate()
@@ -16,8 +19,11 @@ class GuidedWitherSkullAbility(player: Player) : ClassicKitAbility("guided_withe
         val skull = item(position, Material.WITHER_SKELETON_SKULL)
         var released = false
         var velocity = player.eyeLocation.direction.multiply(0.4)
+        // (The loop below moves this one Location along, so the list always has where the skull is.)
+        val tracked = position
+        flying.add(tracked)
         player.world.playSound(position, Sound.ENTITY_WITHER_SHOOT, 1f, 1f)
-        loop(finish = { guiding = false; remove(skull) }) { age ->
+        loop(finish = { guiding = false; flying.removeAll { it === tracked }; remove(skull) }) { age ->
             if (age > (metadata.int("lifetimeTicks") ?: 100) || !skull.isValid) false
             else {
                 if (!released && age > 2 && (!player.isBlocking || !isCorrectItemForAbility(player.inventory.itemInMainHand))) {
@@ -49,11 +55,14 @@ class GuidedWitherSkullAbility(player: Player) : ClassicKitAbility("guided_withe
             }
         }
     }
+    override fun teardown() { flying.clear(); super.teardown() }
 }
 
 class WitherImageAbility(player: Player) : ClassicKitAbility("wither_image", player) {
     private var image: WitherSkeleton? = null
     private var swappedAt = 0L
+    /** The image that is out, if one is. Only read (by bots: a player sees where theirs is standing before swapping with it). */
+    fun imageOut(): WitherSkeleton? = image?.takeIf { it.isValid }
     override fun canActivate(sendMessage: Boolean): Boolean =
         if (image?.isValid == true) System.currentTimeMillis() - swappedAt >= 2000 else super.canActivate(sendMessage)
 

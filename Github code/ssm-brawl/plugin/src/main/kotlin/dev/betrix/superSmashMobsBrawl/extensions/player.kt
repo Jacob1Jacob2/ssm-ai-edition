@@ -7,6 +7,7 @@ import org.bukkit.GameMode
 import org.bukkit.Location
 import org.bukkit.Sound
 import org.bukkit.entity.Player
+import org.bukkit.util.Vector
 import org.koin.core.context.GlobalContext
 
 /**
@@ -46,12 +47,19 @@ fun Player.hasPassive(passiveId: String): Boolean {
  *
  * @param distance How far to look ahead (max distance if raycasting)
  */
-fun Player.getLocationInFrontOfEyes(distance: Double): Location {
+fun Player.getLocationInFrontOfEyes(distance: Double): Location = locationAlong(eyeLocation.direction, distance)
+
+/**
+ * The same for any direction looked in from where the eyes are now: what
+ * [getLocationInFrontOfEyes] gives once the player has turned to look along [look]. (A bot works
+ * out where a Blink would take it before it turns its head.)
+ */
+fun Player.locationAlong(look: Vector, distance: Double): Location {
     require(distance > 0) { "distance must be > 0, was $distance" }
 
     val world = this.world
     val eyeLocation = this.eyeLocation.clone()
-    val direction = eyeLocation.direction.normalize()
+    val direction = look.clone().normalize()
 
     val result = world.rayTraceBlocks(eyeLocation, direction, distance)
 

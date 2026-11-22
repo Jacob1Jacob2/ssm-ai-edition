@@ -189,11 +189,11 @@ class BotsCommand : KoinComponent {
     }
 
     @Execute(name = "oldkitplay")
-    @Description("Debug: bots play Enderman and Phantom the way they did before they could work them (to measure the difference); again to switch back")
+    @Description("Debug: bots play Enderman, Phantom, Wither Skeleton, Cow and Magma Cube the way they did before they could work them (to measure the difference); again to switch back")
     fun oldKitPlay(@Context sender: CommandSender) {
         if (!allowed(sender)) return
         BotManager.oldKitPlay = !BotManager.oldKitPlay
-        plugin.logger.info("[oldkitplay] bots play Enderman and Phantom ${if (BotManager.oldKitPlay) "the old way" else "as they do now"}")
+        plugin.logger.info("[oldkitplay] bots play Enderman, Phantom, Wither Skeleton, Cow and Magma Cube ${if (BotManager.oldKitPlay) "the old way" else "as they do now"}")
     }
 
     @Execute(name = "nododge")

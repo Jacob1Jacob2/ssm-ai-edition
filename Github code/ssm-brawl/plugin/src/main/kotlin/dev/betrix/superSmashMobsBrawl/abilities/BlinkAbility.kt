@@ -2,6 +2,7 @@ package dev.betrix.superSmashMobsBrawl.abilities
 
 import dev.betrix.superSmashMobsBrawl.extensions.getLocationInFrontOfEyes
 import dev.betrix.superSmashMobsBrawl.extensions.interpolateTo
+import dev.betrix.superSmashMobsBrawl.extensions.locationAlong
 import dev.betrix.superSmashMobsBrawl.utils.ClassicEffects
 import org.bukkit.Color
 import org.bukkit.Location
@@ -12,6 +13,9 @@ import org.bukkit.entity.Player
 class BlinkAbility(player: Player) : BrawlAbility("blink", player) {
 
     private val teleportDistance get() = upgradedValue("teleportDistance", 16.0)
+
+    /** Where a Blink would bring its player out if they were looking along [look]. Only read (by bots, before they press). */
+    fun comesOut(look: org.bukkit.util.Vector): Location = player.locationAlong(look, teleportDistance)
 
     override fun activate() {
         super.activate()

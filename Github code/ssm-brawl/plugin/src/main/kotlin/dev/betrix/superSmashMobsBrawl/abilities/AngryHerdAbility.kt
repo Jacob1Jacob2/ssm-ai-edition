@@ -111,7 +111,9 @@ class AngryHerdAbility(player: Player) : BrawlAbility("angry_herd", player) {
                     return@task
                 }
 
-                cows.forEach cowLoop@{ cow ->
+                // (Over a copy: a hit that ends the match, or its owner's last life, dismisses the
+                // herd from inside this loop, and going on through the emptied list was an error.)
+                cows.toList().forEach cowLoop@{ cow ->
                     val lastLoc = lastCowLocation[cow]
                     if (lastLoc != null && cow.location.distance(lastLoc) > 1) {
                         lastCowLocation[cow] = cow.location

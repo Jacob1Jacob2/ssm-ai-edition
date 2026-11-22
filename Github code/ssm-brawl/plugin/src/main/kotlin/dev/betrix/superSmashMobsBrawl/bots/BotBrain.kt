@@ -98,11 +98,24 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
      *
      * @param speed projectile speed in blocks per tick, to lead a moving opponent (0 = no lead)
      * @param lob thrown in an arc, so aim above the opponent by an amount that grows with range
+     * @param aim where it is pointed, when that is not the middle of the opponent (the floor beside
+     *   them, for a Blink or a skull); when it gives null there is no longer anywhere to point it,
+     *   and the shot is dropped
      */
-    private class Shot(val name: String, val speed: Double, val lob: Boolean, val born: Long, val fire: () -> Unit)
+    private class Shot(val name: String, val speed: Double, val lob: Boolean, val born: Long, val aim: (() -> Location?)? = null, val fire: () -> Unit)
     private var shot: Shot? = null
     /** Projectile speed of the ability being charged, so the bot keeps leading while it holds. */
     private var holdSpeed = 0.0
+    /** Where the ability being held is pointed, when that is not the middle of the opponent. */
+    private var holdAim: (() -> Location)? = null
+    // A ride under way (a Milk Spiral, a Flame Dash): since when, whether it was taken to get back
+    // over ground, and when the bot got off.
+    private var rideSince = -1L
+    private var rideHome = false
+    private var rideOffTick = -100L
+    /** A Blink that would have come out over nothing is not lined up again at once. */
+    private var blinkRestUntil = 0L
+    private var blinkScanTick = -100L
 
     // The item being carried: what it is, since when, and how often using it has failed.
     private var carried: dev.betrix.superSmashMobsBrawl.items.ArenaItem? = null
@@ -684,7 +697,15 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
 
     /** Called for every hit this bot takes from somebody else. */
     fun struck(attacker: Player) {
-        if (attacker.uniqueId == player.uniqueId) return
+        if (attacker.uniqueId == player.uniqueId) {
+            if (BotManager.debug) {
+                val here = player.location
+                val skull = ownSkulls().isNotEmpty() || holdUntilTick >= 0
+                dbg("hurt by something of its own" + (if (skull) " (a skull out)" else "") +
+                    (target?.takeIf { it.world == here.world }?.let { ", %.1f blocks from ${it.name}".format(it.location.distance(here)) } ?: ""))
+            }
+            return
+        }
         // A hit from nearby says where it came from, seen or not. (One from across the map, an
         // anvil or a clone's, says only that they are somewhere.)
         if (near(attacker)) sensed[attacker.uniqueId] = Sign(tick, attacker.location)
@@ -934,6 +955,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         if (holdUntilTick >= 0 && tick >= holdUntilTick) {
             nms.stopUsingItem()
             holdUntilTick = -1
+            holdAim = null
         }
         // A Rain Staff held down while the bot was busy with something else (knocked off the map,
         // typing, out of the match) is let go: it rains wherever the eye wanders otherwise.
@@ -1037,8 +1059,14 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                     val dist = player.eyeLocation.distance(aimPointOf(t))
                     // A second press finishes the ability wherever the opponent went; a
                     // follow-up with another ability is only worth it if they are in its range.
-                    if(next.mechanical || (isReady(step.id) && dist >= hint.minRange - 1 && dist <= hint.maxRange + 2))
-                        useAbility(step.id,hint,false)
+                    if(next.mechanical || (isReady(step.id) && dist >= hint.minRange - 1 && dist <= hint.maxRange + 2)) {
+                        if (step.id == "blink" && !BotManager.oldKitPlay) {
+                            // A Blink goes 16 blocks the way its player is looking, which here was at
+                            // the opponent: it came out as far past them as they were near, over
+                            // whatever was there. It is lined up on the floor beside them like any other.
+                            if (blinkAim(t) != null) shot = Shot("blink", 0.0, false, tick, { blinkAim(t) }) { useAbility("blink", hint, false) }
+                        } else useAbility(step.id,hint,false)
+                    }
                     else comboQueue.clear()
                 }
                 is ComboStep.Melee -> meleeClick()
@@ -1076,6 +1104,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             } == true
             else -> false
         }
+        // On a Milk Spiral or in a Flame Dash: it goes where it was pointed, and all there is left
+        // to decide is when to get off.
+        if (tickRide(target?.takeIf { it.isOnline && it.world == player.world }, map)) return
         if(player.isFlying && kitId=="phantom" && !BotManager.oldKitPlay) {
             // Flown as the kit flies ([PhantomPlay]): at its own speed, over where the opponent will be
             // when a bomb comes down, out of reach of a hit from the ground; and back to ground it
@@ -2139,7 +2170,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             // (A look that eases onto its mark trails behind somebody running past: it is pointed
             // that much ahead of them, by as much as the player knows their own hand.)
             val ahead = if (BotManager.stiffLook) 0.0 else LookTactics.ahead(d)
-            val onto = if (holdUntilTick >= 0) lead(aimPoint, dist, holdSpeed)
+            val onto = if (holdUntilTick >= 0) lead(holdAim?.invoke() ?: aimPoint, dist, holdSpeed)
                 else aimPoint.clone().add(trackedVelocity.x * ahead, trackedVelocity.y * ahead * 0.3, trackedVelocity.z * ahead)
             val (yaw, pitch) = lookAngles(player.eyeLocation, onto)
             lookTowards(yaw + yawError, pitch + pitchError, d.turnSpeed)
@@ -2151,10 +2182,15 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             planAbility(t, dist)
         }
 
-        if (sieging && trySiegeJump(t, dist, map)) return
+        // A Wither Skeleton with a skull on its way to somebody keeps out of what is about to go off
+        // there: its blast reaches its own player like anybody. (A bot used to run at the opponent it
+        // was guiding the skull onto, and took a third of all the damage its skulls ever did.)
+        val keepsBack = !BotManager.oldKitPlay && skullComing(t)
+        if (keepsBack) standOff(t, map)
+        if (!keepsBack && sieging && trySiegeJump(t, dist, map)) return
         if (!sieging) prowlGoal = null
         // With no way to them, keep moving around them looking for one instead of standing and staring.
-        if (!(sieging && dist > reach + 0.6 && prowl(t, dist, sees, map))) {
+        if (!keepsBack && !(sieging && dist > reach + 0.6 && prowl(t, dist, sees, map))) {
             var forward=0f
             var strafe=0f
             var jump=false
@@ -2395,6 +2431,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
      * them is the planner's judgement, and it gets better with difficulty.
      */
     private fun planAbility(t: Player, dist: Double) {
+        val old = BotManager.oldKitPlay
+        val situation by lazy { fightSituation(t, dist) }
         val options =
             kitAbilityIds().filter { id ->
                 val hint = AbilityHints.of(id)
@@ -2403,14 +2441,359 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                     !(id=="phantom_flight" && player.isFlying) &&
                     // (Nor taken off on a nearly empty tank, to come down again before getting anywhere.)
                     !(id=="phantom_flight" && !BotManager.oldKitPlay && player.exp < PhantomPlay.TAKE_OFF) &&
-                    !(id=="slime_rocket" && player.exp<.2f)
+                    !(id=="slime_rocket" && player.exp<.2f) &&
+                    // What carries, throws or swaps its player is pressed only where that leaves them on the map.
+                    (old || kitMoveIsSafe(id, t, dist) { situation })
             }
         if (options.isEmpty() || !player.hasLineOfSight(t)) return
         val choice = AbilityPlanner.choose(
-            options.map { AbilityOption(it, AbilityHints.of(it), dataService.getAbility(it)?.cooldown ?: 3.0) },
-            fightSituation(t, dist), d, kitBehavior(),
+            options.map { id ->
+                // (A Blink is looked at for where it comes out, exactly: not for floor all the way there, which it has no need of.)
+                val hint = AbilityHints.of(id).let { if (!old && id == "blink") it.copy(moves = 0.0) else it }
+                AbilityOption(id, hint, dataService.getAbility(id)?.cooldown ?: 3.0)
+            },
+            situation, d, kitBehavior(),
         ) ?: return
-        shot = Shot(choice.id, choice.hint.speed, false, tick) { useAbility(choice.id, choice.hint) }
+        val aim: (() -> Location?)? = if (old) null else when (choice.id) {
+            "guided_wither_skull" -> { -> skullAim(t) }
+            "blink" -> { -> blinkAim(t) }
+            else -> null
+        }
+        val speed = if (!old && choice.id == "guided_wither_skull") SkullPlay.speed(dist, SkullPlay.SHORTEST + 1) else choice.hint.speed
+        shot = Shot(choice.id, speed, false, tick, aim) { useAbility(choice.id, choice.hint) }
+    }
+
+    // ------------------------------------------------------------------ abilities that move their player
+
+    private fun kitAbility(id: String) = KitService.getKitForPlayer(player)?.getAbility(id)
+
+    /**
+     * Is this a moment at which [id] leaves the bot on the map ([SkullPlay] and the objects after
+     * it)? True for every ability that does not carry, throw or swap its player.
+     */
+    private fun kitMoveIsSafe(id: String, t: Player, dist: Double, situation: () -> FightSituation): Boolean = when (id) {
+        "guided_wither_skull" -> skullIsClear(t)
+        "wither_image" -> {
+            val image = witherImage()
+            // None out: the press sends one, along the floor at them (off an edge it is only thrown away).
+            if (image == null) situation().groundAhead >= minOf(dist, 5.0)
+            // One out: the press swaps places with it. (Not with a skull of its own on its way to
+            // them: one bot swapped itself into the middle of its own blast.)
+            else imageStands(image) && ImagePlay.swapsToFight(dist, image.location.distance(t.location)) && !skullComing(t)
+        }
+        "magma_blast" -> recoilHasFloor(t)
+        "blink" -> blinkAim(t) != null
+        else -> true
+    }
+
+    // -- Wither Skeleton
+
+    private fun ownSkulls(): List<Location> =
+        (kitAbility("guided_wither_skull") as? dev.betrix.superSmashMobsBrawl.abilities.GuidedWitherSkullAbility)?.skullsInFlight() ?: emptyList()
+
+    /** A skull of the bot's own is on its way to [t]: not past them yet, so it may go off on them at any moment. */
+    private fun skullComing(t: Player): Boolean {
+        val skulls = ownSkulls()
+        if (skulls.isEmpty()) return false
+        val here = player.location
+        val gap = here.distance(t.location)
+        return skulls.any { it.world == here.world && it.distance(here) < gap + 1.5 }
+    }
+
+    /**
+     * Where a skull is pointed: at the floor under them when that can be seen from here, at them
+     * when not. Its blast reaches six blocks, so it has no need to meet the body, and a skull that
+     * misses the body flies on to wherever, while one aimed at the floor goes off where they were.
+     */
+    private fun skullAim(t: Player): Location {
+        val eye = player.eyeLocation
+        val feet = t.location
+        val floor = floorUnder(feet, 3.0) ?: return aimPointOf(t)
+        // (Not from where an unsteady hand would put it into the floor short of them, inside its own blast.)
+        if (!SkullPlay.aimsAtFloor(hypot(feet.x - eye.x, feet.z - eye.z), eye.y - floor.y, d.aimErrorDegrees * 0.5)) return aimPointOf(t)
+        val spot = Location(feet.world, feet.x, floor.y + 0.05, feet.z)
+        val line = spot.toVector().subtract(eye.toVector())
+        val length = line.length()
+        if (length < 1.5) return aimPointOf(t)
+        val blocked = player.world.rayTraceBlocks(eye, line.multiply(1 / length), length - 0.4, org.bukkit.FluidCollisionMode.NEVER, true)
+        return if (blocked == null) spot else aimPointOf(t)
+    }
+
+    /**
+     * Everything near the bot that an ability of its own goes off on: opponents, and what
+     * opponents have summoned (somebody else's Wither Image stands right on whoever it is after).
+     */
+    private fun hostileBodies(radius: Double): List<org.bukkit.entity.LivingEntity> {
+        val game = minigameService.getMinigameForPlayer(player) ?: return emptyList()
+        return player.world.getNearbyLivingEntities(player.location, radius).filter { e ->
+            if (e == player || !e.isValid || e.isDead) false
+            else if (e is Player) e.gameMode == GameMode.SURVIVAL && minigameService.getMinigameForPlayer(e) === game &&
+                !game.respawnManager.isRespawning(e) && !game.arePlayersOnSameTeam(player, e)
+            else dev.betrix.superSmashMobsBrawl.abilities.ClassicSummons.owners[e.uniqueId]
+                ?.let { owner -> owner != player && !game.arePlayersOnSameTeam(player, owner) } == true
+        }
+    }
+
+    /**
+     * Whether a skull sent at [t] now would go off clear of the bot itself ([SkullPlay]): along
+     * the line to where it is to be pointed, or (as it is let go) along [look], the way the bot
+     * is in fact looking.
+     */
+    private fun skullIsClear(t: Player, look: Vector? = null): Boolean {
+        val eye = player.eyeLocation
+        val here = player.location
+        val at = t.location
+        // (How fast they are coming at it now: somebody in the middle of a dash meets the skull much nearer.)
+        val to = at.toVector().subtract(here.toVector())
+        val gap = to.length()
+        val closing = if (gap > 1e-6 && t.uniqueId == trackedId) -trackedVelocity.dot(to) / gap else 0.0
+        if (!SkullPlay.clearToSend(to.x, to.y, to.z, closing)) return false
+        val line = look?.clone() ?: skullAim(t).toVector().subtract(eye.toVector())
+        val length = line.length()
+        if (length < 1e-6) return false
+        line.multiply(1 / length)
+        // Nobody else near in its way, and nothing of theirs: a skull goes off on the first body it
+        // meets. (One in seven still went off in its own player's face with the opponent ten and
+        // twenty blocks away: on the other Wither Skeleton's image, come to hit it.)
+        if (hostileBodies(SkullPlay.CROWD).any { o ->
+                if (o == t) return@any false
+                val to = o.location.toVector().add(Vector(0.0, 0.9, 0.0)).subtract(eye.toVector())
+                val along = to.dot(line)
+                to.length() < SkullPlay.BESIDE || (along > -0.5 && to.subtract(line.clone().multiply(along)).length() < SkullPlay.BESIDE)
+            }) return false
+        // Nor on a block: where its way first meets one, if that is short of them.
+        val reach = if (look != null) SkullPlay.BLAST + SkullPlay.MARGIN + 2.0 else length
+        val hit = player.world.rayTraceBlocks(eye, line, reach, org.bukkit.FluidCollisionMode.NEVER, true)?.hitPosition ?: return true
+        return !SkullPlay.inBlast(hit.x - here.x, hit.y - here.y, hit.z - here.z)
+    }
+
+    /**
+     * With a skull on its way to [t]: stays outside what it would reach from where they are,
+     * without turning away from them (backwards when they are too near, still when not).
+     */
+    private fun standOff(t: Player, map: GameMapDef) {
+        val here = player.location
+        val at = t.location
+        val away = here.toVector().subtract(at.toVector()).setY(0)
+        val gap = away.length()
+        if (gap < 1e-3 || SkullPlay.keepsClear(at.x - here.x, at.y - here.y, at.z - here.z)) { setInputs(0f, 0f, false); return }
+        away.multiply(1 / gap)
+        val input = inputToward(here.clone().add(away.x * 2, 0.0, away.z * 2))
+        applyMovement(null, input.first, input.second, false, map)
+    }
+
+    private fun witherImage(): org.bukkit.entity.LivingEntity? =
+        (kitAbility("wither_image") as? dev.betrix.superSmashMobsBrawl.abilities.WitherImageAbility)?.imageOut()
+
+    /** Whether the image is somewhere to be: on something (or about to be), with room for a body ([ImagePlay]). */
+    private fun imageStands(image: org.bukkit.entity.LivingEntity): Boolean {
+        val at = image.location
+        if (at.world != player.world || at.y <= (lastMap?.voidLevel ?: -1.0e9) + 3) return false
+        return ImagePlay.stands(image.isOnGround, hasSolidBelow(at, ImagePlay.FLOOR), image.velocity.y) &&
+            at.block.isPassable && at.clone().add(0.0, 1.0, 0.0).block.isPassable
+    }
+
+    /** Falling, with its image standing on the map: one press and the two have changed places. */
+    private fun swapWithImage(): Boolean {
+        if (BotManager.oldKitPlay || !isReady("wither_image")) return false
+        val image = witherImage() ?: return false
+        if (!imageStands(image)) return false
+        if (!useAbility("wither_image", AbilityHints.of("wither_image"), false)) return false
+        dbg("over the void: changed places with its Wither Image")
+        return true
+    }
+
+    // -- Magma Cube
+
+    /**
+     * Whether there is floor for as far back as a Magma Blast would throw the bot, looking at [t]
+     * from here ([RecoilPlay]): no drop, and no lava or water. (Holding it back for that cost the
+     * kit nothing over 40 matches: a Magma Cube's blasts did more, not less, for its living longer.)
+     */
+    private fun recoilHasFloor(t: Player): Boolean {
+        val here = player.location
+        val (yaw, pitch) = lookAngles(player.eyeLocation, aimPointOf(t))
+        val height = if (nms.onGround()) 0.0 else floorUnder(here, 8.0)?.let { (here.y - it.y).coerceAtLeast(0.0) } ?: return false
+        val back = RecoilPlay.carried(pitch.toDouble(), height) + RecoilPlay.SPARE
+        val rad = Math.toRadians(yaw.toDouble())
+        // (Away from where it is looking.)
+        val ux = sin(rad)
+        val uz = -cos(rad)
+        for (i in 1..ceil(back).toInt().coerceAtMost(RecoilPlay.LOOK_BACK)) {
+            if (!hasSolidBelow(here.clone().add(ux * i, 0.5, uz * i), 6)) return false
+        }
+        return true
+    }
+
+    // -- Enderman
+
+    private fun blinkAbility() = kitAbility("blink") as? dev.betrix.superSmashMobsBrawl.abilities.BlinkAbility
+
+    /** Whether a body can be where a Blink comes out: room for it, and floor no more than [drop] blocks under. */
+    private fun blinkStands(out: Location, drop: Int): Boolean =
+        out.y > (lastMap?.voidLevel ?: -1.0e9) + 3 && hasSolidBelow(out, drop) &&
+            out.block.isPassable && out.clone().add(0.0, 1.0, 0.0).block.isPassable
+
+    /**
+     * Where to look to Blink onto [t]: at the floor under them (a Blink stops just short of the
+     * first block its player's look meets, so that is where it comes out), or failing that at them,
+     * if looking there brings the bot out beside them with something to stand on. Null if neither does.
+     */
+    private fun blinkAim(t: Player): Location? {
+        if (tick < blinkRestUntil) return null
+        val blink = blinkAbility() ?: return null
+        val eye = player.eyeLocation
+        val feet = t.location
+        val now = player.location.distance(feet)
+        val spots = listOfNotNull(floorUnder(feet, 3.0)?.let { Location(feet.world, feet.x, it.y - 0.3, feet.z) }, aimPointOf(t))
+        for (spot in spots) {
+            val look = spot.toVector().subtract(eye.toVector())
+            if (look.lengthSquared() < 1.0) continue
+            val out = blink.comesOut(look)
+            val gap = out.distance(feet)
+            if (gap <= BlinkPlay.NEAR && gap < now - 2.0 && blinkStands(out, BlinkPlay.DROP)) return spot
+        }
+        return null
+    }
+
+    /** Blocks of air under [at] before something to land on, [most] at the most; null when there is nothing, or only lava or water. */
+    private fun airUnder(at: Location, most: Int): Int? {
+        val world = at.world ?: return null
+        for (i in 0..most) {
+            val y = at.blockY - i
+            if (y < world.minHeight) return null
+            val type = world.getBlockAt(at.blockX, y, at.blockZ).type
+            if (ArenaTerrain.watery(type)) return null
+            if (type.isSolid) return i
+        }
+        return null
+    }
+
+    /**
+     * Falling: the look that brings a Blink out over floor, the nearer underfoot and the nearer
+     * where the bot was heading the better ([BlinkPlay]), and the press. (A bot used to Blink level,
+     * the way it was facing: past the island it was falling beside, as often as onto it.)
+     */
+    private fun blinkHome(goal: Location): Boolean {
+        val blink = blinkAbility() ?: return false
+        if (tick - blinkScanTick < 4) return false
+        blinkScanTick = tick
+        val eye = player.eyeLocation
+        val (toGoal, straight) = lookAngles(eye, goal.clone().add(0.0, 0.3, 0.0))
+        var best: Pair<Float, Float>? = null
+        var bestScore = Double.MAX_VALUE
+        fun consider(yaw: Float, pitch: Float) {
+            val out = blink.comesOut(Location(eye.world, 0.0, 0.0, 0.0, yaw, pitch).direction)
+            if (out.y <= (lastMap?.voidLevel ?: -1.0e9) + 3 || !out.block.isPassable || !out.clone().add(0.0, 1.0, 0.0).block.isPassable) return
+            val score = BlinkPlay.landing(airUnder(out, BlinkPlay.FALL), hypot(out.x - goal.x, out.z - goal.z)) ?: return
+            if (score < bestScore) { bestScore = score; best = yaw to pitch }
+        }
+        consider(toGoal, straight)
+        for (side in BlinkPlay.YAWS) for (pitch in BlinkPlay.PITCHES) consider(toGoal + side.toFloat(), pitch.toFloat())
+        val (yaw, pitch) = best ?: return false
+        nms.setYRot(yaw)
+        nms.setYHeadRot(yaw)
+        nms.setXRot(pitch)
+        return useAbility("blink", AbilityHints.of("blink"), false)
+    }
+
+    // -- Cow, Magma Cube: the rides
+
+    /** Let go of now, at the speed it has, would the bot come down on something? Followed tick by tick, the way a player falls. */
+    private fun coastsOntoFloor(v: Vector, map: GameMapDef): Boolean {
+        val world = player.world
+        val at = player.location
+        var vx = v.x
+        var vy = minOf(v.y, 0.0)
+        var vz = v.z
+        for (i in 1..40) {
+            val step = Vector(vx, vy, vz)
+            val length = step.length()
+            if (length > 1e-6) {
+                val hit = world.rayTraceBlocks(at, step.clone().multiply(1 / length), length, org.bukkit.FluidCollisionMode.ALWAYS, true)
+                if (hit != null) {
+                    val block = hit.hitBlock ?: return false
+                    // Into the side of something is not onto it, and lava is not floor.
+                    if (ArenaTerrain.watery(block.type) || hit.hitBlockFace != BlockFace.UP) return false
+                    // Down: what is left of its speed slides it a little further, and that has to be floor as well.
+                    if (hypot(vx, vz) < 0.05) return true
+                    val on = hit.hitPosition
+                    return hasSolidBelow(Location(world, on.x + vx * 1.2, on.y + 0.5, on.z + vz * 1.2), 3)
+                }
+            }
+            at.add(vx, vy, vz)
+            vy = (vy - 0.08) * 0.98
+            vx *= 0.91
+            vz *= 0.91
+            if (at.y <= map.voidLevel + 1) return false
+        }
+        return false
+    }
+
+    /**
+     * Riding a Milk Spiral or a Flame Dash. Both go on until they are over or their button is
+     * pressed again, sixteen blocks and twenty-seven, and a bot never pressed it again: it rode
+     * past whoever it had gone for and off the map behind them ([RidePlay]). Now it gets off on
+     * them, or where the floor runs out; and ridden back from over the void, as soon as getting off
+     * brings it down on something. Returns true while a ride is under way (nothing else the bot
+     * could do changes where a ride goes).
+     */
+    private fun tickRide(t: Player?, map: GameMapDef): Boolean {
+        if (BotManager.oldKitPlay) return false
+        val kit = KitService.getKitForPlayer(player) ?: return false
+        val dash = (kit.getAbility("flame_dash") as? dev.betrix.superSmashMobsBrawl.abilities.FlameDashAbility)?.dashingNow == true
+        val spiral = !dash && (kit.getAbility("milk_spiral") as? dev.betrix.superSmashMobsBrawl.abilities.MilkSpiralAbility)?.ridingNow == true
+        if (!dash && !spiral) { rideSince = -1; return false }
+        val here = player.location
+        val v = nms.deltaMovement
+        if (rideSince < 0) {
+            rideSince = tick
+            // Taken to get back over ground, or at somebody?
+            rideHome = recovering || isOverVoid(map)
+            gapJump = null; comboQueue.clear(); shot = null
+        }
+        // Which way it is being carried: the way it is moving, or (in its first tick) the way it is looking.
+        val speed = hypot(v.x, v.z)
+        val look = here.direction
+        val flat = hypot(look.x, look.z)
+        val ux = if (speed > 0.05) v.x / speed else if (flat > 1e-6) look.x / flat else 0.0
+        val uz = if (speed > 0.05) v.z / speed else if (flat > 1e-6) look.z / flat else 0.0
+        fun floor(ahead: Double, deep: Int) = hasSolidBelow(here.clone().add(ux * ahead, 0.0, uz * ahead), deep)
+        val name = if (dash) "Flame Dash" else "Milk Spiral"
+        var why: String? = null
+        if (rideHome || !floor(0.0, 6)) {
+            // Over the void. A Milk Spiral's rider stops dead when it gets off and drops; a Flame
+            // Dash's keeps its speed and comes down further on.
+            val deep = depthToVoid(map)
+            val lands = if (dash) coastsOntoFloor(Vector(v.x, v.y, v.z), map) else floor(0.0, deep) && floor(0.5, deep)
+            if (lands) why = "over ground again"
+        } else {
+            // (Somebody well above or below is not got at by stopping under them.)
+            val at = t?.takeIf { abs(it.y - here.y) < 3.0 }
+            val gap = at?.let { hypot(it.x - here.x, it.z - here.z) } ?: Double.MAX_VALUE
+            val ahead = at == null || (at.x - here.x) * ux + (at.z - here.z) * uz > 0.0
+            val onThem = if (dash) RidePlay.DASH_ON_THEM else RidePlay.SPIRAL_ON_THEM
+            // In the air a rider that gets off is carried further than one sliding on the floor.
+            val stop = if (!dash) RidePlay.SPIRAL_STOP else if (nms.onGround()) RidePlay.DASH_STOP else RidePlay.DASH_STOP + RidePlay.DASH_AIR
+            val floorAhead = floor(stop, 4) && floor(stop * 2 / 3, 4) && floor(stop / 3, 4)
+            if (RidePlay.getsOff(gap, ahead, onThem, floorAhead)) {
+                why = if (!floorAhead) "the floor ends here" else if (gap <= onThem) "on ${at?.name}" else "past ${at?.name}"
+            }
+        }
+        if (why != null && tick > rideSince && tick - rideOffTick > 3) {
+            // The same button again.
+            rideOffTick = tick
+            if (useAbility(if (dash) "flame_dash" else "milk_spiral", AbilityHints.of(if (dash) "flame_dash" else "milk_spiral"), false)) {
+                dbg("off the $name after ${tick - rideSince} ticks: $why")
+            }
+        }
+        // Facing whoever it is for, to be on them when it ends.
+        t?.let {
+            val (yaw, pitch) = lookAngles(player.eyeLocation, aimPointOf(it))
+            lookTowards(yaw, pitch, d.turnSpeed)
+        }
+        setInputs(0f, 0f, false)
+        return true
     }
 
     private fun fightSituation(t: Player, dist: Double): FightSituation {
@@ -2453,7 +2836,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             return true
         }
         val raise = if (lining.lob) ((dist - 4.5) * 4).coerceIn(0.0, 40.0).toFloat() else 0f
-        val facing = aimAt(lead(aimPoint, dist, lining.speed), d.turnSpeed * 2, raise)
+        // (Pointed somewhere of its own, and there is no longer anywhere to point it: dropped.)
+        val onto = if (lining.aim == null) aimPoint else lining.aim.invoke() ?: run { shot = null; return true }
+        val facing = aimAt(lead(onto, dist, lining.speed), d.turnSpeed * 2, raise)
         if (facing) {
             shot = null
             lining.fire()
@@ -3130,13 +3515,59 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     }
 
     private fun tryRecoveryAbility(): Boolean {
-        val id = kitAbilityIds().firstOrNull { AbilityHints.of(it).recovery && isReady(it) } ?: return false
-        return useAbility(id, AbilityHints.of(id))
+        if (BotManager.oldKitPlay) {
+            val id = kitAbilityIds().firstOrNull { AbilityHints.of(it).recovery && isReady(it) } ?: return false
+            return useAbility(id, AbilityHints.of(id))
+        }
+        val goal = recoveryGoal
+        val here = player.location
+        val eye = player.eyeLocation
+        for (id in kitAbilityIds()) {
+            if (!AbilityHints.of(id).recovery || !isReady(id)) continue
+            when (id) {
+                // A Blink is aimed, at wherever it comes out over floor (and not pressed when it comes out over none).
+                "blink" -> { if (goal != null && blinkHome(goal)) return true else continue }
+                // A Flame Dash goes level and sags: it is a way back only to ground below its rider.
+                "flame_dash" -> {
+                    if (goal == null || !RidePlay.dashReaches(here.y - goal.y, hypot(goal.x - here.x, goal.z - here.z))) continue
+                    // (It goes the way its rider is facing when it begins.)
+                    val (yaw, _) = lookAngles(eye, goal)
+                    nms.setYRot(yaw)
+                    nms.setYHeadRot(yaw)
+                }
+                // A Milk Spiral goes where its rider was looking when it began: at a point over the ground.
+                "milk_spiral" -> {
+                    val over = goal?.clone()?.add(0.0, RidePlay.SPIRAL_OVER, 0.0) ?: continue
+                    if (eye.distance(over) > RidePlay.SPIRAL_REACH) continue
+                    val (yaw, pitch) = lookAngles(eye, over)
+                    nms.setYRot(yaw)
+                    nms.setYHeadRot(yaw)
+                    nms.setXRot(pitch)
+                }
+            }
+            if (useAbility(id, AbilityHints.of(id))) return true
+        }
+        return false
     }
 
     private fun useAbility(id: String, hint: AbilityHint, followup: Boolean = true): Boolean {
         if(followup && !isReady(id))return false
         val slot = findAbilitySlot(id) ?: return false
+        val newPlay = !BotManager.oldKitPlay
+        if (newPlay && id == "blink") {
+            // Wherever it was meant to go, it goes where the bot is looking at this moment: that is what is checked.
+            val out = blinkAbility()?.comesOut(player.eyeLocation.direction)
+            if (out == null || !blinkStands(out, if (recovering) BlinkPlay.FALL else BlinkPlay.DROP)) {
+                blinkRestUntil = tick + 10
+                dbg("a Blink from here would come out over nothing: not pressed")
+                return false
+            }
+        }
+        // (The opponent may have closed in, or the bot left the floor, while it was turning onto the shot.)
+        if (newPlay && followup) target?.takeIf { it.isOnline && it.world == player.world }?.let { t ->
+            if (id == "magma_blast" && !recoilHasFloor(t)) return false
+            if (id == "guided_wither_skull" && !skullIsClear(t, player.eyeLocation.direction)) return false
+        }
         // An ability that starts by picking something up (an Enderman's Block Toss) is a click on a
         // block, the nearest one to hand: with none in reach (in the air) it cannot be used. A bot's
         // click used to be on thin air always, so no Enderman bot ever threw a block.
@@ -3145,12 +3576,17 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         if (hint.aimUp != 0f) nms.setXRot((nms.xRot - hint.aimUp).coerceIn(-90f, 90f))
 
         val usage = dataService.getAbility(id)?.usage ?: AbilityUsage.RIGHT_CLICK
-        val holdFor = if (id == "static_laser") laserHold() else if (hint.holdTicks.last > 0) hint.holdTicks.random() else 0
+        // A skull is let go as soon as the kit allows: guided it crawls, and its player ran into it ([SkullPlay]).
+        val skull = newPlay && id == "guided_wither_skull"
+        val holdFor = if (id == "static_laser") laserHold() else if (skull) SkullPlay.holdTicks(rng.nextInt(3))
+            else if (hint.holdTicks.last > 0) hint.holdTicks.random() else 0
         if (holdFor > 0) {
             // Charge abilities fire when the player stops "blocking" with the item.
             nms.startUsingItem(InteractionHand.MAIN_HAND)
             holdUntilTick = tick + holdFor
-            holdSpeed = hint.speed
+            val at = target?.takeIf { skull && it.isOnline && it.world == player.world }
+            holdSpeed = if (at != null) SkullPlay.speed(player.eyeLocation.distance(aimPointOf(at)), holdFor) else hint.speed
+            holdAim = if (at != null) { -> skullAim(at) } else null
         }
 
         val action = if (usage == AbilityUsage.LEFT_CLICK) Action.LEFT_CLICK_AIR
@@ -3170,7 +3606,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             var due=tick+holdFor
             combo.steps.forEach { due+=it.delayTicks;comboQueue.addLast(QueuedStep(it,due,combo.mechanical)) }
         }
-        dbg("ability $id" + if (followup) "" else " (follow-up)")
+        if (BotManager.debug) dbg("ability $id" + (if (followup) "" else " (follow-up)") +
+            (if (skull) target?.takeIf { it.world == player.world }?.let { " at ${it.name}, %.1f blocks off".format(player.eyeLocation.distance(aimPointOf(it))) } ?: "" else ""))
         val cooldownMs = ((dataService.getAbility(id)?.cooldown ?: 3.0) * 1000).toLong()
         abilityReadyAtMs[id] = System.currentTimeMillis() + cooldownMs + 250
         return true
@@ -4507,18 +4944,30 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         val here = player.location
         fun hDist(x: Double, z: Double) = hypot(x - here.x, z - here.z)
         // Head for the closest safe ground: where we last stood, or the nearest spawn point.
+        // (If it is still there. With the floor blown out from under it (a Smasher takes eleven
+        // blocks of it, its user's included) the place a bot last stood is a hole, and it used to
+        // jump straight up at that hole until it had fallen out of the world: one Smasher in six
+        // cost its own user a life.)
         val options =
-            listOfNotNull(lastSafe?.takeIf { it.world == here.world }) +
-                map.spawnPoints.map { Location(here.world, it.x, it.y, it.z) }
+            (listOfNotNull(lastSafe?.takeIf { it.world == here.world }) +
+                map.spawnPoints.map { Location(here.world, it.x, it.y, it.z) })
+                .filter { hasSolidBelow(it.clone().add(0.0, 0.5, 0.0), 3) }
         if(recoveryGoal==null || tick-recoveryScanTick>=10) {
         recoveryScanTick=tick
         val scan=ArenaTerrain(player.world,map.voidLevel.toInt(),canDoubleJump())
         val ledges=ArrayList<Location>()
-        for(r in listOf(2,4,6,9,12)) for(i in 0..7) {
-            val a=Math.toRadians(i*45.0)
-            scan.surface(kotlin.math.floor(here.x+cos(a)*r).toInt(),kotlin.math.floor(here.z+sin(a)*r).toInt(),here.y,6.0,12.0)?.let { ledges.add(scan.location(it)) }
+        fun look(radii: List<Int>, spokes: Int) {
+            for(r in radii) for(i in 0 until spokes) {
+                val a=Math.toRadians(i*360.0/spokes)
+                scan.surface(kotlin.math.floor(here.x+cos(a)*r).toInt(),kotlin.math.floor(here.z+sin(a)*r).toInt(),here.y,6.0,12.0)?.let { ledges.add(scan.location(it)) }
+            }
         }
-        recoveryGoal = (options+ledges).filter { it.y > here.y - 25 }.minByOrNull { hDist(it.x, it.z) } ?: options.firstOrNull()
+        look(listOf(2,4,6,9,12), 8)
+        fun nearest() = (options+ledges).filter { it.y > here.y - 25 }.minByOrNull { hDist(it.x, it.z) }
+        var found = nearest()
+        // Nothing near and nowhere it knows of: further out, whatever is left standing.
+        if (found == null) { look(listOf(15,18,22,26), 12); found = nearest() }
+        recoveryGoal = found ?: options.firstOrNull()
         }
         val goal = recoveryGoal ?: return
         if (!recovering) {
@@ -4551,7 +5000,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             aimedDoubleJump(goal, "recovery")
         } else if (holdUntilTick < 0 && perch?.stage != 2) {
             // (Dropping onto its own Wool Mine, a Sheep keeps the rocket for the way back.)
-            if (tryRecoveryAbility() || webLaunch(goal)) dbg("used a movement ability to recover")
+            // (A Wither Skeleton whose image is standing on the map is back on it with one press.)
+            if (swapWithImage() || tryRecoveryAbility() || webLaunch(goal)) dbg("used a movement ability to recover")
         }
     }
 
@@ -5029,6 +5479,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         if (holdUntilTick >= 0 || bowReleaseTick>0) {
             nms.stopUsingItem()
             holdUntilTick = -1
+            holdAim = null
         }
     }
 
