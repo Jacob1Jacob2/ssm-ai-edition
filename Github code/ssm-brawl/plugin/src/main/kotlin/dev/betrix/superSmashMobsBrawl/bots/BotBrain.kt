@@ -164,9 +164,19 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     /** A Monster Egg clone that has come for this bot: see [swatClone]. */
     private var pest: org.bukkit.entity.LivingEntity? = null
     private var pestTick = -1000L
-    /** The last sign this bot had of where each opponent was: in view as its target, hit by them, or hit by it. See [ShadowTactics]. */
+    /** The last sign this bot had of where each opponent was: seen, heard, hit by them, or hit by it. See [SightTactics] and [ShadowTactics]. */
     private class Sign(val tick: Long, val at: Location)
     private val sensed = HashMap<java.util.UUID, Sign>()
+    /** When each opponent it knows of came to its notice, this time round ([SightTactics]). */
+    private val noticedAt = HashMap<java.util.UUID, Long>()
+    /**
+     * Since when it has had nobody in mind (-1: it has somebody) and which way it was facing then,
+     * when it last saw or heard anybody at all, and when it may look at its compass again.
+     */
+    private var nobodySince = -1L
+    private var nobodyYaw = 0f
+    private var lastPerceived = -1000L
+    private var compassAt = 0L
     private var unseenSaidTick = -1000L
     private var phantomSaidTick = -1000L
     /** The stretch of ticks this bot spends standing still, typing a chat message. */
@@ -706,9 +716,12 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             }
             return
         }
-        // A hit from nearby says where it came from, seen or not. (One from across the map, an
-        // anvil or a clone's, says only that they are somewhere.)
-        if (near(attacker)) sensed[attacker.uniqueId] = Sign(tick, attacker.location)
+        // A hit from nearby says where it came from, seen or not; so does one from further off
+        // when whoever threw it is there to be seen by turning round. (One from behind a wall or
+        // across the map, an anvil or a clone's, says only that they are somewhere.)
+        if (near(attacker) || (!BotManager.allSeeing && attacker.world == player.world && !ItemService.hidden(attacker) &&
+                attacker.location.distanceSquared(player.location) <= SightTactics.HIT_FROM * SightTactics.HIT_FROM &&
+                player.hasLineOfSight(attacker))) notice(attacker, "hit by them")
         // A hit put down to them with their clone standing next to this bot is the clone's: felt, if not seen.
         if (ItemEffects.cloneOwners.isNotEmpty()) {
             val here = player.location
@@ -733,11 +746,137 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     fun dealt(victim: Player, amount: Double) {
         dealtThisLife.merge(victim.uniqueId, amount, Double::plus)
         // A hit that lands on somebody nearby says where they are, seen or not.
-        if (near(victim)) sensed[victim.uniqueId] = Sign(tick, victim.location)
+        if (near(victim) && victim.uniqueId != player.uniqueId) notice(victim, "hit them")
     }
 
     /** Close enough that a hit given or taken shows where the other one is. */
     private fun near(other: Player) = other.world == player.world && other.location.distanceSquared(player.location) <= 144.0
+
+    // ------------------------------------------------------------------ what it sees and hears
+
+    private class Looked(val tick: Long, val open: Boolean)
+    /** When each opponent in front of it was last looked at properly, and whether anything was in the way: that is not worked out afresh every time. */
+    private val looked = HashMap<java.util.UUID, Looked>()
+
+    /**
+     * Somebody has come to this bot's notice, or is still in it ([how]: for the log). The first
+     * sign of them after a while with none starts the moment it takes to do anything about them
+     * ([SightTactics.readyAfter]), unless it comes [atOnce] (somebody it went looking for).
+     */
+    private fun notice(p: Player, how: String, atOnce: Boolean = false) {
+        val id = p.uniqueId
+        val old = sensed[id]
+        val at = p.location
+        val new = old == null || old.at.world != p.world || tick - old.tick > SightTactics.memoryTicks(d)
+        // Kept in mind, but not where it took them to be: as good as new. (Not the one it is
+        // after already: that is only where they turned out to be.)
+        val elsewhere = !new && old != null && p != target && tick - old.tick > SightTactics.FRESH &&
+            old.at.distanceSquared(at) > SightTactics.SURPRISE * SightTactics.SURPRISE
+        if (new || elsewhere) {
+            noticedAt[id] = if (atOnce) tick - SightTactics.readyAfter(d) else tick
+            if (BotManager.debug && !BotManager.allSeeing) {
+                dbg("noticed ${p.name} ($how), %.0f blocks off".format(at.distance(player.location)) +
+                    if (elsewhere && old != null) ", %.0f from where it took them to be".format(old.at.distance(at)) else "")
+            }
+        }
+        sensed[id] = Sign(tick, at)
+        lastPerceived = tick
+    }
+
+    /**
+     * Seen or heard this moment, as opposed to kept in mind. (Somebody in a Shadow Walk is never
+     * seen: what a bot does about them is [ShadowTactics]' business, and is left as it is.)
+     */
+    private fun aware(p: Player): Boolean =
+        BotManager.allSeeing || ItemService.hidden(p) || sensed[p.uniqueId]?.let { tick - it.tick <= SightTactics.FRESH } == true
+
+    /** Where this bot takes [p] to be: where they are if it has them in view or earshot, where it last did if not. */
+    private fun whereIs(p: Player): Location =
+        if (aware(p)) p.location else sensed[p.uniqueId]?.at?.takeIf { it.world == p.world } ?: p.location
+
+    /** Somebody in its match has died (the kill feed says so): wherever it took them to be, they are not there now. */
+    fun heardOfDeath(p: Player) {
+        val id = p.uniqueId
+        sensed.remove(id); noticedAt.remove(id); looked.remove(id)
+    }
+
+    /** No longer in mind: gone from where they were, or nowhere it can get to. */
+    private fun forget(p: Player, why: String) {
+        val id = p.uniqueId
+        sensed.remove(id); noticedAt.remove(id); looked.remove(id)
+        dbg("${p.name} is $why: lost them")
+    }
+
+    /**
+     * Whether [t], whom it is after, is somebody to go looking for: in mind but not in view. Not
+     * somebody holding a spot it cannot get to or has learned to keep away from: where they are
+     * is no secret, and what it does about them is worked out from where they are.
+     */
+    private fun seeks(t: Player) = !aware(t) && !besieging(t) && standingOff(t) == null && trapOf(t) == null
+
+    private var seekSaidTick = -1000L
+
+    /**
+     * After somebody it has not seen or heard for a moment: to where it last knew them to be,
+     * looking where it is going, to find them there or not. (It used to make for where they were
+     * now, wherever that was.)
+     */
+    private fun seek(t: Player, map: GameMapDef) {
+        val at = sensed[t.uniqueId]?.at?.takeIf { it.world == player.world } ?: return wander(map)
+        val here = player.location
+        if (hypot(at.x - here.x, at.z - here.z) < SightTactics.ARRIVED && abs(at.y - here.y) < 3.0) {
+            forget(t, "not where it last saw them")
+            return setInputs(0f, 0f, false)
+        }
+        if (tick - seekSaidTick > 40) {
+            seekSaidTick = tick
+            dbg("${t.name} is out of its sight: to where it last saw them, %.0f blocks off (they are %.0f from there now)".format(
+                at.distance(here), at.distance(t.location)))
+        }
+        travel(at, map) { forget(t, "somewhere it has no way to") }
+    }
+
+    /**
+     * What this bot sees and hears of its opponents this moment ([SightTactics]): whoever is in
+     * front of it with nothing in between, whoever is close by, and whoever is being hit not far off.
+     */
+    private fun perceive(game: BrawlMinigame) {
+        val eye = player.eyeLocation
+        for (entry in game.allPlayers()) {
+            val p = entry.player ?: continue
+            if (p == player || p.world != player.world || p.gameMode != GameMode.SURVIVAL || game.arePlayersOnSameTeam(player, p)) continue
+            val id = p.uniqueId
+            // (Back to life is somewhere else on the map: what was known of them is no guide to it.)
+            if (game.respawnManager.isRespawning(p)) { sensed.remove(id); noticedAt.remove(id); looked.remove(id); continue }
+            // Somebody in a Shadow Walk is known only by what they do: a hit given or taken.
+            if (ItemService.hidden(p)) continue
+            val at = aimPointOf(p)
+            val gap = eye.distance(at)
+            if (gap > SightTactics.FAR) continue
+            if (gap <= SightTactics.HEARD) { notice(p, "heard them close by"); continue }
+            if (p.noDamageTicks > 0 && gap <= SightTactics.FIGHT_HEARD) { notice(p, "heard them being hit"); continue }
+            val (yaw, pitch) = lookAngles(eye, at)
+            if (!SightTactics.inView(wrapDegrees(yaw - nms.yRot).toDouble(), (pitch - nms.xRot).toDouble())) continue
+            val last = looked[id]
+            val open = if (last != null && tick - last.tick < SightTactics.LOOK_EVERY) last.open
+                else player.hasLineOfSight(p).also { looked[id] = Looked(tick, it) }
+            if (open) notice(p, "saw them")
+        }
+    }
+
+    /**
+     * A look at the Player Compass every fighter carries: it points at the nearest opponent and
+     * says how far off they are. What a player does who has looked round and seen nobody.
+     */
+    private fun readCompass(game: BrawlMinigame) {
+        val here = player.location
+        val nearest = game.allPlayers().mapNotNull { it.player }.filter {
+            it != player && it.world == player.world && it.gameMode == GameMode.SURVIVAL && !ItemService.hidden(it) &&
+                !game.arePlayersOnSameTeam(player, it) && !game.respawnManager.isRespawning(it) &&
+                !game.connectionManager.isDisconnected(it)
+        }.minByOrNull { it.location.distanceSquared(here) } ?: return
+        notice(nearest, "by its compass", atOnce = true)
+    }
 
     /** Called as this bot dies: was that something it should not walk into a second time? [fell] is a death by the void or water. */
     fun died(fell: Boolean) {
@@ -900,6 +1039,16 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         val from = target?.uniqueId
         val to = next?.uniqueId
         target = next
+        // (How far round from where it was looking the one it now goes for is: a bot that knows
+        // only what it has seen or heard seldom turns on somebody far off behind its back.)
+        if (BotManager.debug && next != null && next.world == player.world) {
+            val (yaw, _) = lookAngles(player.eyeLocation, aimPointOf(next))
+            val sign = sensed[next.uniqueId]
+            dbg("going for ${next.name}: %.0f blocks off, %.0f degrees round from where it is looking, ".format(
+                next.location.distance(player.location), abs(wrapDegrees(yaw - nms.yRot))) +
+                if (sign == null) "never seen or heard"
+                else "last seen or heard ${tick - sign.tick} ticks ago %.0f blocks from where they are".format(sign.at.distance(next.location)))
+        }
         publish { BotTargetChanged(bot, from, to, it) }
     }
 
@@ -986,6 +1135,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             comboQueue.clear();bowReleaseTick=0;player.isSneaking=false
             shot=null;carried=null;channelUntil=0;perch=null;bridge=null;crossing=null;leap=null
             noticed.clear();noWayOut.clear();escape=null;roundTo=null;pest=null;sensed.clear()
+            noticedAt.clear();looked.clear();nobodySince = -1;lastPerceived = -1000;compassAt = 0
             enterState(CombatState.IDLE)
             opponents=emptyList();healthLosses.clear();lastHealth=0.0
             itemGoal=null;ignoredItems.clear();fleeFailedUntil=0;trackedId=null
@@ -1074,7 +1224,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         }
         // A shot nobody got round to firing (the fight moved on) is forgotten.
         if (shot?.let { tick - it.born > 20 } == true) shot = null
-        considerItem(target?.takeIf { it.isOnline && it.world == player.world }, map)
+        // (Nothing is used on somebody it is only on its way to look for.)
+        considerItem(target?.takeIf { it.isOnline && it.world == player.world && !seeks(it) }, map)
         // At the wheel of a Flying Car: the car goes where it is driven (ItemEffects.botKeys), and
         // nothing the legs or the abilities could do from the seat is of any use.
         if (player.isInsideVehicle) return releaseInputs()
@@ -1202,7 +1353,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             CombatState.FLEE -> if (t == null) wander(map) else if (player.foodLevel > 0) flee(t, decide, map) else fight(t, decide, map)
             CombatState.GET_ITEM -> itemGoal?.let { collect(it, map) } ?: wander(map)
             CombatState.GET_CRYSTAL -> crystalGoal?.let { claimCrystal(it, t, map) } ?: wander(map)
-            else -> if (t == null) wander(map) else fight(t, decide, map)
+            // (Somebody it has in mind but cannot see is gone to look for, where it last saw them.)
+            else -> if (t == null) wander(map) else if (seeks(t)) seek(t, map) else fight(t, decide, map)
         }
     }
 
@@ -1225,22 +1377,30 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             else Vector()
         trackedId = t?.uniqueId
         trackedAt = at
-        // Watching them: should they vanish, this is where it last knew them to be.
-        if (t != null && at != null && !ItemService.hidden(t)) sensed[t.uniqueId] = Sign(tick, at)
+        // Watching them: should they vanish, this is where it last knew them to be. (Watching is
+        // having them in front of it with nothing in between, or close by, which [perceive] sees to;
+        // a bot that knows where everybody is has them every tick.)
+        if (t != null && at != null && !ItemService.hidden(t) && BotManager.allSeeing) sensed[t.uniqueId] = Sign(tick, at)
     }
 
     /**
-     * Whether this bot can go for [p] at all. Somebody in a Shadow Walk is not there to be seen, but
-     * a bot that was watching them, was just hit by them or just hit them knows where to swing for a
-     * moment longer, as a player does. (It used to forget them the instant they vanished.)
+     * Whether this bot can go for [p] at all: whether it knows of them ([SightTactics]). Somebody it
+     * has seen, heard, hit or been hit by not long ago, once the moment it takes to react has passed.
+     * Somebody in a Shadow Walk is not there to be seen, but a bot that was watching them, was just
+     * hit by them or just hit them knows where to swing for a moment longer, as a player does. (It
+     * used to know of everybody all the time, and to forget a Shadow Walker the instant they vanished.)
      */
     private fun knows(p: Player): Boolean {
-        if (!ItemService.hidden(p)) return true
-        if (BotManager.oldItemPlay) return false
+        val hidden = ItemService.hidden(p)
+        if (!hidden && BotManager.allSeeing) return true
+        if (hidden && BotManager.oldItemPlay) return false
         // (Somebody is also unseen for two seconds after coming back to life, somewhere else on
         // the map: the last sign of them is from before, and is no guide to where they are now.)
         val sign = sensed[p.uniqueId]?.takeIf { it.at.world == p.world } ?: return false
-        return ShadowTactics.knows(true, tick - sign.tick, d) && ShadowTactics.followed(sign.at.distance(p.location), tick - sign.tick)
+        val since = tick - sign.tick
+        if (!ShadowTactics.followed(sign.at.distance(p.location), since)) return false
+        return if (hidden) ShadowTactics.knows(true, since, d)
+            else SightTactics.knows(since, tick - (noticedAt[p.uniqueId] ?: -100_000L), d)
     }
 
     private fun updateState(t: Player?) {
@@ -1262,9 +1422,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             crystalLandsIn = crystal?.second ?: 0,
             health = player.health / max,
             targetHealth = t?.let { it.health / maxHealth(it) },
-            targetDistance = t?.location?.distance(here),
+            targetDistance = t?.let { whereIs(it).distance(here) },
             itemDistance = item?.distance(here),
-            itemEnemyDistance = item?.let { i -> opponents.filter { it.world == i.world }.minOfOrNull { it.location.distance(i) } },
+            itemEnemyDistance = item?.let { i -> opponents.filter { it.world == i.world }.minOfOrNull { whereIs(it).distance(i) } },
             recentDamage = healthLosses.sumOf { it.second } / max,
             attacksReady = kitAbilityIds().count { AbilityHints.of(it).attack && isReady(it) },
             itemNeeded = needed != null,
@@ -1966,7 +2126,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         // high ledge the instant it began, while the bot was still on its way up.)
         if (g.doubleJumped && nms.deltaMovement.y < -0.1 && tick - lastDoubleJumpTick > 5 &&
             player.location.y < g.landing.y - 2.5 && isOverVoid(map)) {
-            dbg("gap jump falling short, recovering")
+            if (BotManager.debug) dbg("gap jump falling short, recovering" +
+                // (Blown away since the route was planned, or never where the planner thought?)
+                if (hasSolidBelow(g.landing.clone().add(0.0, 0.3, 0.0), 2)) "" else ": what it was jumping onto is not there")
             gapJump = null
             return false
         }
@@ -2078,20 +2240,6 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
 
     private fun chooseTarget(game: BrawlMinigame) {
         val me = player.location
-        val alive =
-            game.allPlayers().mapNotNull { it.player }.filter {
-                it != player &&
-                    it.world == player.world &&
-                    it.gameMode == GameMode.SURVIVAL && knows(it) &&
-                    !game.arePlayersOnSameTeam(player, it) &&
-                    !game.respawnManager.isRespawning(it)
-            }
-        opponents = alive
-        // Prefer someone the bot can get to; with nobody else left, an unreachable opponent is
-        // still the one to deal with.
-        val candidates = alive.filter { !besieging(it) && standingOff(it) == null }.ifEmpty { alive }
-        // Only the smarter selector reads edges and attackers, so only it pays for them.
-        val attackers = if (d.smartTargeting) CombatLogService.recentAttackers(player, 4000) else emptySet()
         // Two teams: the opponent a player on this bot's side sent it after ("get cqsey") comes first,
         // for as long as they are in the match.
         val order = teamOrderNow
@@ -2104,11 +2252,47 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         // Whoever this bot told the lobby it is going after ("lets team on him").
         val wanted = teamOrderNow?.takeIf { it.ask == TeamTalk.Ask.FOCUS }?.target
             ?: dev.betrix.superSmashMobsBrawl.services.BotConversationService.grudge(game, player.uniqueId)
+        // (What it sees and hears is kept up either way, so that the two can be compared: a bot
+        // that knows where everybody is takes no notice of it.)
+        perceive(game)
+        if (!BotManager.allSeeing) {
+            // Somebody it was told to go for, or swore to, it need not have seen for itself: it was told where they are.
+            if (wanted != null) game.allPlayers().firstOrNull { it.uniqueId == wanted }?.player
+                ?.takeIf { it.world == player.world && !ItemService.hidden(it) && !game.respawnManager.isRespawning(it) }
+                ?.let { notice(it, "told of them", atOnce = true) }
+        }
+        val alive =
+            game.allPlayers().mapNotNull { it.player }.filter {
+                it != player &&
+                    it.world == player.world &&
+                    it.gameMode == GameMode.SURVIVAL && knows(it) &&
+                    !game.arePlayersOnSameTeam(player, it) &&
+                    !game.respawnManager.isRespawning(it)
+            }
+        opponents = alive
+        if (!BotManager.allSeeing) {
+            if (alive.isNotEmpty()) nobodySince = -1
+            else if (nobodySince < 0) { nobodySince = tick; nobodyYaw = nms.yRot }
+            // Nobody in mind and a look round has found nobody; or the only ones in mind have not
+            // been seen or heard for a while (round a corner, across the map): a look at the compass.
+            val lost = if (alive.isEmpty()) tick - nobodySince >= SightTactics.COMPASS_AFTER else tick - lastPerceived >= SightTactics.COMPASS_REST
+            if (lost && tick >= compassAt) {
+                compassAt = tick + SightTactics.COMPASS_REST
+                readCompass(game)
+            }
+        }
+        // Prefer someone the bot can get to; with nobody else left, an unreachable opponent is
+        // still the one to deal with.
+        val candidates = alive.filter { !besieging(it) && standingOff(it) == null }.ifEmpty { alive }
+        // Only the smarter selector reads edges and attackers, so only it pays for them.
+        val attackers = if (d.smartTargeting) CombatLogService.recentAttackers(player, 4000) else emptySet()
         val pulls = teamPulls(game, candidates)
         val chosen = selector.choose(
             candidates.map {
-                TargetCandidate(it.uniqueId, it.location.distance(me), it.health,
-                    d.smartTargeting && !hasGroundNear(it.location, 2), it.uniqueId in attackers, it.uniqueId == wanted,
+                // (As far off as it takes them to be: somebody it cannot see is where it last saw them.)
+                val at = whereIs(it)
+                TargetCandidate(it.uniqueId, at.distance(me), it.health,
+                    d.smartTargeting && !hasGroundNear(at, 2), it.uniqueId in attackers, it.uniqueId == wanted,
                     pulls[it.uniqueId] ?: 0.0)
             },
             target?.uniqueId,
@@ -2890,7 +3074,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             targetNearEdge = t != null && !hasGroundNear(t.location, 2),
             targetUnreachable = t != null && besieging(t),
             voidBehind = away != null && (2..8 step 2).any { !hasSolidBelow(here.clone().add(away.x * it, 0.0, away.z * it), 12) },
-            nearestEnemy = opponents.filter { it.world == here.world }.minOfOrNull { it.location.distance(here) } ?: Double.MAX_VALUE,
+            nearestEnemy = opponents.filter { it.world == here.world }.minOfOrNull { whereIs(it).distance(here) } ?: Double.MAX_VALUE,
             heldSeconds = ((tick - carriedSince) / 20).toInt(),
             riding = player.isInsideVehicle,
         )
@@ -5456,11 +5640,29 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         val cx = map.spawnPoints.map { it.x }.average()
         val cz = map.spawnPoints.map { it.z }.average()
         val here = player.location
-        if (hypot(cx - here.x, cz - here.z) < 4) return releaseInputs()
-        val (yaw, _) = lookAngles(player.eyeLocation, Location(here.world, cx, here.y + 1.6, cz))
-        turnTowards(yaw, 0f, d.turnSpeed)
-        val forward = if (nms.onGround() && !groundAhead(0.6f, 0f)) 0f else 0.6f
-        setInputs(forward, 0f, nms.horizontalCollision && nms.onGround())
+        // With nobody in mind it looks round, to both sides and behind it ([SightTactics.sweep]):
+        // first from where it stands, and then on its way to the middle of the map.
+        val looking = !BotManager.allSeeing && nobodySince >= 0
+        val swing = if (looking) SightTactics.sweep(tick - nobodySince).toFloat() else 0f
+        val atMiddle = hypot(cx - here.x, cz - here.z) < 4
+        if (atMiddle || (looking && tick - nobodySince < SightTactics.COMPASS_AFTER)) {
+            if (!looking) return releaseInputs()
+            turnTowards(wrapDegrees(nobodyYaw + swing), 0f, d.turnSpeed)
+            return setInputs(0f, 0f, false)
+        }
+        val middle = Location(here.world, cx, here.y + 1.6, cz)
+        val (yaw, _) = lookAngles(player.eyeLocation, middle)
+        turnTowards(wrapDegrees(yaw + swing), 0f, d.turnSpeed)
+        if (!looking) {
+            val forward = if (nms.onGround() && !groundAhead(0.6f, 0f)) 0f else 0.6f
+            return setInputs(forward, 0f, nms.horizontalCollision && nms.onGround())
+        }
+        // (It goes the way it was going whichever way its head is turned.)
+        val (f, s) = inputToward(middle)
+        val forward = f * 0.6f
+        val strafe = s * 0.6f
+        if (nms.onGround() && !groundAhead(forward, strafe)) setInputs(0f, 0f, false)
+        else setInputs(forward, strafe, nms.horizontalCollision && nms.onGround())
     }
 
     private fun setInputs(forward: Float, strafe: Float, jump: Boolean) {

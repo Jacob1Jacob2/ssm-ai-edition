@@ -220,6 +220,14 @@ class BotsCommand : KoinComponent {
         plugin.logger.info("[stifflook] bots turn their heads ${if (BotManager.stiffLook) "the old way, at one speed to a dead stop" else "as a hand does"}")
     }
 
+    @Execute(name = "allseeing")
+    @Description("Debug: bots know where every opponent is all the time, as before they had to see or hear them (to measure the difference); again to switch back")
+    fun allSeeing(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        BotManager.allSeeing = !BotManager.allSeeing
+        plugin.logger.info("[allseeing] bots ${if (BotManager.allSeeing) "know where everybody is all the time" else "know of whoever they have seen, heard or been hit by"}")
+    }
+
     @Execute(name = "testhit")
     @Description("Debug: make one bot do a vanilla (client-style) attack on another")
     fun testHit(@Context sender: CommandSender, @Arg attacker: String, @Arg victim: String) {

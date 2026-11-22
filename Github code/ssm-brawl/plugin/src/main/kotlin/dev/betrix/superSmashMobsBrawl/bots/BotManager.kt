@@ -93,6 +93,11 @@ object BotManager : KoinComponent {
      * at two thirds of its speed. To measure the difference; the kits themselves are never changed.
      */
     @Volatile var oldKitPlay = false
+    /**
+     * Debug: bots know where every opponent is all the time, behind them and through walls, as they
+     * did before they had to see or hear somebody to know of them. To measure the difference.
+     */
+    @Volatile var allSeeing = false
     private var roster: List<BotProfile> = emptyList()
     private var rankStyles: Map<String, String> = emptyMap()
 
@@ -125,6 +130,14 @@ object BotManager : KoinComponent {
 
         // Log how bots die and who wins, so bot behaviour can be tuned from the server log.
         dev.betrix.superSmashMobsBrawl.events.BrawlDeathEvent.listen {
+            // A death is in everybody's kill feed: no bot in the match goes on looking for the
+            // dead where they fell (they come back somewhere else).
+            minigameService.getMinigameForPlayer(player)?.let { match ->
+                for (bot in bots.values) {
+                    val other = bot.nms.bukkitEntity
+                    if (other != player && minigameService.getMinigameForPlayer(other) === match) bot.brain.heardOfDeath(player)
+                }
+            }
             val profile = profileOf(player) ?: return@listen
             val game = minigameService.getMinigameForPlayer(player)
             val lives = game?.teamManager?.findTeamOf(player)?.metadata?.get("stocks")
