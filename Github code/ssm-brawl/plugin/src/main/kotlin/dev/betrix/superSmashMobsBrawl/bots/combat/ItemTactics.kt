@@ -383,6 +383,19 @@ object DangerTactics {
     const val STUCK_TICKS = 12
     /** This close to the edge of something its opponent is standing in, a bot stops and waits instead of going in after them. */
     const val NEAR_EDGE = 3.0
+    /** How far along the way it is going a bot looks for something it should not walk into, and in what steps. */
+    const val WAY_AHEAD = 4.0
+    const val WAY_STEP = 0.5
+    /**
+     * Something still in the air has not got to where it will go off, and running from where it is
+     * now is running from the wrong place (a bot used to set off backwards from its own grenade the
+     * tick it left its hand). It is waited for until it lands, unless there are fewer ticks than
+     * this left on its fuse.
+     */
+    const val NO_MORE_WAITING = 25
+
+    /** Whether to act now on something with [ticksLeft] on its fuse: once it has come to rest, or when it is nearly time anyway. */
+    fun actsOn(atRest: Boolean, ticksLeft: Long) = atRest || ticksLeft <= NO_MORE_WAITING
     /** How far ahead of its feet a bot looks for something lying on the ground. */
     const val AHEAD = 3.5
     /** How much wider than a mine or a trap a bot steps round it. */

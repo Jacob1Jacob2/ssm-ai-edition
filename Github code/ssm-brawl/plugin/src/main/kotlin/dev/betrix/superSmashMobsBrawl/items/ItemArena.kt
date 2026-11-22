@@ -103,6 +103,8 @@ class ItemArena(val game: BrawlMinigame) {
         val everybody: Boolean = false,
         /** Once it has gone off there is no walking out of it (a singularity holds whoever it has). */
         val holds: Boolean = false,
+        /** Whether it has come to rest. Something still in the air is not yet where it is going to go off. */
+        val still: () -> Boolean = { true },
         /** Where its middle is now (a thrown one is still moving), or null once it is gone. */
         val at: () -> Location?,
     )

@@ -42,9 +42,11 @@ object PhantomPlay {
     const val TAKE_OFF = 0.5
     /** With less than this left it goes back to ground it knows is there. */
     const val RESERVE = 0.15
+    /** What a bomb takes out of the tank: none is dropped that would leave less than the reserve. (One took a Phantom from 16% to 8%, six blocks up.) */
+    const val BOMB_COST = 0.08
 
     /** Whether to let a bomb go: over them, or near enough that its blast reaches, with them underneath. */
-    fun bombs(flatGap: Double, above: Double, fuel: Double) = flatGap < 3.0 && above > 1.5 && fuel >= RESERVE
+    fun bombs(flatGap: Double, above: Double, fuel: Double) = flatGap < 3.0 && above > 1.5 && fuel >= RESERVE + BOMB_COST
     fun headsHome(fuel: Double) = fuel < RESERVE
     /** How high to hover with [room] blocks of open air over the opponent's head (null: open sky). */
     fun height(room: Double?) = (room ?: HEIGHT).coerceIn(LOWEST, HEIGHT)

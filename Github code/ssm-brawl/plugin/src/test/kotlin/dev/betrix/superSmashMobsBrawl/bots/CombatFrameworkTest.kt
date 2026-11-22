@@ -620,6 +620,9 @@ class CombatFrameworkTest : StringSpec({
         PhantomPlay.bombs(flatGap = 5.0, above = 6.0, fuel = 0.8) shouldBe false
         PhantomPlay.bombs(flatGap = 1.0, above = 0.5, fuel = 0.8) shouldBe false
         PhantomPlay.bombs(flatGap = 1.0, above = 6.0, fuel = 0.1) shouldBe false
+        // (A bomb is 8% of the tank: none that would leave less than the way home needs.)
+        PhantomPlay.bombs(flatGap = 1.0, above = 6.0, fuel = 0.2) shouldBe false
+        PhantomPlay.bombs(flatGap = 1.0, above = 6.0, fuel = 0.24) shouldBe true
         // The last of the tank is for getting back to the ground; and it does not take off to attack on less than half.
         PhantomPlay.headsHome(0.1) shouldBe true
         PhantomPlay.headsHome(0.5) shouldBe false
@@ -664,6 +667,13 @@ class CombatFrameworkTest : StringSpec({
         out.all { (x, z) -> !DangerTactics.inRound(x, 0.0, z, 3.0, DangerTactics.MARGIN) } shouldBe true
         // Standing on its very middle, any way is away.
         DangerTactics.waysOut(0.0, 0.0, 3.0).size shouldBe 7
+        // Something still in the air is not yet where it will go off: it is waited for until it lands,
+        // unless its fuse is nearly out. (A bot used to run backwards from its own grenade the tick it threw it.)
+        DangerTactics.actsOn(atRest = false, ticksLeft = 55) shouldBe false
+        DangerTactics.actsOn(atRest = true, ticksLeft = 55) shouldBe true
+        DangerTactics.actsOn(atRest = false, ticksLeft = 20) shouldBe true
+        // The way ahead is looked along in half-block steps, four blocks out: enough to stop at the edge of a blast, not in it.
+        (DangerTactics.WAY_AHEAD / DangerTactics.WAY_STEP >= 6) shouldBe true
     }
     "a mine or a trap lying in the way is gone round, on the side the way already leans to" {
         // Walking east with a mine dead ahead and a little to the south: past it on the north.

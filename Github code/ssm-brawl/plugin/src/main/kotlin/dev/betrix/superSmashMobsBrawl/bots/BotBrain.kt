@@ -2810,7 +2810,10 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         if (live.isEmpty()) { escape = null; roundTo = null; return false }
 
         // Standing in something that has not gone off yet (or that it can still walk out of): out.
+        // (Not from something still in the air, which is not yet where it will go off, unless its
+        // fuse is nearly out anyway.)
         val inside = live.filter { (danger, c) -> !danger.trigger && (arena.tick < danger.from || !danger.holds) &&
+            DangerTactics.actsOn(danger.still(), danger.from - arena.tick) &&
             covers(danger, c, here, DangerTactics.MARGIN) && (noWayOut[danger] ?: 0L) <= tick }
             .minByOrNull { (danger, _) -> danger.from - arena.tick }
         if (inside != null) {
@@ -2833,8 +2836,11 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                 // of a Crafty Bomb's lines, straight away from anything round and then round to either side.
                 val ways = if (danger.cross) CraftyTactics.refuges(here.x - c.x, here.z - c.z)
                     else DangerTactics.waysOut(here.x - c.x, here.z - c.z, danger.radius)
-                goal = ways.asSequence().map { (dx, dz) -> Location(here.world, c.x + dx, here.y, c.z + dz) }
-                    .filter { spot -> (spot.blockX to spot.blockZ) !in e.tried && walkable(here, spot) &&
+                // Measured along the ground: a bot in the middle of a jump has no floor at the height
+                // of its feet, found no way out in a straight line, and ran for a far corner instead.
+                val base = floorUnder(here, 6.0)?.let { Location(here.world, here.x, it.y, here.z) } ?: here
+                goal = ways.asSequence().map { (dx, dz) -> Location(here.world, c.x + dx, base.y, c.z + dz) }
+                    .filter { spot -> (spot.blockX to spot.blockZ) !in e.tried && walkable(base, spot) &&
                         live.none { (other, oc) -> !other.trigger && covers(other, oc, spot, DangerTactics.MARGIN) } }
                     .firstOrNull()
                 // Nothing in a straight line (the edge of an island, a wall): by the routes, to the
@@ -2873,22 +2879,35 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             }
         }
 
-        // Clear of everything. Whoever it is fighting may not be: somebody standing in something that
-        // is about to go off (or is going on) is not followed in. Here it waits, at the edge, and
-        // hits anybody who comes within a hit. (A fight used to walk a bot back under its own bomb.)
-        val keptOut = if (t == null) null else live.firstOrNull { (danger, c) -> !danger.trigger && arena.tick <= danger.until &&
-            covers(danger, c, t.location, 0.0) && c.distance(here) <= danger.radius + DangerTactics.MARGIN + (if (danger.cross) CraftyTactics.ARM.toDouble() else DangerTactics.NEAR_EDGE) }
-        if (t != null && keptOut != null) {
+        // Clear of everything. The way it is going may not be: toward somebody standing in something
+        // that is about to go off, or across a singularity that has opened and holds whoever steps
+        // in. Not that way: here it waits, at the edge, and hits anybody who comes within a hit. (A
+        // fight used to walk a bot back under its own bomb, and a chase took it through its own singularity.)
+        val toward = route.firstOrNull()?.node?.let { Location(here.world, it.x + .5, here.y, it.z + .5) } ?: t?.location
+        val keptOut = if (toward == null || toward.world != here.world) null else {
+            val wayX = toward.x - here.x
+            val wayZ = toward.z - here.z
+            val length = hypot(wayX, wayZ)
+            val steps = (minOf(length, DangerTactics.WAY_AHEAD) / DangerTactics.WAY_STEP).toInt()
+            // (Only what it is outside of: caught in something with no way out, it fights on where it is.)
+            if (length < 0.3 || steps < 1) null else live.firstOrNull { (danger, c) -> !danger.trigger && arena.tick <= danger.until &&
+                !covers(danger, c, here, 0.0) &&
+                (1..steps).any { i ->
+                    val along = i * DangerTactics.WAY_STEP / length
+                    covers(danger, c, Location(here.world, here.x + wayX * along, here.y, here.z + wayZ * along), DangerTactics.MARGIN * 0.5)
+                } }
+        }
+        if (keptOut != null) {
             val reach = KitService.getKitForPlayer(player)?.getMeleeReach() ?: 3.0
-            val aim = aimPointOf(t)
+            val aim = t?.let { aimPointOf(it) } ?: keptOut.second
             val (yaw, pitch) = lookAngles(eye, aim)
             lookTowards(yaw + yawError, pitch + pitchError, d.turnSpeed)
-            if (holdUntilTick < 0 && bowReleaseTick == 0L && tick >= nextClickTick && eye.distance(aim) <= reach + 0.6 && player.hasLineOfSight(t)) {
+            if (t != null && holdUntilTick < 0 && bowReleaseTick == 0L && tick >= nextClickTick && eye.distance(aim) <= reach + 0.6 && player.hasLineOfSight(t)) {
                 meleeClick()
                 val interval = 20.0 / d.clicksPerSecond
                 nextClickTick = tick + (interval * (0.7 + rng.nextDouble() * 0.6)).toLong().coerceAtLeast(1)
             }
-            if (tick - dangerSaidTick > 40) { dangerSaidTick = tick; dbg("${t.name} is in the way of the ${keptOut.first.kind.label}: not following them in") }
+            if (tick - dangerSaidTick > 40) { dangerSaidTick = tick; dbg("the way ${t?.let { "to ${it.name} " } ?: ""}leads into the ${keptOut.first.kind.label}: waiting at the edge of it") }
             roundTo = null
             setInputs(0f, 0f, false)
             return true

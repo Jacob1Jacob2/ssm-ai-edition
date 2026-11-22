@@ -244,7 +244,8 @@ class ItemEffects(private val arena: ItemArena) {
         // listed for anybody who can see it coming. See ItemArena.Danger.
         var settled: Location? = null
         if (reach > 0) arena.danger(ItemArena.Danger(kind, p.uniqueId, reach, arena.tick + fuse, arena.tick + fuse + linger,
-            everybody = everybody, holds = holds) { settled ?: body.takeIf { it.isValid }?.location })
+            everybody = everybody, holds = holds,
+            still = { settled != null || !body.isValid || body.isOnGround || body.velocity.lengthSquared() < 0.01 }) { settled ?: body.takeIf { it.isValid }?.location })
         var age=0
         arena.add(object: SmashEffect {
             override fun step(): Boolean {
