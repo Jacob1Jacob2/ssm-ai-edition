@@ -2,6 +2,8 @@
 
 # ---- not worth backing up: old snapshots, scratch copies, local tools
 /backups/
+# two copies of the server for testing bot changes on, with the scripts and logs of those tests (rebuilt from /test-server)
+/bot-testing/
 /host-smoke/
 /tools/
 /.claude/
