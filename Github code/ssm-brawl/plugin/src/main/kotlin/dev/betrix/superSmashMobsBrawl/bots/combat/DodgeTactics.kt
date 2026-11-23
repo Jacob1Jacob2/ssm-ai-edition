@@ -190,6 +190,35 @@ object WallTactics {
 }
 
 /**
+ * Hitting back at what a kit sends to fight for it: a Wither Skeleton's Wither Image (sixteen
+ * health, a swing a second for eight seconds) and a Polar Bear's cub (twelve health, and there
+ * until somebody kills it). Either is gone in three or four swings, and until then it goes on
+ * hitting whoever it is after. Bots used to take no notice of them at all, except by accident
+ * when one stood between them and the player they were swinging at; anybody else turns round
+ * and kills the thing. So a bot does that too, as it does with a Monster Egg's clone
+ * ([CloneTactics], whose rules of noticing, reach and giving up it goes by).
+ *
+ * Not everything a kit puts in the arena is worth it. A Wolf's cub that has somebody by the leg
+ * has thirty health and lets go in three and a half seconds anyway; a Pig's bomb goes off as it
+ * arrives. Those are left alone.
+ */
+object SummonTactics {
+    /** The kinds of mob (by entity type) that are sent to fight on their own and are worth turning on. */
+    val FIGHTERS = setOf("WITHER_SKELETON", "POLAR_BEAR")
+
+    fun fights(type: String) = type in FIGHTERS
+
+    /** More swings than this to finish one, and the time is better spent on whoever sent it. */
+    const val MOST_SWINGS = 6
+
+    /** How many swings of [damage] finish something with [health] left. */
+    fun swings(health: Double, damage: Double): Int =
+        if (damage <= 0.0) Int.MAX_VALUE else kotlin.math.ceil(health / damage).toInt().coerceAtLeast(1)
+
+    fun worthIt(health: Double, damage: Double) = swings(health, damage) <= MOST_SWINGS
+}
+
+/**
  * Not walking at somebody in a straight line. Most of what a kit throws is in the air for a third
  * of a second, which is about what it takes to see it and start moving: stepping out of its way
  * after it has left is mostly too late (measured: a bot that had reacted was one or two ticks from

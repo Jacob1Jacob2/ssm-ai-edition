@@ -2,6 +2,7 @@ package dev.betrix.superSmashMobsBrawl.bots
 
 import dev.betrix.superSmashMobsBrawl.bots.combat.BlastTactics
 import dev.betrix.superSmashMobsBrawl.bots.combat.DodgeTactics
+import dev.betrix.superSmashMobsBrawl.bots.combat.SummonTactics
 import dev.betrix.superSmashMobsBrawl.bots.combat.WallTactics
 import dev.betrix.superSmashMobsBrawl.bots.combat.WeaveTactics
 import io.kotest.core.spec.style.StringSpec
@@ -146,6 +147,24 @@ class DodgeTacticsTest : StringSpec({
         val arrow = DodgeTactics.pass(-10.0, 0.0, 2.0, 0.0, 0.0, 0.0)!!.ticks - DodgeTactics.readyAfter(BotDifficulty.EXPERT)
         (blast > 6.0) shouldBe true
         (arrow < 2.0) shouldBe true
+    }
+    "what a kit sends to fight for it is hit back at when a few swings will finish it" {
+        // A Wither Image and a bear cub are sent to fight; a Wolf's cub holds somebody down and a Pig's bomb goes off.
+        SummonTactics.fights("WITHER_SKELETON") shouldBe true
+        SummonTactics.fights("POLAR_BEAR") shouldBe true
+        SummonTactics.fights("WOLF") shouldBe false
+        SummonTactics.fights("PIG") shouldBe false
+        // A Wither Image has sixteen health: four swings of five, three of six.
+        SummonTactics.swings(16.0, 5.0) shouldBe 4
+        SummonTactics.swings(16.0, 6.0) shouldBe 3
+        SummonTactics.swings(0.5, 6.0) shouldBe 1
+        // Worth it for any kit's swing; a grown bear's thirty health only for one that hits hard enough.
+        SummonTactics.worthIt(16.0, 4.0) shouldBe true
+        SummonTactics.worthIt(12.0, 4.0) shouldBe true
+        SummonTactics.worthIt(30.0, 5.0) shouldBe true
+        SummonTactics.worthIt(30.0, 4.0) shouldBe false
+        // Something that cannot be hurt at all is never worth it.
+        SummonTactics.worthIt(16.0, 0.0) shouldBe false
     }
     "a wall that hurts whoever touches it is kept out of, and stepped out of by the shortest way" {
         // A Spore Wall three blocks wide along x: blocks 10..12 by 20, so corners 10..13 by 20..21. It reaches 0.55 beyond them.

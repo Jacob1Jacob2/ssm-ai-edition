@@ -748,6 +748,12 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             if (ItemService.hostileClones(player).any { ItemEffects.cloneOwners[it.uniqueId] == attacker &&
                     it.location.distanceSquared(here) <= CloneTactics.FELT_RANGE * CloneTactics.FELT_RANGE }) pestFelt = tick
         }
+        // (The same with something their kit has sent to fight for them standing next to it: a Wither Image, a bear cub.)
+        if (!BotManager.leaveSummons && dev.betrix.superSmashMobsBrawl.abilities.ClassicSummons.owners.isNotEmpty()) {
+            val summons = dev.betrix.superSmashMobsBrawl.abilities.ClassicSummons.owners
+            if (player.world.getNearbyLivingEntities(player.location, CloneTactics.FELT_RANGE).any {
+                    it !is Player && summons[it.uniqueId] == attacker && SummonTactics.fights(it.type.name) }) pestFelt = tick
+        }
         blows.addLast(Blow(tick, attacker.uniqueId, player.location.clone(), nms.onGround()))
         while (blows.size > 48 || tick - blows.first().tick > 400) blows.removeFirst()
         // Shot at by somebody it is keeping its distance from, and down to half health: the
@@ -3577,15 +3583,27 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
 
     /**
      * A Monster Egg clone that has got to this bot: turned on and hit until it is gone, which is one
-     * or two hits. Returns true while that is what the bot is doing (it owns the look and the feet).
+     * or two hits. The same for what an opponent's kit has sent to fight for it (a Wither Image, a
+     * Polar Bear's cub), if a few swings will finish it ([SummonTactics]). Returns true while that
+     * is what the bot is doing (it owns the look and the feet).
      */
     private fun swatClone(decide: Boolean, map: GameMapDef): Boolean {
-        if (BotManager.oldItemPlay) return false
+        if (BotManager.oldItemPlay && BotManager.leaveSummons) return false
         if (decide || tick - pestTick > 10) {
             pestTick = tick
             val here = player.location
             pestsLeftAlone.values.removeIf { it <= tick }
-            pest = ItemService.hostileClones(player)
+            val clones = if (BotManager.oldItemPlay) emptyList() else ItemService.hostileClones(player)
+            val summons = dev.betrix.superSmashMobsBrawl.abilities.ClassicSummons.owners
+            val game = if (BotManager.leaveSummons || summons.isEmpty()) null else minigameService.getMinigameForPlayer(player)
+            val sent = if (game == null) emptyList() else {
+                val damage = KitService.getKitForPlayer(player)?.getMeleeDamage() ?: 0.0
+                // (Only one that is after this bot: it goes for whoever is nearest to it, and somebody else's trouble is theirs.)
+                hostileBodies(CloneTactics.NOTICE).filter { e -> e !is Player && e.uniqueId !in ItemEffects.cloneOwners &&
+                    SummonTactics.fights(e.type.name) && SummonTactics.worthIt(e.health, damage) &&
+                    summons[e.uniqueId]?.let { owner -> comingForMe(e, owner, game) } == true }
+            }
+            pest = (clones + sent)
                 .filter { it.uniqueId !in pestsLeftAlone && it.location.distanceSquared(here) <= CloneTactics.NOTICE * CloneTactics.NOTICE }
                 .minByOrNull { it.location.distanceSquared(here) }
         }
@@ -3612,7 +3630,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         if (pestOn != clone.uniqueId || clone.health < pestHealth) { pestOn = clone.uniqueId; pestSince = tick; pestHealth = clone.health }
         if (CloneTactics.givesUp(tick - pestSince)) {
             pestsLeftAlone[clone.uniqueId] = tick + CloneTactics.LEFT_ALONE_TICKS
-            dbg("cannot get a hit on the clone of ${ItemEffects.cloneOwners[clone.uniqueId]?.name}: leaving it alone")
+            dbg("cannot get a hit on ${pestName(clone, "the")}: leaving it alone")
             pest = null; pestOn = null
             return false
         }
@@ -3623,7 +3641,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             meleeClick()
             val interval = 20.0 / d.clicksPerSecond
             nextClickTick = tick + (interval * (0.7 + rng.nextDouble() * 0.6)).toLong().coerceAtLeast(1)
-            if (tick - pestSaidTick > 40) { pestSaidTick = tick; dbg("a clone of ${ItemEffects.cloneOwners[clone.uniqueId]?.name} is on it: hitting it") }
+            if (tick - pestSaidTick > 40) { pestSaidTick = tick; dbg("${pestName(clone, "a")} is on it: hitting it") }
         }
         // It comes to the bot. A step toward it if it hangs back, a sidestep otherwise.
         var forward = 0f
@@ -3637,6 +3655,19 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         return true
     }
     private var pestSaidTick = -1000L
+    /** Is [summon], sent by [owner], nearer to this bot than to anybody else it could be after? */
+    private fun comingForMe(summon: org.bukkit.entity.LivingEntity, owner: Player, game: BrawlMinigame): Boolean {
+        val at = summon.location
+        val mine = at.distanceSquared(player.location)
+        return game.allPlayers().mapNotNull { it.player }.none { p ->
+            p != player && p != owner && p.world == at.world && p.gameMode == GameMode.SURVIVAL &&
+                !game.arePlayersOnSameTeam(owner, p) && !game.respawnManager.isRespawning(p) &&
+                p.location.distanceSquared(at) < mine }
+    }
+    /** What to call something being hit back at, for the log: "a clone of X", or "X's wither skeleton (16 health)". */
+    private fun pestName(e: org.bukkit.entity.LivingEntity, article: String): String =
+        ItemEffects.cloneOwners[e.uniqueId]?.let { "$article clone of ${it.name}" }
+            ?: "${dev.betrix.superSmashMobsBrawl.abilities.ClassicSummons.owners[e.uniqueId]?.name}'s ${e.type.name.lowercase().replace('_', ' ')} (%.0f health)".format(e.health)
     /** The clone being hit at, since when without a hit landing, and what health it had then. */
     private var pestOn: java.util.UUID? = null
     private var pestSince = 0L

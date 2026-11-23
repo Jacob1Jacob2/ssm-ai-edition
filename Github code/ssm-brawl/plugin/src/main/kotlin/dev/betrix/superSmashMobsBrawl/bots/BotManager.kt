@@ -102,6 +102,8 @@ object BotManager : KoinComponent {
     @Volatile var noAbilityDodge = false
     /** Debug: bots come at an opponent in a straight line, as before they zigzagged at somebody facing them. To measure the difference. */
     @Volatile var noWeave = false
+    /** Debug: bots leave alone what an opponent's kit has sent to fight for it (a Wither Image, a bear cub), as before they hit it back. To measure the difference. */
+    @Volatile var leaveSummons = false
     private var roster: List<BotProfile> = emptyList()
     private var rankStyles: Map<String, String> = emptyMap()
 

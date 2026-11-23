@@ -244,6 +244,14 @@ class BotsCommand : KoinComponent {
         plugin.logger.info("[noweave] bots come at an opponent ${if (BotManager.noWeave) "in a straight line" else "in a zigzag when that opponent is facing them"}")
     }
 
+    @Execute(name = "leavesummons")
+    @Description("Debug: bots leave alone what an opponent's kit has sent to fight for it (a Wither Image, a bear cub), as before they hit it back (to measure the difference); again to switch back")
+    fun leaveSummons(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        BotManager.leaveSummons = !BotManager.leaveSummons
+        plugin.logger.info("[leavesummons] bots ${if (BotManager.leaveSummons) "leave alone" else "hit back at"} what an opponent's kit has sent to fight for it")
+    }
+
     @Execute(name = "testhit")
     @Description("Debug: make one bot do a vanilla (client-style) attack on another")
     fun testHit(@Context sender: CommandSender, @Arg attacker: String, @Arg victim: String) {
