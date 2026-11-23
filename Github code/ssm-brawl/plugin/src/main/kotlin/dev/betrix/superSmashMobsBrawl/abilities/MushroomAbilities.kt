@@ -20,6 +20,8 @@ class StrawburySwirlAbility(player:Player) : ClassicKitAbility("strawbury_swirl"
             if(age>=22)return@loop false
             val step=direction.clone().multiply(0.95 * itemBoost)
             if(at.world.rayTraceBlocks(at,step,step.length(),FluidCollisionMode.NEVER,true)!=null)return@loop false
+            // (For bots to see it coming by, as a player does: nothing here reads it back.)
+            Flights.note(player,id,at,step,radius)
             at.add(step)
             // Two continuous twisting milk strands, trailing behind the moving wavefront.
             repeat(2) { strand ->
@@ -123,6 +125,8 @@ class MushroomWallAbility(player:Player):MushroomTerrainAbility("mushroom_wall",
                     restore(blocks);blocks.clear();center=next;build()
                 }
             }
+            // (For bots to know it is there, as a player sees it standing: nothing here reads it back.)
+            Flights.stands(player,id,blocks,.55,160-age)
             if(age%4==0)blocks.forEach {
                 it.world.spawnParticle(Particle.DUST,it.location.add(.5,.5,.5),3,.65,.5,.65,0.0,Particle.DustOptions(Color.RED,1.3f))
                 if(enhanced)it.world.spawnParticle(Particle.CRIMSON_SPORE,it.location.add(.5,.5,.5),4,.7,.7,.7,.03)

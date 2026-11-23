@@ -79,6 +79,8 @@ class ExplodeAbility(player: Player) : BrawlAbility("explode", player) {
                 player.fallDistance = 0f
                 val elapsed = System.currentTimeMillis() - currentTimeAtActivation
                 bar = min(elapsed / (fuseTimeTicks * 50f), 0.9999f)
+                // (For bots to know it by, as a player knows it by the hiss: nothing here reads it back.)
+                Flights.warn(player, id, player.location, explosionRadius, ((fuseTimeTicks * 50L - elapsed) / 50L).toInt().coerceAtLeast(0))
 
                 // Classic Explode ramps the hiss by elapsed seconds, including its
                 // final fuse tick, immediately followed by one full-volume blast.

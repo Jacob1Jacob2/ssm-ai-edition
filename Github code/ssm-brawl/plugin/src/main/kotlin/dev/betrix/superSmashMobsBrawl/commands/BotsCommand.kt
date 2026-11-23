@@ -228,6 +228,22 @@ class BotsCommand : KoinComponent {
         plugin.logger.info("[allseeing] bots ${if (BotManager.allSeeing) "know where everybody is all the time" else "know of whoever they have seen, heard or been hit by"}")
     }
 
+    @Execute(name = "noabilitydodge")
+    @Description("Debug: bots take no notice of what kits throw at them, as before they could step out of its way (to measure the difference); again to switch back")
+    fun noAbilityDodge(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        BotManager.noAbilityDodge = !BotManager.noAbilityDodge
+        plugin.logger.info("[noabilitydodge] bots ${if (BotManager.noAbilityDodge) "take no notice of" else "step out of the way of"} what kits throw at them")
+    }
+
+    @Execute(name = "noweave")
+    @Description("Debug: bots come at an opponent in a straight line, as before they zigzagged at somebody facing them (to measure the difference); again to switch back")
+    fun noWeave(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        BotManager.noWeave = !BotManager.noWeave
+        plugin.logger.info("[noweave] bots come at an opponent ${if (BotManager.noWeave) "in a straight line" else "in a zigzag when that opponent is facing them"}")
+    }
+
     @Execute(name = "testhit")
     @Description("Debug: make one bot do a vanilla (client-style) attack on another")
     fun testHit(@Context sender: CommandSender, @Arg attacker: String, @Arg victim: String) {

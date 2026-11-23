@@ -98,6 +98,10 @@ object BotManager : KoinComponent {
      * did before they had to see or hear somebody to know of them. To measure the difference.
      */
     @Volatile var allSeeing = false
+    /** Debug: bots take no notice of anything a kit throws at them, as before they could step out of its way. To measure the difference. */
+    @Volatile var noAbilityDodge = false
+    /** Debug: bots come at an opponent in a straight line, as before they zigzagged at somebody facing them. To measure the difference. */
+    @Volatile var noWeave = false
     private var roster: List<BotProfile> = emptyList()
     private var rankStyles: Map<String, String> = emptyMap()
 

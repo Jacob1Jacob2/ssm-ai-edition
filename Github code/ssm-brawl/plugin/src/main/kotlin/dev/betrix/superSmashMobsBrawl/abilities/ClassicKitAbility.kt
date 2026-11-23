@@ -141,6 +141,8 @@ abstract class ClassicKitAbility(id: String, player: Player) : BrawlAbility(id, 
     protected fun collision(from: Location, step: Vector, radius: Double, attacker: Player = player): Pair<Location, LivingEntity?>? {
         val length = step.length()
         if (length < 0.0001) return null
+        // (For bots to see it coming by: nothing here reads it back.)
+        Flights.note(attacker, id, from, step, radius)
         val direction = step.clone().normalize()
         val block = from.world.rayTraceBlocks(from, direction, length, FluidCollisionMode.NEVER, true)
         var distance = block?.hitPosition?.distance(from.toVector()) ?: Double.POSITIVE_INFINITY

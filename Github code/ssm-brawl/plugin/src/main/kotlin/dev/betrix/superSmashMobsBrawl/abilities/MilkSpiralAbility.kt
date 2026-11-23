@@ -63,6 +63,9 @@ class MilkSpiralAbility(player: Player) : BrawlAbility("milk_spiral", player) {
                 val oldLocation = spiralLocation.clone()
                 val totalDistance = 0.7 * itemBoost
 
+                // (For bots to see it coming by: nothing here reads it back. It is measured from a
+                // fighter's eyes, so it is noted at the height of their feet.)
+                Flights.note(player, id, spiralLocation.clone().add(0.0, -1.6, 0.0), direction.clone().multiply(totalDistance), hitboxRadius - 0.6)
                 spiralLocation.add(direction.clone().multiply(totalDistance))
 
                 val circleFirst = Vector(-direction.z, 0.0, direction.x).normalize()

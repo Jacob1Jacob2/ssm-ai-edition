@@ -52,6 +52,8 @@ class ChickenMissileAbility(player: Player) : BrawlAbility("chicken_missile", pl
                 }
 
                 chicken.velocity = direction
+                // (For bots to see it coming by: nothing here reads it back.)
+                Flights.note(player, id, chicken.location, direction, 0.5)
                 if(flightTicks++ % 2 == 0)ClassicEffects.chickenMissileSmoke(chicken.location,direction)
                 chicken.world.playSound(chicken.location, Sound.ENTITY_CHICKEN_HURT, 0.3f, 1.5f)
 

@@ -217,10 +217,14 @@ abstract class BrawlProjectile(open val owner: Player, open val name: String) :
             customSetInitialVelocity = velocityFunction
         }
 
+    /** How wide it hits. Only read (by bots, to tell whether it would hit them: see [dev.betrix.superSmashMobsBrawl.abilities.Flights]). */
+    val hitSize: Double get() = projectileSize
+
     fun launch(): BrawlProjectile {
         projectileEntity = createProjectileEntity()
         projectileEntity?.isCustomNameVisible = false
         projectileEntity?.isPersistent = false
+        dev.betrix.superSmashMobsBrawl.abilities.Flights.launched(this)
 
         if (projectileEntity is Item) {
             val item = projectileEntity as Item
@@ -465,6 +469,7 @@ abstract class BrawlProjectile(open val owner: Player, open val name: String) :
     }
 
     override fun teardown() {
+        dev.betrix.superSmashMobsBrawl.abilities.Flights.ended(this)
         inCast { teardownCallbacks.forEach { it(this@BrawlProjectile) } }
         upgradeVisual?.remove()
         upgradeVisual = null

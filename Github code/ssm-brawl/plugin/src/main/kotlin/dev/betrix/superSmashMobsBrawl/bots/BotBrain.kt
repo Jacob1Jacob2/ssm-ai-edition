@@ -116,6 +116,13 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     /** A Blink that would have come out over nothing is not lined up again at once. */
     private var blinkRestUntil = 0L
     private var blinkScanTick = -100L
+    // Something a kit threw is coming at it ([DodgeTactics]): where it is stepping to and until
+    // when, since when it has seen things coming, and when it last did.
+    private var dodgeTo: Location? = null
+    private var dodgeUntil = 0L
+    private var threatSince = -1L
+    private var threatSeen = -1000L
+    private var dodgeSaidTick = -1000L
 
     // The item being carried: what it is, since when, and how often using it has failed.
     private var carried: dev.betrix.superSmashMobsBrawl.items.ArenaItem? = null
@@ -329,6 +336,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     private var reachableTick = -100000L
     /** Did the search in progress turn away from ground this bot has been killed on? */
     private var searchBarred: () -> Boolean = { false }
+    /** Did it turn away from ground within reach of a wall that hurts whoever touches it ([WallTactics])? */
+    private var searchWalled: () -> Boolean = { false }
     /** [ArenaJumps.misses] when the search in progress began: if it has gone up since, the search did not see every jump. */
     private var searchMisses = 0L
     /** A route planned without all the jumps of the arena is planned again at this tick, wherever the bot has got to. */
@@ -366,17 +375,23 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                 // (Standing on some of it already, the bot may move off it, not further in.)
                 // (Nor is ground something is about to go off on, or where a mine or a trap is lying: see [tickDangers].)
                 val zones = (dangerZones(crossing == null) + itemZones(to)).map { it to minOf(it.r, it.gap(start) - 1.0) }
+                // (Nor ground within reach of a wall that hurts whoever touches it: the way goes round the
+                // end of it. Standing in one already, the bot is on its way out of it: see [roundWalls].)
+                val fences = if (walls.isEmpty() || tick - wallsTick > 1) emptyList() else walls.filter { !wallBars(it, start) }
                 var barred = false
+                var walled = false
                 routeSearch = ArenaRoute(start, goal, { n ->
                     nav.neighbours(n).filter {
                         it.node !in blockedSteps && (blockedEdges.isEmpty() || (n to it.node) !in blockedEdges) &&
                             (!it.climb || failedClimbs.none { (foot, _) -> abs(foot.x-n.x)<=3 && abs(foot.z-n.z)<=3 && abs(foot.y-n.y)<3.0 }) &&
                             abs(it.node.x-start.x)<=72 && abs(it.node.z-start.z)<=72 &&
                             (!memory.anyHops || !memory.hopBarred(n, it.node, tick)) &&
-                            (zones.isEmpty() || zones.none { (zone, r) -> zone.bars(it.node, r) }.also { open -> if (!open) barred = true })
+                            (zones.isEmpty() || zones.none { (zone, r) -> zone.bars(it.node, r) }.also { open -> if (!open) barred = true }) &&
+                            (fences.isEmpty() || fences.none { w -> wallBars(w, it.node) }.also { open -> if (!open) walled = true })
                     }
                 }, ROUTE_LIMIT)
                 searchBarred = { barred }
+                searchWalled = { walled }
                 searchFrom = here.clone()
                 searchMisses = ArenaJumps.find(player.world, mobility())?.misses ?: 0L
                 routeGoal = to.clone()
@@ -450,6 +465,11 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                     route.clear()
                     dbg("no way there that keeps off the ground it was killed on")
                     unreachable()
+                } else if(!search.reached && searchWalled()) {
+                    // Only a wall that will be down in a few seconds is in the way: as near as the
+                    // way goes, and wait. That is no reason to give somebody up as out of reach.
+                    nextRouteTick=tick+20
+                    dbg("no way there that keeps out of the wall: as near as the way goes, until it comes down")
                 } else if(!search.reached && atEnd) unreachable()
                 dbg("route ${route.size} steps, ${search.expanded} expansions, reached=${search.reached}")
             }
@@ -751,6 +771,282 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
 
     /** Close enough that a hit given or taken shows where the other one is. */
     private fun near(other: Player) = other.world == player.world && other.location.distanceSquared(player.location) <= 144.0
+
+    // ------------------------------------------------------------------ what is thrown at it
+
+    /** Which side of the straight line it is walking on (1, -1, or 0: straight), and until when. */
+    private var weaveSide = 0
+    private var weaveUntil = 0L
+    /** When each opponent last had something in the air that this bot saw coming at it. */
+    private val shotAtBy = HashMap<java.util.UUID, Long>()
+
+    /**
+     * Whether to come at [t] in a zigzag this tick ([WeaveTactics]); [weaveSide] is the side. Only
+     * at somebody who is looking its way, from between arm's length and as far as anything is
+     * thrown, and only with floor to both sides.
+     */
+    private fun weaves(t: Player, dist: Double, sees: Boolean): Boolean {
+        if (BotManager.noAbilityDodge || BotManager.noWeave || !WeaveTactics.weaves(d) || !sees || !nms.onGround()) return false
+        if (dist < WeaveTactics.FROM || dist > WeaveTactics.TO) { weaveSide = 0; weaveUntil = 0; return false }
+        // Only at somebody who has been throwing things at it: nobody jinks at an opponent who is only looking at them.
+        if (tick - (shotAtBy[t.uniqueId] ?: -100000L) > WeaveTactics.WARY) return false
+        // (And never in the last steps before a jump or a climb: those are lined up for, and taken straight.)
+        if (gapJump != null || climb != null) return false
+        for (i in 0 until minOf(route.size, WeaveTactics.STRAIGHT)) { val s = route[i]; if (s.jump || s.climb || s.long) return false }
+        val (toMe, _) = lookAngles(t.eyeLocation, player.eyeLocation)
+        if (!WeaveTactics.facing(wrapDegrees(toMe - t.location.yaw).toDouble())) return false
+        if (tick >= weaveUntil) {
+            val here = player.location
+            val across = t.location.toVector().subtract(here.toVector()).setY(0)
+            val room = across.lengthSquared() > 1e-6 && across.normalize().let { u ->
+                // (Square to the way to them, out to each side.)
+                hasSolidBelow(here.clone().add(-u.z * WeaveTactics.ROOM, 0.5, u.x * WeaveTactics.ROOM), 2) &&
+                    hasSolidBelow(here.clone().add(u.z * WeaveTactics.ROOM, 0.5, -u.x * WeaveTactics.ROOM), 2)
+            }
+            weaveSide = if (!room) 0 else if (weaveSide != 0) -weaveSide else if (rng.nextBoolean()) 1 else -1
+            weaveUntil = tick + WeaveTactics.stretch(rng.nextDouble())
+        }
+        return weaveSide != 0
+    }
+
+    /**
+     * Something a kit threw is coming at this bot ([DodgeTactics]): it has to see it, it takes a
+     * moment, and then it steps across the thing's path, if there is floor to step onto. Only the
+     * step is decided here; [applyMovement] takes it, so the bot goes on aiming and hitting while
+     * it moves. (A bot used to walk down the line of a fireball it had a full second to step out of.)
+     */
+    private fun tickThreats(game: BrawlMinigame) {
+        if (BotManager.noAbilityDodge) { dodgeTo = null; return }
+        val here = player.location
+        val world = here.world ?: return
+        val flights = dev.betrix.superSmashMobsBrawl.abilities.Flights.inWorld(world)
+        val eye = player.eyeLocation
+        var worst: dev.betrix.superSmashMobsBrawl.abilities.Flights.Flight? = null
+        var worstPass: DodgeTactics.Pass? = null
+        for (f in flights) {
+            if (f.owner == player || game.arePlayersOnSameTeam(player, f.owner)) continue
+            val gap = f.at.distance(eye)
+            if (gap > DodgeTactics.SEEN) continue
+            val pass = DodgeTactics.pass(f.at.x, f.at.z, f.velocity.x, f.velocity.z, here.x, here.z) ?: continue
+            if (worstPass != null && pass.ticks >= worstPass.ticks) continue
+            if (!DodgeTactics.threatens(pass, f.radius, f.at.y + f.velocity.y * pass.ticks - here.y)) continue
+            // Seen coming: in front of it with nothing in between, or right on top of it.
+            if (gap > DodgeTactics.FELT) {
+                val (yaw, pitch) = lookAngles(eye, f.at)
+                if (!SightTactics.inView(wrapDegrees(yaw - nms.yRot).toDouble(), (pitch - nms.xRot).toDouble())) continue
+                val line = f.at.toVector().subtract(eye.toVector()).multiply(1 / gap)
+                if (world.rayTraceBlocks(eye, line, gap - 0.3, org.bukkit.FluidCollisionMode.NEVER, true) != null) continue
+            }
+            worst = f; worstPass = pass
+        }
+        val f = worst
+        val pass = worstPass
+        if (f == null || pass == null) {
+            if (tick - threatSeen > DodgeTactics.LULL) threatSince = -1
+            // Clear of it: a couple of ticks more and it is back to what it was doing.
+            if (dodgeTo != null) { if (tick >= dodgeUntil) dodgeTo = null else dodgeUntil = minOf(dodgeUntil, tick + 3) }
+            return
+        }
+        threatSeen = tick
+        shotAtBy[f.owner.uniqueId] = tick
+        if (threatSince < 0) threatSince = tick
+        if (tick - threatSince < DodgeTactics.readyAfter(d)) return
+        // (In the air there is no stepping aside.)
+        if (!nms.onGround()) return
+        // Where it is already stepping to, if that is out of the way of this one too: no going back and forth.
+        val going = dodgeTo?.takeIf { it.world == world && tick < dodgeUntil + 4 &&
+            DodgeTactics.clear(DodgeTactics.offLine(f.at.x, f.at.z, f.velocity.x, f.velocity.z, it.x, it.z), f.radius) }
+        val to = going ?: run {
+            val (ax, az) = DodgeTactics.aside(f.velocity.x, f.velocity.z, pass.side)
+            val base = floorUnder(here, 2.0)?.let { Location(world, here.x, it.y, here.z) } ?: here
+            // To the side it is nearer first; across the thing's path if there is no floor on that side.
+            listOf(1, -1).map { sign -> Location(world, base.x + ax * sign * DodgeTactics.SIDESTEP, base.y, base.z + az * sign * DodgeTactics.SIDESTEP) }
+                .firstOrNull { walkable(base, it) } ?: return
+        }
+        dodgeTo = to
+        dodgeUntil = tick + ceil(pass.ticks).toLong() + 2
+        if (tick - dodgeSaidTick > 20) {
+            dodgeSaidTick = tick
+            dbg("stepping out of the way of ${f.owner.name}'s ${f.what}: on it in %.0f ticks, %.1f blocks from its line".format(pass.ticks, pass.miss))
+        }
+    }
+
+    // Something winding up beside it ([BlastTactics]): since when it has known, when it last did, and where it is running to.
+    private var blastSince = -1L
+    private var blastSeen = -1000L
+    private var blastTo: Location? = null
+
+    /**
+     * Something is winding up to go off within reach of this bot (a Creeper has begun to hiss):
+     * it hears it, takes a moment, and runs, straight away from it for as far as there is floor,
+     * and then waits outside for it to go off ([BlastTactics]). Returns true while it is doing that.
+     */
+    private fun tickBlasts(game: BrawlMinigame, t: Player?, map: GameMapDef): Boolean {
+        if (BotManager.noAbilityDodge) return false
+        val here = player.location
+        val world = here.world ?: return false
+        var worst: dev.betrix.superSmashMobsBrawl.abilities.Flights.Blast? = null
+        var waits = false
+        for (b in dev.betrix.superSmashMobsBrawl.abilities.Flights.blastsIn(world)) {
+            if (b.owner == player || game.arePlayersOnSameTeam(player, b.owner)) continue
+            val gap = b.at.distance(here)
+            if (gap > BlastTactics.HEARD) continue
+            if (BlastTactics.waitsOutside(gap, b.radius)) waits = true
+            if (!BlastTactics.inReach(gap, b.radius)) continue
+            if (worst == null || b.ticksLeft < worst.ticksLeft) worst = b
+        }
+        val b = worst
+        if (b == null) {
+            if (!waits) { if (tick - blastSeen > DodgeTactics.LULL) { blastSince = -1; blastTo = null }; return false }
+            // Out of it, and it has not gone off yet: no walking back in after whoever is hissing.
+            if (blastSince < 0 || tick - blastSince < BlastTactics.readyAfter(d)) return false
+            blastSeen = tick
+            t?.let { val (yaw, pitch) = lookAngles(player.eyeLocation, aimPointOf(it)); lookTowards(yaw, pitch, d.turnSpeed) }
+            setInputs(0f, 0f, false)
+            return true
+        }
+        blastSeen = tick
+        if (blastSince < 0) blastSince = tick
+        if (tick - blastSince < BlastTactics.readyAfter(d) || b.ticksLeft < BlastTactics.TOO_LATE) return false
+        val base = floorUnder(here, 3.0)?.let { Location(world, here.x, it.y, here.z) } ?: here
+        var to = blastTo?.takeIf { it.world == world && hypot(it.x - here.x, it.z - here.z) > 0.6 }
+        if (to == null) {
+            // (In the air there is nothing to run on.)
+            if (!nms.onGround()) return false
+            val dx = here.x - b.at.x
+            val dz = here.z - b.at.z
+            val out = BlastTactics.run(hypot(dx, dz), b.radius)
+            to = (listOf(out) + BlastTactics.SHORTER.filter { it < out }).asSequence()
+                .flatMap { far -> BlastTactics.TURNS.asSequence().map { turn -> BlastTactics.way(dx, dz, turn, far) } }
+                .map { (ox, oz) -> Location(world, base.x + ox, base.y, base.z + oz) }
+                .firstOrNull { walkable(base, it) }
+                // Nowhere to run: it takes it where it stands, and fights on.
+                ?: return false
+            blastTo = to
+            dbg("running from ${b.owner.name}'s ${b.what}: it goes off in ${b.ticksLeft} ticks, %.1f blocks from here; to ${to.blockX},${to.blockY},${to.blockZ}".format(hypot(dx, dz)))
+        }
+        rain?.let { endRain("something is about to go off") }
+        val (yaw, _) = lookAngles(player.eyeLocation, to.clone().add(0.0, 1.2, 0.0))
+        turnTowards(yaw, 0f, d.turnSpeed * 2)
+        val input = inputToward(to)
+        applyMovement(null, input.first, input.second, nms.horizontalCollision && nms.onGround(), map)
+        return true
+    }
+
+    /** The walls that hurt whoever touches them which this bot knows of and keeps out of, as of [wallsTick] ([WallTactics]). */
+    private val walls = ArrayList<dev.betrix.superSmashMobsBrawl.abilities.Flights.Standing>()
+    private var wallsTick = -1000L
+    /** Whose wall it first knew of when, and whose it has begun to keep out of. */
+    private val wallSince = HashMap<java.util.UUID, Long>()
+    private val wallKnown = HashSet<java.util.UUID>()
+    /** The end it is going round one by (1: turning left of its way, -1: right), and until when it keeps to that. */
+    private var wallTurn = 0
+    private var wallTurnUntil = 0L
+    private var wallSaidTick = -1000L
+    private var wallReplanTick = 0L
+
+    /** Would a bot standing on [n] be within reach of [w]? */
+    private fun wallBars(w: dev.betrix.superSmashMobsBrawl.abilities.Flights.Standing, n: RouteNode) =
+        WallTactics.level(n.y, w.minY, w.maxY, w.reach) &&
+            WallTactics.touches(n.x + .5, n.z + .5, w.minX, w.minZ, w.maxX, w.maxZ, w.reach, 0.0)
+
+    /**
+     * Which walls that hurt whoever touches them this bot knows of ([WallTactics]): one in front
+     * of it, or one it has all but walked into, and after the moment it takes to do anything about
+     * it. What it then does about them is in [roundWalls] (where it walks) and [routeToward] (the
+     * way it plans).
+     */
+    private fun tickWalls(game: BrawlMinigame) {
+        walls.clear()
+        wallsTick = tick
+        val here = player.location
+        val world = here.world ?: return
+        val standing = if (BotManager.noAbilityDodge) emptyList() else dev.betrix.superSmashMobsBrawl.abilities.Flights.standingIn(world)
+        if (standing.isEmpty()) {
+            if (wallSince.isNotEmpty()) { wallSince.clear(); wallKnown.clear() }
+            return
+        }
+        val eye = player.eyeLocation
+        val up = HashSet<java.util.UUID>()
+        for (w in standing) {
+            if (w.owner == player || game.arePlayersOnSameTeam(player, w.owner)) continue
+            val id = w.owner.uniqueId
+            up += id
+            var since = wallSince[id]
+            if (since == null) {
+                val gap = WallTactics.gap(here.x, here.z, w.minX, w.minZ, w.maxX, w.maxZ)
+                if (gap > WallTactics.SEEN || abs((w.minY + w.maxY) / 2 - here.y) > WallTactics.SEEN) continue
+                if (gap > WallTactics.FELT) {
+                    val middle = Location(world, (w.minX + w.maxX) / 2, (w.minY + w.maxY) / 2, (w.minZ + w.maxZ) / 2)
+                    val (yaw, pitch) = lookAngles(eye, middle)
+                    if (!SightTactics.inView(wrapDegrees(yaw - nms.yRot).toDouble(), (pitch - nms.xRot).toDouble())) continue
+                }
+                since = tick
+                wallSince[id] = tick
+            }
+            if (tick - since < WallTactics.readyAfter(d)) continue
+            walls += w
+            if (wallKnown.add(id)) {
+                // Whatever way it was going was planned without knowing about this.
+                route.clear(); routeSearch = null; nextRouteTick = tick
+                dbg("${w.owner.name}'s ${w.what} is standing %.1f blocks off: keeping out of it".format(
+                    WallTactics.gap(here.x, here.z, w.minX, w.minZ, w.maxX, w.maxZ)))
+            }
+        }
+        wallSince.keys.retainAll(up)
+        wallKnown.retainAll(up)
+        // A way planned from inside one (when anywhere out of it would do) that still leads through it: again, from outside.
+        if (walls.isNotEmpty() && tick >= wallReplanTick && routeSearch == null && gapJump == null && climb == null) {
+            val next = route.firstOrNull()?.node
+            if (next != null && walls.any { wallBars(it, next) } &&
+                walls.none { WallTactics.level(here.y, it.minY, it.maxY, it.reach) && WallTactics.touches(here.x, here.z, it.minX, it.minZ, it.maxX, it.maxZ, it.reach, 0.0) }) {
+                wallReplanTick = tick + 10
+                route.clear(); nextRouteTick = tick
+            }
+        }
+    }
+
+    /**
+     * The movement keys [forward] and [strafe], kept out of every wall this bot knows of: as they
+     * were if the way is clear, turned aside by as little as gets past the end of it if not, and
+     * let go if there is no getting past. Standing in one (it went up where the bot stood, or the
+     * bot was knocked into it), the keys are for the shortest way out instead.
+     */
+    private fun roundWalls(forward: Float, strafe: Float): Pair<Float, Float> {
+        val here = player.location
+        fun touched(x: Double, z: Double, margin: Double) = walls.firstOrNull {
+            WallTactics.level(here.y, it.minY, it.maxY, it.reach) && WallTactics.touches(x, z, it.minX, it.minZ, it.maxX, it.maxZ, it.reach, margin) }
+        fun say(text: String) { if (tick - wallSaidTick > 30) { wallSaidTick = tick; dbg(text) } }
+        touched(here.x, here.z, 0.0)?.let { w ->
+            val out = WallTactics.waysOut(here.x, here.z, w.minX, w.minZ, w.maxX, w.maxZ, w.reach)
+                .map { (dx, dz) -> Location(here.world, here.x + dx, here.y, here.z + dz) }
+                .firstOrNull { touched(it.x, it.z, 0.0) == null && hasSolidBelow(it.clone().add(0.0, 0.5, 0.0), 3) &&
+                    it.clone().add(0.0, 0.1, 0.0).block.isPassable && it.clone().add(0.0, 1.1, 0.0).block.isPassable }
+                ?: return forward to strafe
+            say("in reach of ${w.owner.name}'s ${w.what}: stepping out of it")
+            return inputToward(out)
+        }
+        val (mx, mz) = moveDir(forward, strafe) ?: return forward to strafe
+        fun inTheWay(ux: Double, uz: Double) = touched(here.x + ux * WallTactics.AHEAD, here.z + uz * WallTactics.AHEAD, WallTactics.MARGIN)
+            ?: touched(here.x + ux * WallTactics.AHEAD / 2, here.z + uz * WallTactics.AHEAD / 2, WallTactics.MARGIN)
+        val w = inTheWay(mx, mz) ?: return forward to strafe
+        // Round the end the way already leans to, and by that end until it is past.
+        val first = if (tick < wallTurnUntil && wallTurn != 0) wallTurn else {
+            val (lf, ls) = WeaveTactics.turned(forward, strafe, 90.0)
+            val (lx, lz) = moveDir(lf, ls) ?: (0.0 to 0.0)
+            if (lx * ((w.minX + w.maxX) / 2 - here.x) + lz * ((w.minZ + w.maxZ) / 2 - here.z) <= 0.0) 1 else -1
+        }
+        for (sign in intArrayOf(first, -first)) for (turn in WallTactics.TURNS) {
+            val (f2, s2) = WeaveTactics.turned(forward, strafe, turn * sign)
+            val (ux, uz) = moveDir(f2, s2) ?: continue
+            if (inTheWay(ux, uz) != null || !groundAhead(f2, s2, 1.3)) continue
+            wallTurn = sign; wallTurnUntil = tick + WallTactics.KEEP
+            say("${w.owner.name}'s ${w.what} is in its way: going round the end of it")
+            return f2 to s2
+        }
+        say("${w.owner.name}'s ${w.what} is in its way and there is no getting round it: staying out of it")
+        return 0f to 0f
+    }
 
     // ------------------------------------------------------------------ what it sees and hears
 
@@ -1136,6 +1432,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             shot=null;carried=null;channelUntil=0;perch=null;bridge=null;crossing=null;leap=null
             noticed.clear();noWayOut.clear();escape=null;roundTo=null;pest=null;sensed.clear()
             noticedAt.clear();looked.clear();nobodySince = -1;lastPerceived = -1000;compassAt = 0
+            dodgeTo = null;threatSince = -1;blastSince = -1;blastTo = null
+            walls.clear();wallSince.clear();wallKnown.clear();wallTurn = 0;shotAtBy.clear()
             enterState(CombatState.IDLE)
             opponents=emptyList();healthLosses.clear();lastHealth=0.0
             itemGoal=null;ignoredItems.clear();fleeFailedUntil=0;trackedId=null
@@ -1159,6 +1457,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         crossing?.let { lastWay = "cross:${it.kind}"; lastWayTick = tick }
         if (bridge != null) { lastWay = "bridge"; lastWayTick = tick }
         trackStays()
+        // Which walls that hurt whoever touches them it knows of: whatever it does this tick keeps out of them.
+        tickWalls(game)
         if (wasOnGround && !onGround) {
             val from = routeAt
             val to = route.firstOrNull()?.node
@@ -1339,6 +1639,10 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
 
         val t = target?.takeIf { it.isOnline && it.world == player.world }
         if (decide || states.state == CombatState.IDLE || states.state == CombatState.RECOVER) updateState(t)
+        // Something a kit threw is coming at it: a step to the side, taken by whatever it does next.
+        tickThreats(game)
+        // Something is winding up beside it (a Creeper has begun to hiss): away from it.
+        if (tickBlasts(game, t, map)) return
         // Something is about to go off where it stands (its own Crafty Bomb, somebody's grenade): out
         // from under it before anything else, and no walking back in.
         if (tickDangers(t, decide, map)) return
@@ -1940,9 +2244,23 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     }
 
     /** Applies inputs after stopping any that would carry the bot off an edge. Returns what was applied. */
-    private fun applyMovement(step: RouteStep?, f: Float, s: Float, jump: Boolean, map: GameMapDef): Pair<Float, Float> {
+    private fun applyMovement(step: RouteStep?, f: Float, s: Float, hop: Boolean, map: GameMapDef): Pair<Float, Float> {
         var forward=f
         var strafe=s
+        var jump=hop
+        // Stepping out of the way of something coming at it comes before where it was going ([tickThreats]).
+        dodgeTo?.takeIf { tick < dodgeUntil && nms.onGround() && it.world == player.world }?.let { spot ->
+            if (hypot(spot.x - player.x, spot.z - player.z) > 0.25) {
+                val input = inputToward(spot)
+                forward = input.first; strafe = input.second; jump = false
+            }
+        }
+        // Not into a wall that hurts whoever touches it: round the end of it, or not at all ([roundWalls]).
+        // (A jump is left as it was planned: turned aside in the air, it misses what it was for.)
+        if (walls.isNotEmpty() && tick - wallsTick <= 1 && !jump && nms.onGround() && gapJump == null && climb == null) {
+            val input = roundWalls(forward, strafe)
+            forward = input.first; strafe = input.second
+        }
         if(nms.onGround()) {
             val lookAhead=step?.let { minOf(.9,hypot(it.node.x+.5-player.x,it.node.z+.5-player.z)) } ?: .9
             if(!jump && !groundAhead(forward,strafe,lookAhead)) {forward=0f;strafe=0f}
@@ -2388,6 +2706,12 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             } else if(d.strafes && dist<reach+1) {
                 if(tick>=nextStrafeFlip){strafeDir=if(rng.nextBoolean())1f else -1f;nextStrafeFlip=tick+20}
                 strafe=strafeDir*.65f
+            }
+            // Coming at somebody who is facing it, from further off than arm's length: not in a
+            // straight line ([WeaveTactics]). (Never off a ledge for it: with no floor that way, straight on.)
+            if (!jump && (forward != 0f || strafe != 0f) && weaves(t, dist, sees)) {
+                val (f2, s2) = WeaveTactics.turned(forward, strafe, WeaveTactics.ANGLE * weaveSide)
+                if (groundAhead(f2, s2, 1.5)) { forward = f2; strafe = s2 }
             }
             val (appliedForward,appliedStrafe)=applyMovement(step,forward,strafe,jump,map)
             checkStuck(dist>reach+1,appliedForward,appliedStrafe)
@@ -3792,6 +4116,11 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         }
         if (BotManager.debug) dbg("ability $id" + (if (followup) "" else " (follow-up)") +
             (if (skull) target?.takeIf { it.world == player.world }?.let { " at ${it.name}, %.1f blocks off".format(player.eyeLocation.distance(aimPointOf(it))) } ?: "" else ""))
+        // (For a balance run: every ability a bot presses, under the name its hits are recorded by, so that hits can be put against presses.)
+        dev.betrix.superSmashMobsBrawl.items.ItemStats.let { stats ->
+            if (stats.on) stats.row(minigameService.getMinigameForPlayer(player), "cast", actor = player,
+                extra = KitService.getKitForPlayer(player)?.getAbility(id)?.displayName ?: id)
+        }
         val cooldownMs = ((dataService.getAbility(id)?.cooldown ?: 3.0) * 1000).toLong()
         abilityReadyAtMs[id] = System.currentTimeMillis() + cooldownMs + 250
         return true
