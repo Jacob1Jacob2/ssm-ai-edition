@@ -72,7 +72,10 @@ class ArenaNav private constructor(private val world: World, private val voidY: 
         edges[node]?.takeIf { it.expires > now }?.let { return it.edges }
         val terrain = terrain()
         terrain.sawUnloaded = false
+        val began = System.nanoTime()
         val fresh = terrain.neighbours(node)
+        // (For the log: what working the steps out costs, so that what forgetting them costs can be measured.)
+        computed++; computeNanos += System.nanoTime() - began
         incomplete = terrain.sawUnloaded
         // An answer that ran into an unloaded chunk is good for this search only. Remembering
         // it would leave the graph ending at a chunk border long after the chunk arrived.
@@ -164,6 +167,9 @@ class ArenaNav private constructor(private val world: World, private val voidY: 
         private const val EDGE_TICKS = 1200
         private const val WARM_LIMIT = 20_000
         private val navs = HashMap<UUID, HashMap<Mobility, ArenaNav>>()
+        /** For the log: how many blocks' steps have been worked out since the server started, and how long that took in all. */
+        var computed = 0L; private set
+        var computeNanos = 0L; private set
 
         /** The graph for fighters that move like [mobility]: a spider's has wall climbs in it, a chicken's long flights. */
         fun of(world: World, voidY: Int, mobility: Mobility): ArenaNav {
@@ -177,6 +183,37 @@ class ArenaNav private constructor(private val world: World, private val voidY: 
 
         fun of(world: World, voidY: Int, doubleJump: Boolean): ArenaNav =
             of(world, voidY, if (doubleJump) Mobility.JUMPER else Mobility.WALKER)
+
+        /** Has any bot ever planned a way through [world]? (If not there is nothing to keep up to date.) */
+        fun known(world: World) = navs.containsKey(world.uid)
+
+        /**
+         * A block of [world] has changed ([ArenaChanges]): whatever is asked of its graphs next is
+         * asked of a reader holding the reading the change was struck out of, not one made before.
+         */
+        fun rereads(world: World) {
+            val stale = Bukkit.getCurrentTick() - TERRAIN_TICKS - 1
+            navs[world.uid]?.values?.forEach { it.terrainBorn = stale }
+        }
+
+        /**
+         * Blocks have changed in [world] within reach of these columns ([area]: packed like
+         * [ChangedCells.pack]): every kind of fighter's graph forgets the steps it had worked out
+         * from the blocks there, and works them out again from the world as it is now when next
+         * asked. Returns how many blocks' steps that was. (Not the long jumps flown in the head: a
+         * bite out of the floor grows back in ten seconds, and a jump is flown again from where
+         * the bot stands before it is taken.)
+         */
+        fun changed(world: World, area: Set<Long>): Int {
+            val perWorld = navs[world.uid] ?: return 0
+            var dropped = 0
+            for (nav in perWorld.values) {
+                val before = nav.edges.size
+                nav.edges.keys.removeIf { ChangedCells.pack(it.x, it.z) in area }
+                dropped += before - nav.edges.size
+            }
+            return dropped
+        }
 
         /** The arena changed around a block: every kind of fighter's graph of this world looks again. */
         fun invalidateAll(world: World, x: Int, z: Int) {

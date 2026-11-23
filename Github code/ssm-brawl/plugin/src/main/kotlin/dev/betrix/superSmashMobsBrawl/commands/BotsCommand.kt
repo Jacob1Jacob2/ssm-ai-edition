@@ -244,6 +244,25 @@ class BotsCommand : KoinComponent {
         plugin.logger.info("[noweave] bots come at an opponent ${if (BotManager.noWeave) "in a straight line" else "in a zigzag when that opponent is facing them"}")
     }
 
+    @Execute(name = "staleground")
+    @Description("Debug: the bots' picture of the arena is not told when a block changes, as before (to measure the difference); again to switch back")
+    fun staleGround(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        BotManager.staleGround = !BotManager.staleGround
+        plugin.logger.info("[staleground] the bots' picture of the arena ${if (BotManager.staleGround) "is not told" else "is told"} when a block changes")
+    }
+
+    @Execute(name = "ground")
+    @Description("Debug: how many block changes the bots' picture of the arenas has been told of so far (by the arena's own code, and seen by bots), and how many blocks' steps were worked out again because of them")
+    fun ground(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        val c = dev.betrix.superSmashMobsBrawl.bots.ArenaChanges
+        val nav = dev.betrix.superSmashMobsBrawl.bots.ArenaNav
+        plugin.logger.info("[ground] block changes told by the arena ${c.told}, seen by bots and not told ${c.seen}, that changed nothing to stand on or bump into ${c.idle}; " +
+            "steps of ${c.forgotten} blocks forgotten because of them; taking that in took %.0f ms in all. Steps of ${nav.computed} blocks worked out since the server started, in %.0f ms (%.1f microseconds a block)".format(
+                c.nanos / 1e6, nav.computeNanos / 1e6, if (nav.computed > 0) nav.computeNanos / 1e3 / nav.computed else 0.0))
+    }
+
     @Execute(name = "leavesummons")
     @Description("Debug: bots leave alone what an opponent's kit has sent to fight for it (a Wither Image, a bear cub), as before they hit it back (to measure the difference); again to switch back")
     fun leaveSummons(@Context sender: CommandSender) {

@@ -117,6 +117,36 @@ class ArenaTerrain(private val world: World, private val voidY: Int, private val
         return Column(bottom, cells, stand.toDoubleArray(), room.toDoubleArray()).also { columns[key] = it }
     }
 
+    /**
+     * The block at ([x], [y], [z]) has changed. True if what there is to bump into or stand on
+     * there is not what this reading has (its column is then forgotten, to be read again when
+     * next asked about), or the reading had not looked at that column yet (it does now, so that
+     * the next change there can be told from no change).
+     */
+    private fun differs(x: Int, y: Int, z: Int): Boolean {
+        if (y < bottom || y >= world.maxHeight || !world.isChunkLoaded(x shr 4, z shr 4)) return false
+        val key = (x.toLong() shl 32) or (z.toLong() and 0xffffffffL)
+        val chunk = ((x shr 4).toLong() shl 32) or ((z shr 4).toLong() and 0xffffffffL)
+        val old = columns[key]
+        if (old == null) {
+            chunkTops.remove(chunk)
+            // (Looked at now, unless a great many blocks are changing at once: an arena being put
+            // back at the end of a match is not the moment to read it column by column.)
+            val tick = org.bukkit.Bukkit.getCurrentTick()
+            if (tick != looksTick) { looksTick = tick; looks = 0 }
+            if (looks++ < LOOKS_A_TICK) column(x, z)
+            return true
+        }
+        // (One shape per kind of block, and none at all for what there is nothing to bump into:
+        // the same kind of block is the same object, and air, snow and a cobweb are all nothing.)
+        val block = world.getBlockAt(x, y, z)
+        val now = if (block.type.isAir) null else kindOf(block).takeIf { it !== OPEN }
+        if (old.cells.getOrNull(y - old.base) === now) return false
+        columns.remove(key)
+        chunkTops.remove(chunk)
+        return true
+    }
+
     private val chunkTops get() = reading.chunkTops
 
     /**
@@ -589,6 +619,28 @@ class ArenaTerrain(private val world: World, private val voidY: Int, private val
             // A new reading is a good moment to drop those of arenas that are gone.
             readings.keys.removeIf { org.bukkit.Bukkit.getWorld(it.first) == null }
             return Reading(now).also { readings[key] = it }
+        }
+
+        /** How many columns nobody had looked at are read in one tick because a block changed in them. */
+        private const val LOOKS_A_TICK = 48
+        private var looks = 0
+        private var looksTick = -1
+
+        /**
+         * The block at ([x], [y], [z]) changed ([ArenaChanges]). True if what there is to bump
+         * into or to stand on there is not what a shared reading of the arena had: its column is
+         * then read again when next asked about (and how high its chunk goes: a block put where
+         * there was only air above may be the highest thing in it now). (Most of what changes in
+         * an arena changes nothing of the kind: a layer of snow under a Snowman's feet, a cobweb,
+         * a flower going. Those are no news to anybody's way.)
+         */
+        fun changed(world: World, x: Int, y: Int, z: Int): Boolean {
+            var real = false
+            // (The keys first: reading a column may begin a new reading, which tidies this map.)
+            for (key in readings.keys.filter { it.first == world.uid }) {
+                if (ArenaTerrain(world, key.second, Mobility.WALKER, shared = true).differs(x, y, z)) real = true
+            }
+            return real
         }
 
         /** The arena changed around ([x], [z]): shared readings of it look at those columns again. */

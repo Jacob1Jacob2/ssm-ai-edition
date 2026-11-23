@@ -351,8 +351,12 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
      * [passing]: [to] is where somebody is this moment on their way through the air (knocked off,
      * in the middle of a jump). No floor near it then says nothing about whether there is a way
      * to them ([ReachTactics]): it is asked again in a moment.
+     * [standsAt]: where somebody being gone for is this moment, when [to] is where they are
+     * reckoned to be going. Where they are going may be nowhere a fighter can stand (run on a
+     * second and they would be inside the hillside); where they are standing is. Without it a
+     * bot wrote off 46 opponents in ten matches who were standing on plain stone in front of it.
      */
-    private fun routeToward(to: Location, map: GameMapDef, passing: Boolean = false,
+    private fun routeToward(to: Location, map: GameMapDef, passing: Boolean = false, standsAt: Location? = null,
                             unreachable: () -> Unit = { target?.let(::markUnreachable) }): RouteStep? {
         val here = player.location
         // Keep walking a usable path, but not to where the target used to be: replan once the
@@ -373,7 +377,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             // A fighter on the lip of a block has its centre over thin air; route from and to
             // the block it is really standing on.
             val start = nav.nearest(here, 5.0, if (nms.onGround()) 0.6 else 0.05)
-            val goal = nav.nearest(to, 12.0)
+            val goal = nav.nearest(to, 12.0) ?: standsAt?.takeIf { it.world == to.world }?.let { nav.nearest(it, 12.0) }
             if(start != null && goal != null) {
                 navStats.searches++
                 // Ground it was killed on by somebody still sitting there is not ground to walk on.
@@ -408,7 +412,13 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                 if (start != null && goal == null) {
                     if (passing) {
                         if (tick - passingSaidTick > 40) { passingSaidTick = tick; dbg("no floor under ${target?.name} this moment (in the air): keeping after them") }
-                    } else { noWayWhy = "nowhere to stand within 12 blocks of where they are"; unreachable() }
+                    } else {
+                        // (For the log: whether that is the arena, or only the picture of it being behind the arena.)
+                        noWayWhy = "nowhere to stand within 12 blocks of where they are" + if (!BotManager.debug) "" else
+                            if (freshGround(to, 12.0, map)) "; the world has ground there that the picture of it has not"
+                            else "; none in the world either, over ${to.clone().add(0.0, -0.1, 0.0).block.type}"
+                        unreachable()
+                    }
                 }
             }
         }
@@ -448,14 +458,14 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                         route.add(onto)
                         route.addAll(if(at>=0) result.drop(at+1) else result)
                         routeAt=null
-                        dbg("standing where the routes do not go: first onto ${onto.node.x},${"%.1f".format(onto.node.y)},${onto.node.z}")
+                        dbg("standing where the routes do not go: first onto ${onto.node.x},${"%.1f".format(onto.node.y)},${onto.node.z}${standingOn(here, map)}")
                     } else if(tick-offRoutesLookTick>40) {
                         // No jump from here onto any of it is seen to land. It may be standing on
                         // something put there since the arena was last looked at (a wool mine, an
                         // ice bridge): look at the ground here again, and the routes will know it.
                         offRoutesLookTick=tick
                         forgetTerrain(here.blockX,here.blockZ,map)
-                        dbg("standing where the routes do not go, with no jump back onto them: looking at the ground here again")
+                        dbg("standing where the routes do not go, with no jump back onto them: looking at the ground here again${standingOn(here, map)}")
                     }
                 }
                 nextRouteTick=tick+5
@@ -509,6 +519,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             val fresh=ArenaTerrain(player.world,map.voidLevel.toInt(),canDoubleJump()).surface(n.x,n.z,n.y,.1,.1)
             if(fresh==null) {
                 // The block the route was heading for is gone: forget what the graph knew here.
+                if (BotManager.debug) dbg("the next step of its way is not there to stand on any more: ${n.x},${"%.1f".format(n.y)},${n.z} is " +
+                    "${player.world.getBlockAt(n.x, kotlin.math.floor(n.y - 0.1).toInt(), n.z).type} under ${player.world.getBlockAt(n.x, kotlin.math.floor(n.y + 0.1).toInt(), n.z).type}")
                 forgetTerrain(n.x,n.z,map)
                 route.clear();routeSearch=null;nextRouteTick=tick
             }
@@ -1329,6 +1341,44 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
 
     private var nextNoWayLog = 0L
 
+    /** For the log: does a look at the world as it is this moment find somewhere to stand within two columns of [at], no more than [down] below it? */
+    private fun freshGround(at: Location, down: Double, map: GameMapDef): Boolean {
+        val fresh = ArenaTerrain(player.world, map.voidLevel.toInt(), canDoubleJump())
+        for (dx in -2..2) for (dz in -2..2) if (fresh.surface(at.blockX + dx, at.blockZ + dz, at.y, 1.25, down) != null) return true
+        return false
+    }
+
+    /** For the log: what a bot standing where the routes do not go is standing on, and whether the world itself has a place to stand there. */
+    private fun standingOn(here: Location, map: GameMapDef): String {
+        if (!BotManager.debug) return ""
+        val under = here.clone().add(0.0, -0.1, 0.0).block.type
+        val stands = ArenaTerrain(player.world, map.voidLevel.toInt(), canDoubleJump()).surface(here.blockX, here.blockZ, here.y, 0.6, 0.6) != null
+        return " (on $under; the world ${if (stands) "has a place to stand here that the picture of it has not" else "has no place to stand here either"})"
+    }
+
+    /** The last change to the arena this bot has taken in ([ArenaChanges.stamp]). */
+    private var groundStamp = 0
+    private var groundSaidTick = -1000L
+
+    /**
+     * Blocks have changed somewhere in the arena since this bot last looked ([ArenaChanges]): if
+     * that was beside the way it is going, or where a way is being worked out, the way is
+     * planned again from the arena as it is now. (It used to walk on until it met the hole.)
+     */
+    private fun groundChanged() {
+        if (gapJump != null || climb != null) return
+        val world = player.world
+        val here = player.location
+        // (Right on the way: a block of it, or the one beside. And a way still being worked out that
+        // starts or ends where the steps have just been forgotten is worked out afresh.)
+        val onWay = (0 until minOf(route.size, 16)).any { ArenaChanges.touched(world, route[it].node.x, route[it].node.z, 1) }
+        val planning = routeSearch != null && (ArenaChanges.within(world, here.blockX, here.blockZ) ||
+            routeGoal?.let { it.world == world && ArenaChanges.within(world, it.blockX, it.blockZ) } == true)
+        if (!onWay && !planning) return
+        route.clear(); routeSearch = null; nextRouteTick = tick
+        if (tick - groundSaidTick > 20) { groundSaidTick = tick; dbg("the ground has changed ${if (onWay) "on its way" else "where it is planning a way"}: planning it again") }
+    }
+
     /** For the log: what the route search that found no way had to go on ([markUnreachable] says it once and forgets it). */
     private var noWayWhy = ""
     private var passingSaidTick = -1000L
@@ -1439,6 +1489,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     private fun tickBrain() {
         tick++
         if (!player.isOnline || nms.isRemoved) return stop()
+        // What bots have been sent about blocks changing is taken into their picture of the arenas
+        // once a tick, by whichever of them thinks first ([ArenaChanges]): in a match or out of one.
+        ArenaChanges.settle()
 
         if (holdUntilTick >= 0 && tick >= holdUntilTick) {
             nms.stopUsingItem()
@@ -1488,6 +1541,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         val map = game.worldManager.getWorld()?.data ?: return releaseInputs()
         dev.betrix.superSmashMobsBrawl.smash.SmashService.botTick(player)
         lastMap = map
+        // What has changed in the arena since the last tick has been taken into the picture of it
+        // ([ArenaChanges]): a way that went past any of it is planned again.
+        ArenaChanges.stamp(player.world).let { if (it != groundStamp) { groundStamp = it; groundChanged() } }
         warmNav(player.world, map)
 
         val onGround = nms.onGround()
@@ -2723,7 +2779,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         }
         // (Somebody on their way through the air is kept after, floor under them or not: [ReachTactics].)
         val passing = ReachTactics.passing(airTicks(t))
-        val step = if(!sieging && (dist>reach || !sees)) routeToward(chaseGoal(t,dist),map,passing) else null
+        val step = if(!sieging && (dist>reach || !sees)) routeToward(chaseGoal(t,dist),map,passing,t.location) else null
 
         if (decide) {
             val bow = KitService.getKitForPlayer(player)?.id.let { it == "skeleton" || it == "zombie" }

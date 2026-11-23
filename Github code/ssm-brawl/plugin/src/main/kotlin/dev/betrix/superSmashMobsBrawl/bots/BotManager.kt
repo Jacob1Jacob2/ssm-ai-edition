@@ -104,6 +104,14 @@ object BotManager : KoinComponent {
     @Volatile var noWeave = false
     /** Debug: bots leave alone what an opponent's kit has sent to fight for it (a Wither Image, a bear cub), as before they hit it back. To measure the difference. */
     @Volatile var leaveSummons = false
+    /**
+     * Debug: the bots' picture of the arena is not told when a block changes, as before
+     * ([ArenaChanges]): it finds out by looking again every ten seconds or so, or by walking into
+     * it. To measure the difference.
+     */
+    var staleGround: Boolean
+        get() = ArenaChanges.off
+        set(value) { ArenaChanges.off = value }
     private var roster: List<BotProfile> = emptyList()
     private var rankStyles: Map<String, String> = emptyMap()
 

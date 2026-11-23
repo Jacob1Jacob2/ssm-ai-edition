@@ -15,6 +15,8 @@ object TerrainRestoration {
     fun restore(states: Collection<BlockState>) {
         if (states.isEmpty()) return
         states.forEach { it.update(true, false) }
+        // (Bots have no eyes: their picture of the arena is told that these blocks are back.)
+        states.forEach { dev.betrix.superSmashMobsBrawl.bots.ArenaChanges.changed(it.block) }
         states.groupBy { it.world }.forEach { (world, restored) ->
             val boxes = restored.flatMap { collision(it.block) }
             world.players.filter { it.gameMode != GameMode.SPECTATOR && !it.isDead }.forEach { player ->

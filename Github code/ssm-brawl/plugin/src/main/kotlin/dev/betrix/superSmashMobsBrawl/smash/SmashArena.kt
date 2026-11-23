@@ -116,6 +116,8 @@ class SmashArena(val game: BrawlMinigame) {
         if (material.isAir && originalBlocks[block]?.type?.isAir == false)
             restoreAt.putIfAbsent(block, tick + 200)
         block.setType(material, false)
+        // (Bots have no eyes: their picture of the arena is told that this block is not what it was.)
+        dev.betrix.superSmashMobsBrawl.bots.ArenaChanges.changed(block)
     }
     /** Refreshable temporary construction; overlapping webs/ice expire after their last placement. */
     fun temporaryBlock(block:org.bukkit.block.Block,material:Material,ticks:Int):Boolean {
