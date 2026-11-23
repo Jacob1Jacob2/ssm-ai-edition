@@ -263,6 +263,14 @@ class BotsCommand : KoinComponent {
                 c.nanos / 1e6, nav.computeNanos / 1e6, if (nav.computed > 0) nav.computeNanos / 1e3 / nav.computed else 0.0))
     }
 
+    @Execute(name = "watchblasts")
+    @Description("Debug: a bot that has run out of something winding up (a hissing Creeper) stands and watches until it has gone off, as before it fought on from there (to measure the difference); again to switch back")
+    fun watchBlasts(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        BotManager.watchBlasts = !BotManager.watchBlasts
+        plugin.logger.info("[watchblasts] a bot waiting outside something that is winding up ${if (BotManager.watchBlasts) "stands and watches" else "fights on from where it stands"}")
+    }
+
     @Execute(name = "leavesummons")
     @Description("Debug: bots leave alone what an opponent's kit has sent to fight for it (a Wither Image, a bear cub), as before they hit it back (to measure the difference); again to switch back")
     fun leaveSummons(@Context sender: CommandSender) {

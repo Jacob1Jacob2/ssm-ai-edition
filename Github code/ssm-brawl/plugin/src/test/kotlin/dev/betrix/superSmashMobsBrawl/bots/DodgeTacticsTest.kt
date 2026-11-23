@@ -148,6 +148,39 @@ class DodgeTacticsTest : StringSpec({
         (blast > 6.0) shouldBe true
         (arrow < 2.0) shouldBe true
     }
+    "waiting outside something that is winding up, a bot does not walk or get carried back in" {
+        val radius = 8.0
+        // Ten blocks off: a step toward it that ends nine off is back too near; a step along its edge or away is not.
+        BlastTactics.walksIn(gapNow = 10.0, gapAhead = 9.0, radius = radius) shouldBe true
+        BlastTactics.walksIn(10.0, 10.0, radius) shouldBe false
+        BlastTactics.walksIn(10.0, 11.0, radius) shouldBe false
+        // From further out a step toward it is fine until it comes within the room it keeps.
+        BlastTactics.walksIn(12.0, 11.0, radius) shouldBe false
+        BlastTactics.walksIn(9.6, 9.1, radius) shouldBe false
+        BlastTactics.walksIn(9.5, 8.9, radius) shouldBe true
+        // Where it ran to is outside the room it keeps: it is not held fast on the spot it stopped on.
+        (BlastTactics.CLEAR > BlastTactics.KEEP) shouldBe true
+        // A dash of ten blocks straight at it from eleven off ends a block from the middle of it.
+        BlastTactics.nearest(dx = 11.0, dz = 0.0, ux = -1.0, uz = 0.0, far = 10.0) shouldBe (1.0 plusOrMinus 1e-9)
+        BlastTactics.carriesIn(11.0, 0.0, -1.0, 0.0, 10.0, radius) shouldBe true
+        // A longer one goes right through the middle and out the far side: that counts too.
+        BlastTactics.nearest(11.0, 0.0, -1.0, 0.0, 25.0) shouldBe (0.0 plusOrMinus 1e-9)
+        BlastTactics.carriesIn(11.0, 0.0, -1.0, 0.0, 25.0, radius) shouldBe true
+        // A short hop toward it that stops outside, a dash away from it and a dash across in front of it do not.
+        BlastTactics.carriesIn(11.0, 0.0, -1.0, 0.0, 1.5, radius) shouldBe false
+        BlastTactics.carriesIn(11.0, 0.0, 1.0, 0.0, 10.0, radius) shouldBe false
+        BlastTactics.carriesIn(11.0, 0.0, 0.0, 1.0, 10.0, radius) shouldBe false
+        // Across in front of it but passing close by: in.
+        BlastTactics.carriesIn(6.0, -8.0, 0.0, 1.0, 16.0, radius) shouldBe true
+        // Standing inside the room it keeps, away from it and along its edge are still free to go.
+        BlastTactics.carriesIn(8.8, 0.0, 1.0, 0.0, 10.0, radius) shouldBe false
+        BlastTactics.carriesIn(8.8, 0.0, 0.0, 1.0, 10.0, radius) shouldBe false
+        // A running jump at it from ten and a half blocks off comes down beside it; from fifteen off it does not.
+        BlastTactics.carriesIn(10.5, 0.0, -1.0, 0.0, BlastTactics.HOP, radius) shouldBe true
+        BlastTactics.carriesIn(15.0, 0.0, -1.0, 0.0, BlastTactics.HOP, radius) shouldBe false
+        // Something that does not carry it anywhere is never held back.
+        BlastTactics.carriesIn(11.0, 0.0, -1.0, 0.0, 0.0, radius) shouldBe false
+    }
     "what a kit sends to fight for it is hit back at when a few swings will finish it" {
         // A Wither Image and a bear cub are sent to fight; a Wolf's cub holds somebody down and a Pig's bomb goes off.
         SummonTactics.fights("WITHER_SKELETON") shouldBe true

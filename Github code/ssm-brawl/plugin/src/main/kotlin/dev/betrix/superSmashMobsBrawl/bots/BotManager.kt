@@ -104,6 +104,8 @@ object BotManager : KoinComponent {
     @Volatile var noWeave = false
     /** Debug: bots leave alone what an opponent's kit has sent to fight for it (a Wither Image, a bear cub), as before they hit it back. To measure the difference. */
     @Volatile var leaveSummons = false
+    /** Debug: a bot that has run out of something winding up (a hissing Creeper) stands and watches until it has gone off, as before it fought on from there. To measure the difference. */
+    @Volatile var watchBlasts = false
     /**
      * Debug: the bots' picture of the arena is not told when a block changes, as before
      * ([ArenaChanges]): it finds out by looking again every ten seconds or so, or by walking into

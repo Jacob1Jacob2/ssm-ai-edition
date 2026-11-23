@@ -905,6 +905,23 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     private var blastSince = -1L
     private var blastSeen = -1000L
     private var blastTo: Location? = null
+    /** The tick it is waiting outside something that is winding up, fighting on from where it stands; and what it is keeping out of. */
+    private var blastHoldTick = -1000L
+    private var blastsHeld: List<dev.betrix.superSmashMobsBrawl.abilities.Flights.Blast> = emptyList()
+    private var carrySaidTick = -1000L
+
+    /**
+     * Would something of its own that carries it [far] blocks toward ([ux], [uz]) (a dash, a leap,
+     * a charge) take it into what it is waiting outside of, or through it?
+     */
+    private fun carriesIntoBlast(ux: Double, uz: Double, far: Double): Boolean {
+        // (This tick, or the last one: some of what a bot does comes before it has looked round again.)
+        if (tick - blastHoldTick > 1 || far <= 0.0) return false
+        val length = hypot(ux, uz)
+        if (length < 1e-6) return false
+        val here = player.location
+        return blastsHeld.any { b -> BlastTactics.carriesIn(here.x - b.at.x, here.z - b.at.z, ux / length, uz / length, far, b.radius) }
+    }
 
     /**
      * Something is winding up to go off within reach of this bot (a Creeper has begun to hiss):
@@ -917,10 +934,12 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         val world = here.world ?: return false
         var worst: dev.betrix.superSmashMobsBrawl.abilities.Flights.Blast? = null
         var waits = false
+        val near = ArrayList<dev.betrix.superSmashMobsBrawl.abilities.Flights.Blast>(2)
         for (b in dev.betrix.superSmashMobsBrawl.abilities.Flights.blastsIn(world)) {
             if (b.owner == player || game.arePlayersOnSameTeam(player, b.owner)) continue
             val gap = b.at.distance(here)
             if (gap > BlastTactics.HEARD) continue
+            near += b
             if (BlastTactics.waitsOutside(gap, b.radius)) waits = true
             if (!BlastTactics.inReach(gap, b.radius)) continue
             if (worst == null || b.ticksLeft < worst.ticksLeft) worst = b
@@ -931,9 +950,19 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             // Out of it, and it has not gone off yet: no walking back in after whoever is hissing.
             if (blastSince < 0 || tick - blastSince < BlastTactics.readyAfter(d)) return false
             blastSeen = tick
-            t?.let { val (yaw, pitch) = lookAngles(player.eyeLocation, aimPointOf(it)); lookTowards(yaw, pitch, d.turnSpeed) }
-            setInputs(0f, 0f, false)
-            return true
+            if (BotManager.watchBlasts) {
+                t?.let { val (yaw, pitch) = lookAngles(player.eyeLocation, aimPointOf(it)); lookTowards(yaw, pitch, d.turnSpeed) }
+                setInputs(0f, 0f, false)
+                return true
+            }
+            // It fights on from where it stands, with whatever it has that reaches. What it does
+            // this tick may not take it back in: [applyMovement] and [useAbility] see to that.
+            if (blastHoldTick != tick - 1) dbg("out of reach of ${near.firstOrNull()?.owner?.name}'s ${near.firstOrNull()?.what}: fighting on from here until it has gone off")
+            blastHoldTick = tick
+            blastsHeld = near
+            // (Standing still on purpose says nothing about the way it was on.)
+            patientTick = tick
+            return false
         }
         blastSeen = tick
         if (blastSince < 0) blastSince = tick
@@ -1704,7 +1733,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         }
         // The leap half of a dash: fired a few ticks into the jump, level down the lane.
         if (tick == dashTick) dashAim?.let { aim ->
-            if (!nms.onGround() && canDoubleJump() && gapJump == null && climb == null && !recovering) {
+            if (!nms.onGround() && canDoubleJump() && gapJump == null && climb == null && !recovering &&
+                // (Not into what it is waiting outside of: [tickBlasts].)
+                !carriesIntoBlast(aim.x - player.x, aim.z - player.z, DASH_LENGTH)) {
                 val (yaw, _) = lookAngles(player.eyeLocation, aim)
                 nms.setYRot(yaw)
                 nms.setYHeadRot(yaw)
@@ -2155,7 +2186,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         val bumped=nms.horizontalCollision && step.node.y>player.y-.3 && !narrow(dest)
         val jump=nms.onGround() && (step.jump || step.node.y>player.y+.6 || bumped)
         if(jump)noteJump("route step")
-        else if(nms.onGround() && input.first>.8f) dashLane()?.let { lane ->
+        else if(nms.onGround() && input.first>.8f) dashLane()?.takeUnless { carriesIntoBlast(it.x-player.x,it.z-player.z,DASH_LENGTH) }?.let { lane ->
             // A spider or a wolf covers open ground with its leap, not on foot.
             val along=inputToward(lane)
             if(along.first>.8f) {
@@ -2370,6 +2401,14 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
         if (walls.isNotEmpty() && tick - wallsTick <= 1 && !jump && nms.onGround() && gapJump == null && climb == null) {
             val input = roundWalls(forward, strafe)
             forward = input.first; strafe = input.second
+        }
+        // Waiting outside something that is winding up ([tickBlasts]): whatever it is doing, not a step back
+        // toward it, and not a running jump that comes down beside it (in the air there is no stopping).
+        if (blastHoldTick == tick && nms.onGround() && gapJump == null && climb == null) moveDir(forward, strafe)?.let { (mx, mz) ->
+            val here = player.location
+            if (jump && carriesIntoBlast(mx, mz, BlastTactics.HOP)) jump = false
+            if (blastsHeld.any { b -> BlastTactics.walksIn(hypot(here.x - b.at.x, here.z - b.at.z),
+                    hypot(here.x + mx - b.at.x, here.z + mz - b.at.z), b.radius) }) { forward = 0f; strafe = 0f; jump = false }
         }
         if(nms.onGround()) {
             val lookAhead=step?.let { minOf(.9,hypot(it.node.x+.5-player.x,it.node.z+.5-player.z)) } ?: .9
@@ -3073,6 +3112,8 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                     // (Nor taken off on a nearly empty tank, to come down again before getting anywhere.)
                     !(id=="phantom_flight" && !BotManager.oldKitPlay && player.exp < PhantomPlay.TAKE_OFF) &&
                     !(id=="slime_rocket" && player.exp<.2f) &&
+                    // (Waiting outside something that is winding up: nothing that would carry it at them and so back in.)
+                    !(hint.moves > 0 && carriesIntoBlast(t.x - player.x, t.z - player.z, hint.moves)) &&
                     // What carries, throws or swaps its player is pressed only where that leaves them on the map.
                     (old || kitMoveIsSafe(id, t, dist) { situation })
             }
@@ -4218,6 +4259,12 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                 dbg("a Blink from here would come out over nothing: not pressed")
                 return false
             }
+        }
+        // Waiting outside something that is winding up, nothing of its own carries it back in: it goes
+        // where the bot is looking at this moment.
+        if (hint.moves > 0 && player.location.direction.let { carriesIntoBlast(it.x, it.z, hint.moves) }) {
+            if (tick - carrySaidTick > 20) { carrySaidTick = tick; dbg("$id would carry it into what is about to go off: not pressed") }
+            return false
         }
         // (The opponent may have closed in, or the bot left the floor, while it was turning onto the shot.)
         if (newPlay && followup) target?.takeIf { it.isOnline && it.world == player.world }?.let { t ->
@@ -5937,8 +5984,15 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
      */
     private fun startGapJump(gap: Gap, look: Boolean = false, flown: Boolean = false) {
         val landing = gap.landing ?: return
-        navStats.gapJumps++
         val here = player.location
+        // Waiting outside something that is winding up ([tickBlasts]): not a jump that comes down beside it.
+        // It stands where it is; the way is still there when the thing has gone off.
+        if (tick - blastHoldTick <= 1 && blastsHeld.any { b -> BlastTactics.walksIn(hypot(here.x - b.at.x, here.z - b.at.z),
+                hypot(landing.x - b.at.x, landing.z - b.at.z), b.radius) }) {
+            setInputs(0f, 0f, false)
+            return
+        }
+        navStats.gapJumps++
         // The block the bot is standing on, if it is the one the route says it jumps from.
         val from = routeAt?.takeIf { abs(it.y - here.y) < .6 && hypot(it.x + .5 - here.x, it.z + .5 - here.z) < 1.0 }
         val jump = GapJump(landing, tick, here.clone(), from)
