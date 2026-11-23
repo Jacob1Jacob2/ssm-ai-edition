@@ -238,9 +238,9 @@ object BotManager : KoinComponent {
         }
 
         val player = nms.bukkitEntity
-        val identity = BotIdentity.worldName(profile)
-        player.playerListName(identity)
-        player.displayName(identity)
+        // (In the player list its rank stands before its name, as in chat; over its head it is the name alone.)
+        player.playerListName(BotIdentity.listName(profile))
+        player.displayName(BotIdentity.worldName(profile))
         dev.betrix.superSmashMobsBrawl.services.BotSkinService.resolve(profile.name) {skin ->
             if(skin!=null && player.isOnline && bots[uuid]?.nms===nms)
                 dev.betrix.superSmashMobsBrawl.services.BotSkinService.applyTo(player,skin)

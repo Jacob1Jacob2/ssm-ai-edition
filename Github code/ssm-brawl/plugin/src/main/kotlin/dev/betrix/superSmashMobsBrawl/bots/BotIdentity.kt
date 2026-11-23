@@ -29,8 +29,25 @@ object BotIdentity {
         "god" -> NamedTextColor.WHITE
         else -> NamedTextColor.YELLOW
     }
-    /** Rank colors belong to chat and roster labels; world/tab names stay classic yellow. */
+    /** The name over a bot's head: classic yellow, with no rank. */
     fun worldName(profile: BotManager.BotProfile): Component = Component.text(profile.name, NamedTextColor.YELLOW)
+
+    /** A rank as it is written before a name: bold capitals in the rank's colour. Null for no rank. */
+    fun rankTag(rank: String): Component? {
+        val shown = rank.trim().lowercase().let { if (it == "mythic") "mythical" else it }
+        if (shown == "none" || shown.isEmpty()) return null
+        return Component.text(shown.uppercase(), rankColor(shown)).decorate(TextDecoration.BOLD)
+    }
+
+    /**
+     * A line of the player list (Tab): the rank of whoever has one, and then [name] as it stood
+     * there before. (Side by side under an empty parent, so the name does not come out bold.)
+     */
+    fun listName(rank: String, name: Component): Component =
+        rankTag(rank)?.let { Component.empty().append(it).append(Component.space()).append(name) } ?: name
+
+    /** A bot's line in the player list. */
+    fun listName(profile: BotManager.BotProfile): Component = listName(profile.rank, worldName(profile))
     fun rosterName(profile: BotManager.BotProfile): Component {
         val rank = if (profile.rank == "mythic") "mythical" else profile.rank
         val color = rankColor(rank)

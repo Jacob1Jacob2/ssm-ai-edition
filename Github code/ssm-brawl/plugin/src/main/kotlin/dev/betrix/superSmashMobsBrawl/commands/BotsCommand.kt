@@ -271,6 +271,17 @@ class BotsCommand : KoinComponent {
         plugin.logger.info("[watchblasts] a bot waiting outside something that is winding up ${if (BotManager.watchBlasts) "stands and watches" else "fights on from where it stands"}")
     }
 
+    @Execute(name = "tab")
+    @Description("Debug: logs the line every online player has in the player list (Tab), with its colour codes, and the name over their head, as [tab]")
+    fun tab(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        val legacy = net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer.legacyAmpersand()
+        val players = org.bukkit.Bukkit.getOnlinePlayers()
+        plugin.logger.info("[tab] ${players.size} online")
+        for (p in players) plugin.logger.info("[tab] ${p.name}: list '${legacy.serialize(p.playerListName())}', over the head '${
+            dev.betrix.superSmashMobsBrawl.services.ClassicChatService.nameTag(p).replace('§', '&')}'")
+    }
+
     @Execute(name = "leavesummons")
     @Description("Debug: bots leave alone what an opponent's kit has sent to fight for it (a Wither Image, a bear cub), as before they hit it back (to measure the difference); again to switch back")
     fun leaveSummons(@Context sender: CommandSender) {

@@ -11,7 +11,7 @@ val ktor_version: String by project
 
 group = "dev.betrix"
 
-version = "0.1.0-ai-hiss-20261123"
+version = "0.1.0-ai-tabrank-20261123"
 
 repositories {
     mavenCentral()
