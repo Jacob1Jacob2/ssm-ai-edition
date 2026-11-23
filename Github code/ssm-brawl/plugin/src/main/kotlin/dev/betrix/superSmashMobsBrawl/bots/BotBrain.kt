@@ -347,7 +347,12 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
     /** The tick it last had the ground under it looked at again, standing where the routes do not go. */
     private var offRoutesLookTick = -100L
 
-    private fun routeToward(to: Location, map: GameMapDef,
+    /**
+     * [passing]: [to] is where somebody is this moment on their way through the air (knocked off,
+     * in the middle of a jump). No floor near it then says nothing about whether there is a way
+     * to them ([ReachTactics]): it is asked again in a moment.
+     */
+    private fun routeToward(to: Location, map: GameMapDef, passing: Boolean = false,
                             unreachable: () -> Unit = { target?.let(::markUnreachable) }): RouteStep? {
         val here = player.location
         // Keep walking a usable path, but not to where the target used to be: replan once the
@@ -400,7 +405,11 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                 nextRouteTick = tick + 10
                 // Nowhere to stand anywhere near them (hanging in the air, far out over the void):
                 // that is as unreachable as it gets, not a reason to stand and wait for a route.
-                if (start != null && goal == null) unreachable()
+                if (start != null && goal == null) {
+                    if (passing) {
+                        if (tick - passingSaidTick > 40) { passingSaidTick = tick; dbg("no floor under ${target?.name} this moment (in the air): keeping after them") }
+                    } else { noWayWhy = "nowhere to stand within 12 blocks of where they are"; unreachable() }
+                }
             }
         }
         // A search takes at most 2.5ms of a tick, and all bots together at most six.
@@ -470,7 +479,10 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
                     // way goes, and wait. That is no reason to give somebody up as out of reach.
                     nextRouteTick=tick+20
                     dbg("no way there that keeps out of the wall: as near as the way goes, until it comes down")
-                } else if(!search.reached && atEnd) unreachable()
+                } else if(!search.reached && atEnd) {
+                    noWayWhy = "the search from ${search.start.x},${"%.1f".format(search.start.y)},${search.start.z} got no nearer in ${search.expanded} steps"
+                    unreachable()
+                }
                 dbg("route ${route.size} steps, ${search.expanded} expansions, reached=${search.reached}")
             }
         }
@@ -1317,10 +1329,35 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
 
     private var nextNoWayLog = 0L
 
+    /** For the log: what the route search that found no way had to go on ([markUnreachable] says it once and forgets it). */
+    private var noWayWhy = ""
+    private var passingSaidTick = -1000L
+    /** Who it is fighting and since when they have been off the ground (below zero: standing), for [ReachTactics]. */
+    private var airOf: java.util.UUID? = null
+    private var airSince = -1L
+    private var airWatched = -1000L
+
+    /** How long [t] has been off the ground, as far as this bot has watched them: below zero if they are standing. */
+    private fun airTicks(t: Player): Long {
+        val grounded = (t as org.bukkit.entity.Entity).isOnGround
+        // (Somebody else, or the same one after it had its eyes off them: whether they came down in between is not known.)
+        if (airOf != t.uniqueId || tick - airWatched > ReachTactics.WATCHED) { airOf = t.uniqueId; airSince = if (grounded) -1 else tick }
+        else if (grounded) airSince = -1
+        else if (airSince < 0) airSince = tick
+        airWatched = tick
+        return if (airSince < 0) -1 else tick - airSince
+    }
+
     private fun markUnreachable(t: Player) {
         unreachableUntil[t.uniqueId] = tick + 300
         unreachableAt[t.uniqueId] = t.location.clone()
         navStats.unreachable++
+        if (BotManager.debug) {
+            dbg("no way to ${t.name}, %.0f blocks off%s: they are %s, it is %s".format(t.location.distance(player.location),
+                if (noWayWhy.isEmpty()) "" else " ($noWayWhy)",
+                if ((t as org.bukkit.entity.Entity).isOnGround) "on the ground" else "in the air", if (nms.onGround()) "on the ground" else "in the air"))
+            noWayWhy = ""
+        }
         // Where a person found to stand that this bot cannot get to: the thing to test against next time.
         if (!BotManager.isBot(t) && tick >= nextNoWayLog) {
             nextNoWayLog = tick + 600
@@ -1713,6 +1750,17 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             else SightTactics.knows(since, tick - (noticedAt[p.uniqueId] ?: -100_000L), d)
     }
 
+    /** For the log: which of the things [knows] asks for is missing. */
+    private fun whyUnknown(p: Player): String {
+        if (ItemService.hidden(p)) return "cannot be seen"
+        val sign = sensed[p.uniqueId]?.takeIf { it.at.world == p.world } ?: return "no sign of them"
+        val since = tick - sign.tick
+        val moved = sign.at.distance(p.location)
+        if (!ShadowTactics.followed(moved, since)) return "%.0f blocks from the last sign of them, $since ticks ago".format(moved)
+        if (since > SightTactics.memoryTicks(d)) return "no sign of them for $since ticks"
+        return "new to it ${tick - (noticedAt[p.uniqueId] ?: -100_000L)} ticks ago"
+    }
+
     private fun updateState(t: Player?) {
         val here = player.location
         val max = maxHealth(player)
@@ -1926,7 +1974,7 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
      */
     private fun travel(goal: Location, map: GameMapDef, face: Boolean = true, unreachable: () -> Unit) {
         val here = player.location
-        val step = routeToward(goal, map, unreachable)
+        val step = routeToward(goal, map, unreachable = unreachable)
         if (face) {
             val ahead = step?.let { Location(here.world, it.node.x + .5, it.node.y + 1.6, it.node.z + .5) }
                 ?: goal.clone().add(0.0, 1.2, 0.0)
@@ -2622,6 +2670,17 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             target?.uniqueId,
         )
         val next = candidates.find { it.uniqueId == chosen }
+        // (For the log: why somebody it was after, who is still there to be fought, is no longer the one.)
+        if (BotManager.debug) target?.takeIf { it != next && it.isOnline && it.world == player.world && it.gameMode == GameMode.SURVIVAL &&
+                !game.respawnManager.isRespawning(it) }?.let { old ->
+            val why = when {
+                old !in alive -> "not in mind (${whyUnknown(old)})"
+                old !in candidates -> if (besieging(old)) "no way to them" else "keeping off them"
+                else -> "somebody better"
+            }
+            dbg("leaves ${old.name}, %.0f blocks off, for ${next?.name ?: "nobody"}%s: $why".format(old.location.distance(me),
+                next?.let { ", %.0f blocks off".format(it.location.distance(me)) } ?: ""))
+        }
         if(next != target) {
             route.clear();routeSearch=null;routeGoal=null;nextRouteTick=tick
         }
@@ -2662,7 +2721,9 @@ class BotBrain(private val nms: BotPlayer, private val profile: BotManager.BotPr
             }
             if (tick < withdrawUntil) return withdraw(t, map)
         }
-        val step = if(!sieging && (dist>reach || !sees)) routeToward(chaseGoal(t,dist),map) else null
+        // (Somebody on their way through the air is kept after, floor under them or not: [ReachTactics].)
+        val passing = ReachTactics.passing(airTicks(t))
+        val step = if(!sieging && (dist>reach || !sees)) routeToward(chaseGoal(t,dist),map,passing) else null
 
         if (decide) {
             val bow = KitService.getKitForPlayer(player)?.id.let { it == "skeleton" || it == "zombie" }

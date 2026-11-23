@@ -50,6 +50,28 @@ abstract class TargetSelector {
     }
 }
 
+/**
+ * Whether "there is no floor anywhere near them" says anything about an opponent. Somebody knocked
+ * out over the void, or at the top of a jump over a gap, has nothing under them for the second it
+ * takes them to get back or to fall. A bot used to write them off as out of reach on the spot
+ * (844 times in ten matches), turn to whoever else it knew of, however far off, and turn back as
+ * soon as they had moved on: half of all the times a bot left an opponent who was still there to
+ * be fought, and all but five of the 114 times it left one beside it for one across the map.
+ *
+ * Only somebody who stays in the air where there is no floor (hovering, flying about out there)
+ * is out of reach. Until then the bot keeps them: it goes as far as the ground goes, watches, and
+ * asks again.
+ */
+object ReachTactics {
+    /** Ticks off the ground before somebody with no floor under them is taken to be staying out there. */
+    const val HANGS = 60
+    /** Not watched for longer than this, and how long they have been up there is counted from scratch. */
+    const val WATCHED = 5
+
+    /** Is somebody who has been off the ground for [airTicks] (below zero: they are standing) only passing through the air? */
+    fun passing(airTicks: Long) = airTicks in 0 until HANGS
+}
+
 /** Fights whoever is closest. */
 object NormalTargeting : TargetSelector() {
     override fun score(c: TargetCandidate) = c.distance
