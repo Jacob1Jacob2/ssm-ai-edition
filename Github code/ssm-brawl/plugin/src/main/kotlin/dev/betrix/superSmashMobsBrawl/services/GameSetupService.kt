@@ -354,8 +354,8 @@ object GameSetupService : KoinComponent {
                 Triple(Material.CHEST_MINECART, BotPersonality.SALTY, listOf("Complains when things go wrong", "Gets mad at whoever rubs it in")),
                 Triple(Material.TNT_MINECART, BotPersonality.TOXIC, listOf("Trash talk: tries to make everyone else mad")),
                 // Every bot is dealt its own, so the lobby argues with itself.
-                Triple(Material.COMMAND_BLOCK_MINECART, BotPersonality.RANDOM, listOf("Each bot gets its own personality",
-                    "They argue, take sides and go after each other", "No more than half are Silent")),
+                Triple(Material.COMMAND_BLOCK_MINECART, BotPersonality.RANDOM, listOf("Each bot has its own personality",
+                    "They argue, take sides and go after each other")),
             ).forEachIndexed { row, (material, personality, lore) ->
                 // (Dark in the sandbox, as the difficulties are: nobody is there to say anything.)
                 if (!s.hasBots) set(row * 9, MenuIcons.dark(menuItem(material, personality.label, NamedTextColor.DARK_GRAY, noBots))) { unavailable(player) }
@@ -418,6 +418,8 @@ object GameSetupService : KoinComponent {
             }
             set(47, menuItem(Material.FILLED_MAP,"Choose Map",lore=listOf("Choose the arena for your next match"))) {MapVoteService.openVoteGui(player)}
             set(49, menuItem(Material.REDSTONE_BLOCK, "Close", NamedTextColor.RED)) { player.closeInventory() }
+            // (At the foot of the white column: the odds and ends that are not about the match itself.)
+            set(51, menuItem(Material.COMPARATOR, "Misc Settings", lore = listOf("Auto L, bot rage quits, resource pack"))) { MiscSettings.openMenu(player) }
             set(53, menuItem(Material.CREEPER_HEAD, "Choose Kit", lore = listOf("Choose your mob"))) {
                 KitService.openKitSelectionGui(player)
             }

@@ -71,11 +71,16 @@ object ResourcePackService : KoinComponent {
     private const val TEXTURE_HEIGHT = 480
     private const val TILE_ROWS = 2
     private const val TILE_SIZE = 240
-    private val DECLINED_MESSAGE: Component = Component.text("This server needs its resource pack.", NamedTextColor.RED)
-        .append(Component.newline())
-        .append(Component.text("Join again and choose Proceed when it asks.", NamedTextColor.YELLOW))
-        .append(Component.newline())
-        .append(Component.text("No question? Edit the server in your list and set Server Resource Packs to Enabled.", NamedTextColor.GRAY))
+    /** Said to somebody who said no to the pack. They stay and play without it: nobody is kicked for it any more. */
+    private val DECLINED_MESSAGE: Component = Component.text("Pack> ", NamedTextColor.BLUE)
+        .append(Component.text("Playing without the resource pack: some pictures and icons will look broken. ", NamedTextColor.GRAY))
+        .append(Component.text("Turn it on in Game Settings > Misc Settings.", NamedTextColor.YELLOW))
+    /** And to somebody who asked for it in the menu while their client refuses every server's pack. */
+    private val REFUSED_MESSAGE: Component = Component.text("Pack> ", NamedTextColor.BLUE)
+        .append(Component.text("Your game said no to the pack. ", NamedTextColor.GRAY))
+        .append(Component.text("Edit this server in your server list and set Server Resource Packs to Prompt or Enabled.", NamedTextColor.YELLOW))
+    /** Players who asked for the pack in the menu a moment ago (and so are not told where to turn it on if it is declined). */
+    private val asked = ConcurrentHashMap.newKeySet<UUID>()
 
     private val packId: UUID = UUID.nameUUIDFromBytes("ssm-ai-edition-pack".toByteArray())
 
@@ -127,20 +132,22 @@ object ResourcePackService : KoinComponent {
             if (BotManager.isBot(player)) return@event
             Bukkit.getScheduler().runTaskLater(plugin, Runnable { send(player) }, 20L)
         }
-        event<PlayerQuitEvent> { loadedPlayers.remove(player.uniqueId) }
+        event<PlayerQuitEvent> { loadedPlayers.remove(player.uniqueId); asked.remove(player.uniqueId) }
         event<PlayerResourcePackStatusEvent> {
             if (id != packId) return@event
             plugin.logger.info("Resource pack for ${player.name}: $status")
             when (status) {
-                PlayerResourcePackStatusEvent.Status.SUCCESSFULLY_LOADED -> loadedPlayers.add(player.uniqueId)
-                // The pack is required. An ordinary client leaves by itself when its player says no;
-                // this is for the clients that say no and stay. A download that failed is not the
-                // player's choice, so that one may keep playing without the pictures.
+                PlayerResourcePackStatusEvent.Status.SUCCESSFULLY_LOADED -> { loadedPlayers.add(player.uniqueId); asked.remove(player.uniqueId) }
+                // The pack is there for whoever wants it. Somebody who says no plays on without
+                // the pictures (they used to be kicked), is not asked again at every join, and is
+                // told where to turn it on: they will want to once they see what is missing.
                 PlayerResourcePackStatusEvent.Status.DECLINED -> {
                     loadedPlayers.remove(player.uniqueId)
                     val declined = player
+                    val wanted = asked.remove(declined.uniqueId)
                     Bukkit.getScheduler().runTask(plugin, Runnable {
-                        if (declined.isOnline) declined.kick(DECLINED_MESSAGE)
+                        MiscSettings.set(declined.uniqueId, MiscSettings.Option.RESOURCE_PACK, false)
+                        if (declined.isOnline) declined.sendMessage(if (wanted) REFUSED_MESSAGE else DECLINED_MESSAGE)
                     })
                 }
                 PlayerResourcePackStatusEvent.Status.FAILED_DOWNLOAD,
@@ -179,16 +186,35 @@ object ResourcePackService : KoinComponent {
         return props
     }
 
+    /**
+     * [player] switched the pack on or off in Misc Settings: it is asked for, or taken off, now.
+     */
+    fun apply(player: Player) {
+        if (MiscSettings.on(player.uniqueId, MiscSettings.Option.RESOURCE_PACK)) {
+            asked.add(player.uniqueId)
+            send(player)
+        } else {
+            asked.remove(player.uniqueId)
+            loadedPlayers.remove(player.uniqueId)
+            player.removeResourcePacks(packId)
+        }
+    }
+
+    /** Debug: as if [player]'s game had answered the pack with [status] (nobody can press "No" for a bot). */
+    fun debugAnswer(player: Player, status: PlayerResourcePackStatusEvent.Status) = PlayerResourcePackStatusEvent(player, packId, status).callEvent()
+
     fun send(player: Player) {
         val sha1 = packSha1 ?: return
         if (http == null || !player.isOnline) return
+        // (Not to somebody who has it switched off.)
+        if (!MiscSettings.on(player.uniqueId, MiscSettings.Option.RESOURCE_PACK)) return
         val info = ResourcePackInfo.resourcePackInfo(packId, URI.create("$publicUrl?v=${sha1.take(12)}"), sha1)
         player.sendResourcePacks(
             ResourcePackRequest.resourcePackRequest()
                 .packs(info)
-                .required(true)
+                .required(false)
                 .replace(true)
-                .prompt(Component.text("Needed to play here: map pictures, menu icons, and classic scoreboard spacing.", NamedTextColor.GOLD))
+                .prompt(Component.text("Map pictures, menu icons and classic scoreboard spacing. You can play without it, and turn it on later in Game Settings.", NamedTextColor.GOLD))
                 .build()
         )
     }

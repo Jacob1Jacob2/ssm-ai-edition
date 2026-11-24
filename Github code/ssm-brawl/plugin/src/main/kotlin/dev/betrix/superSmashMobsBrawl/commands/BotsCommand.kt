@@ -332,6 +332,63 @@ class BotsCommand : KoinComponent {
         }
     }
 
+    @Execute(name = "misctest")
+    @Description("Debug: opens Game Settings for a bot, goes into Misc Settings, clicks its three switches and Back, says no to the resource pack for it, and logs what the slots hold and what each click changed as [misctest]")
+    fun miscTest(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        val profile = BotManager.rosterProfiles().firstOrNull() ?: return sender.sendMessage("The roster is empty")
+        val bot = BotManager.spawn(profile) ?: return sender.sendMessage("Could not spawn ${profile.name}")
+        dev.betrix.superSmashMobsBrawl.services.LobbyService.assign(bot, 1)
+        dev.betrix.superSmashMobsBrawl.services.HubService.tryTeleportToDefaultHub(bot)
+        val misc = dev.betrix.superSmashMobsBrawl.services.MiscSettings
+        val pack = dev.betrix.superSmashMobsBrawl.services.ResourcePackService
+        val plainText = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
+        fun log(text: String) = plugin.logger.info("[misctest] $text")
+        fun top() = bot.openInventory.topInventory
+        fun title() = plainText.serialize(bot.openInventory.title())
+        fun describe(slot: Int): String {
+            val item = top().getItem(slot) ?: return "-"
+            val name = item.itemMeta?.displayName()?.let(plainText::serialize) ?: ""
+            val lore = item.itemMeta?.lore()?.joinToString(" / ") { plainText.serialize(it) } ?: ""
+            return "${item.type.name.lowercase()} '$name' [$lore]"
+        }
+        fun click(slot: Int) = org.bukkit.Bukkit.getPluginManager().callEvent(org.bukkit.event.inventory.InventoryClickEvent(
+            bot.openInventory, org.bukkit.event.inventory.InventoryType.SlotType.CONTAINER, slot,
+            org.bukkit.event.inventory.ClickType.LEFT, org.bukkit.event.inventory.InventoryAction.PICKUP_ALL))
+        fun state() = "auto L ${dev.betrix.superSmashMobsBrawl.services.AutoL.on(bot.uniqueId)}, rage quits ${misc.on(bot.uniqueId, dev.betrix.superSmashMobsBrawl.services.MiscSettings.Option.RAGE_QUITS)}, " +
+            "resource pack ${misc.on(bot.uniqueId, dev.betrix.superSmashMobsBrawl.services.MiscSettings.Option.RESOURCE_PACK)}"
+        runCatching {
+            dev.betrix.superSmashMobsBrawl.services.GameSetupService.openMenu(bot)
+            log("opened '${title()}'; slot 50: ${describe(50)}; slot 51: ${describe(51)}; slot 52: ${describe(52)}")
+            log("before anything is clicked: ${state()}")
+            click(51); log("click slot 51 -> '${title()}', ${top().size} slots")
+            listOf(11, 13, 15, 18).forEach { log("slot $it: ${describe(it)}") }
+            click(11); log("click Auto L -> ${state()}; slot 11: ${describe(11)}")
+            click(13); log("click Bot Rage Quits -> ${state()}; slot 13: ${describe(13)}")
+            click(15); log("click Resource Pack -> ${state()}; slot 15: ${describe(15)}")
+            click(15); log("click Resource Pack again -> ${state()}; slot 15: ${describe(15)}")
+            click(11); click(13); log("Auto L and Bot Rage Quits clicked back -> ${state()}")
+            click(18); log("click Back -> '${title()}'")
+            bot.closeInventory()
+            // Saying no to the pack: no kick, and it is not asked for again until they turn it on.
+            pack.debugAnswer(bot, org.bukkit.event.player.PlayerResourcePackStatusEvent.Status.DECLINED)
+        }.onFailure { log("FAILED: $it"); it.printStackTrace() }
+        org.bukkit.Bukkit.getScheduler().runTaskLater(plugin, Runnable {
+            log("after saying no to the pack: still on the server ${bot.isOnline}; ${state()}")
+            misc.set(bot.uniqueId, dev.betrix.superSmashMobsBrawl.services.MiscSettings.Option.RESOURCE_PACK, true)
+            BotManager.despawn(bot)
+            log("done")
+        }, 10L)
+    }
+
+    @Execute(name = "ragequit")
+    @Description("Debug: in every match being played, one bot that still has lives says it has had enough and leaves, as a bot may once in a while when the host has Bot Rage Quits on (Misc Settings); logged as [chatdbg]")
+    fun rageQuit(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        BotManager.debug = true
+        plugin.logger.info("[chatdbg] forced rage quits: ${dev.betrix.superSmashMobsBrawl.services.BotConversationService.forceRageQuit()}")
+    }
+
     @Execute(name = "leavesummons")
     @Description("Debug: bots leave alone what an opponent's kit has sent to fight for it (a Wither Image, a bear cub), as before they hit it back (to measure the difference); again to switch back")
     fun leaveSummons(@Context sender: CommandSender) {

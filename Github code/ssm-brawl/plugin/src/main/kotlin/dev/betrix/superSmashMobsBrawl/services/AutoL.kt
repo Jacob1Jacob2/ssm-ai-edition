@@ -8,18 +8,16 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * "L <name>", said in chat for a player after each of their kills.
  *
- * It was made for the server's owner, for whom it is on until they turn it off; anybody else has
- * it off until they turn it on. `/auto L` switches it for whoever types it. The reason there is a
- * switch: some clients say the same line by themselves, and with both on every kill was called
- * twice.
+ * Off for everybody until they turn it on: in Misc Settings (Game Settings), or with `/auto L`.
+ * (It was first on for the server's owner. Some clients say the same line by themselves, and with
+ * both on every kill was called twice.)
  */
 object AutoL {
-    private val OWNER: UUID = UUID.fromString("784cabf9-a8a2-4d39-a381-e716baaf5cbe")
     private val chosen = ConcurrentHashMap<UUID, Boolean>()
     private var file: File? = null
 
-    /** Is it on for [player]? What they chose; and before they have chosen anything, on for the owner alone. */
-    fun on(player: UUID): Boolean = chosen[player] ?: (player == OWNER)
+    /** Is it on for [player]? Only if they turned it on. */
+    fun on(player: UUID): Boolean = chosen[player] ?: false
 
     /** Switches it for [player] and returns what it is now. */
     fun toggle(player: UUID): Boolean {

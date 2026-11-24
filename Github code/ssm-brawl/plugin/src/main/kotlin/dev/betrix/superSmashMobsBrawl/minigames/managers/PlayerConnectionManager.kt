@@ -122,7 +122,8 @@ class DefaultPlayerConnectionManager(private val minigame: BrawlMinigame) :
     private fun checkAndHandleMinigameEnd() {
         if (minigame.getState() == MinigameState.ENDED) return
         if (minigame.host != null && minigame.allPlayers().none {
-                it.isOnline && !isDisconnected(it) && !dev.betrix.superSmashMobsBrawl.bots.BotManager.isBot(it.uniqueId)
+                // (A bot standing in for a player in a test counts as one: its match is not abandoned when another bot leaves it.)
+                it.isOnline && !isDisconnected(it) && (!dev.betrix.superSmashMobsBrawl.bots.BotManager.isBot(it.uniqueId) || it.uniqueId in dev.betrix.superSmashMobsBrawl.bots.BotManager.standIns)
             }) {
             minigame.endMinigame("abandoned")
             return

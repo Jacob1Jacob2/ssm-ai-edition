@@ -93,6 +93,7 @@ class SuperSmashMobsBrawl : SuspendingJavaPlugin(), KoinComponent {
         runCatching { dev.betrix.superSmashMobsBrawl.services.KitStatsService.setup() }.onFailure { logger.warning("Kit stats not loaded: ${it.message}") }
         runCatching { dev.betrix.superSmashMobsBrawl.services.AutoL.setup(dataFolder) }.onFailure { logger.warning("Auto L choices not loaded: ${it.message}") }
         runCatching { dev.betrix.superSmashMobsBrawl.bots.BotMemory.shared.setup(dataFolder) }.onFailure { logger.warning("What the bots remember not loaded: ${it.message}") }
+        runCatching { dev.betrix.superSmashMobsBrawl.services.MiscSettings.setup(dataFolder) }.onFailure { logger.warning("Misc settings not loaded: ${it.message}") }
         dev.betrix.superSmashMobsBrawl.services.LobbyEdits.setup(dataFolder)
         ScoreboardService.setup()
         CombatLogService.setup()

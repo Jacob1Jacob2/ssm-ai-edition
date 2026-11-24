@@ -524,6 +524,33 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
         return send(bot, text, now)
     }
 
+    /**
+     * The bot [bot] has had enough and is about to walk out of the match ([RageQuit]); [killer]
+     * has just killed it. Its last words, if it has any: in a Silent match it leaves without one.
+     */
+    fun rageLine(bot: UUID, killer: UUID?, fighters: List<Fighter>, now: Long): Reply? {
+        if (mode == BotPersonality.SILENT) return null
+        enroll(fighters)
+        val f = fighters.find { it.id == bot && it.bot && talks(it.id) } ?: return null
+        val text = lines.speaker(f, fighters, personalityOf(f.id)).rageQuit(fighters.find { it.id == killer }) ?: return null
+        // Whatever else was about to be said can wait: this is the last thing it types.
+        pending = null
+        val styled = BotSlang.style(text.substringBefore(" / ")).takeIf { it.isNotEmpty() } ?: return null
+        lastSpoke = now; lastBot[f.id] = now
+        recentLines.addLast(styled); while (recentLines.size > 12) recentLines.removeFirst()
+        return Reply(f.id, styled, urgent = true)
+    }
+
+    /** One of the others has something to say about [quitter] having walked out (who is no longer among [fighters]). */
+    fun quitReaction(quitter: Fighter, fighters: List<Fighter>, now: Long): Reply? {
+        if (mode == BotPersonality.SILENT) return null
+        enroll(fighters)
+        if (reactions < 1.0 && random.nextDouble() > 0.7) return null
+        val speaker = BotCharacter.pick(fighters.filter { it.bot && it.id != quitter.id && talks(it.id) }, random) { it.name } ?: return null
+        val text = lines.speaker(speaker, fighters + quitter, personalityOf(speaker.id)).quitReaction(quitter) ?: return null
+        return send(speaker, text, now)
+    }
+
     /** One line of what is said when a match is over, and how long after the line before it. */
     data class Parting(val reply: Reply, val afterMs: Long)
 

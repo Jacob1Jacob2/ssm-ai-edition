@@ -50,6 +50,8 @@ object BotConversationService : KoinComponent, Listener {
         val deaths = HashMap<UUID, Int>()
         val mouthed = HashMap<UUID, MutableSet<String>>()
         val nice = HashSet<UUID>()
+        /** Whether a bot walks out of this match ([RageQuit]): never, unless the host has that turned on. */
+        var rage = RageQuit(kotlin.random.Random.Default, false)
         /** Who the bots have teamed up on, in a Team-Ups match (never anybody in the other modes). */
         val teamUps = TeamUps().also { it.enabled = teamUps }
         private var errorLogged = false
@@ -86,7 +88,10 @@ object BotConversationService : KoinComponent, Listener {
     fun shutdown() { running = false; task?.cancel(); task = null; sessions.keys.toList().forEach(::close); lobbies.clear() }
     fun close(game: BrawlMinigame) { sessions.remove(game)?.let { it.bus.clear(); it.dialogue.clear() } }
     private fun session(game: BrawlMinigame): Session = sessions.getOrPut(game) {
-        Session(game.settings.teamUps).also { it.dialogue.mode = game.settings.botPersonality }
+        Session(game.settings.teamUps).also {
+            it.dialogue.mode = game.settings.botPersonality
+            it.rage = RageQuit(kotlin.random.Random.Default, game.host?.let { host -> MiscSettings.on(host, MiscSettings.Option.RAGE_QUITS) } == true)
+        }
     }
     private fun game(player: Player): BrawlMinigame? = if (!running) null else games.getMinigameForPlayer(player)
         ?.takeIf { it.getState() == MinigameState.IN_PROGRESS }
@@ -110,6 +115,68 @@ object BotConversationService : KoinComponent, Listener {
         s.deaths.merge(victim.uniqueId, 1, Int::plus)
         if (killer != null && killer != victim.uniqueId) s.kills.merge(killer to victim.uniqueId, 1, Int::plus)
         s.bus.publish(FighterDied(victim.uniqueId, killer, ability, now()))
+        // A bot having a bad game may walk out of it, in a match whose host allows that ([RageQuit]).
+        // (Looked at a few ticks on: by then the lives counter has this death in it.)
+        if (BotManager.isBot(victim) && victim.uniqueId !in BotManager.standIns) {
+            val id = victim.uniqueId
+            Bukkit.getScheduler().runTaskLater(plugin, Runnable { considerRage(game, id, killer) }, 4L)
+        }
+    }
+
+    private fun considerRage(game: BrawlMinigame, bot: UUID, killer: UUID?) {
+        if (!running || game.getState() != MinigameState.IN_PROGRESS) return
+        val s = sessions[game] ?: return
+        val me = fighters(game).find { it.id == bot && it.bot } ?: return
+        val player = Bukkit.getPlayer(bot) ?: return
+        // Not a bot on a player's own side: a teammate walking out on them is no fun for anybody.
+        if (game.allPlayers().mapNotNull { it.player }.any {
+                it != player && (!BotManager.isBot(it) || it.uniqueId in BotManager.standIns) && game.arePlayersOnSameTeam(it, player) }) return
+        // (With the chat on Silent a bot is still somebody: it leaves without a word.)
+        val nature = s.dialogue.personalityOf(bot).takeIf { it != BotPersonality.SILENT } ?: BotCharacter.of(me.name).nature
+        val kills = s.kills.filterKeys { it.first == bot }.values.sum()
+        if (s.rage.snaps(nature, s.deaths[bot] ?: 0, kills, me.lives, killer?.let { s.kills[it to bot] } ?: 0)) rageQuit(game, s, player, killer)
+    }
+
+    /**
+     * [bot] has had enough: it says so (unless the bots are Silent), and a moment later it is out
+     * of the match and off the server, like anybody who quits. One of the others may have a word
+     * to say about that.
+     */
+    private fun rageQuit(game: BrawlMinigame, s: Session, bot: Player, killer: UUID?) {
+        val me = fighters(game).find { it.id == bot.uniqueId } ?: return
+        s.dialogue.mode = game.settings.botPersonality
+        val line = s.dialogue.rageLine(bot.uniqueId, killer, fighters(game), now())
+        if (BotManager.debug) plugin.logger.info("[chatdbg] ${me.name} rage quits" + if (line == null) " without a word" else "")
+        line?.let { send(game, it, null) }
+        val wait = (line?.let { BotSlang.typingTicks(it.text) } ?: 0) + 30L
+        Bukkit.getScheduler().runTaskLater(plugin, Runnable {
+            if (!running || !bot.isOnline || games.getMinigameForPlayer(bot) !== game || game.getState() != MinigameState.IN_PROGRESS) return@Runnable
+            // What it remembers of the players it is walking out on: how it stood between them when it left.
+            val map = game.worldManager.getWorld()?.data?.let { it.displayName ?: it.id } ?: ""
+            val people = fighters(game).filter { !it.bot }
+            for (p in people) {
+                val said = s.mouthed[p.id].orEmpty()
+                BotMemory.shared.record(me.name, p.id, s.kills[p.id to me.id] ?: 0, s.kills[me.id to p.id] ?: 0, false, false,
+                    "*" in said || me.name.lowercase() in said, p.id in s.nice, map)
+            }
+            if (people.isNotEmpty()) BotMemory.shared.save()
+            val left = lang.t("messages.players.quitServer") { "playerName" to me.name }
+            game.allPlayers().mapNotNull { it.player }.filter { it.isOnline && !BotManager.isBot(it) }.forEach { it.sendMessage(left) }
+            if (BotManager.debug) plugin.logger.info("[chatdbg] ${me.name} has left the match")
+            game.connectionManager.handlePlayerLeave(bot, "rage_quit")
+            BotManager.despawn(bot)
+            // (Its leaving may have decided the match: then there is nobody left to remark on it.)
+            if (game.getState() == MinigameState.IN_PROGRESS) sessions[game]?.dialogue?.quitReaction(me, fighters(game), now())?.let { send(game, it, null) }
+        }, wait)
+    }
+
+    /** Debug: in every match being played, one bot that still has lives rage quits now, whatever the settings. Returns how many did. */
+    fun forceRageQuit(): Int = sessions.entries.toList().count { (game, s) ->
+        if (game.getState() != MinigameState.IN_PROGRESS) return@count false
+        val alive = fighters(game).filter { it.bot && it.lives > 0 }.mapNotNull { Bukkit.getPlayer(it.id) }
+        val bot = alive.randomOrNull() ?: return@count false
+        rageQuit(game, s, bot, null)
+        true
     }
     /** [killer] said "L" to [victim] after a kill ([AutoL]): a bot it was said to remembers it. */
     fun taunted(killer: Player, victim: Player) {

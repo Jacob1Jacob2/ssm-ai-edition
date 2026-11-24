@@ -878,6 +878,27 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
             listOf("gtg gg all", "last one for me gg", "gotta go cya", "gtg cya", "im off gn", "gg cya all"),
             listOf("im done", "im done with this game", "nah im off", "gtg", "im out", "last one im so done", "ok im leaving"))
 
+        /** This bot has had enough of the match and is walking out of it ([RageQuit]). [killer] has just killed it. */
+        fun rageQuit(killer: BotDialogue.Fighter?): String? {
+            val k = killer?.let(::ref)
+            return say("ragequit",
+                listOf("this lobby is trash im out", "whatever im leaving", "not wasting my time on this", "trash game im out", "yall are boring bye",
+                    "im out this is so bs", "nah im done with this lobby") + (if (k != null) listOf("ok $k u win im out", "have fun $k im leaving") else emptyList()),
+                listOf("gtg gg"),
+                listOf("im done", "nah im out", "im so done with this game", "i quit", "this game is so bad im leaving", "ok im done bye",
+                    "im leaving", "i cant do this anymore bye", "nope im out") +
+                    (if (k != null) listOf("ok $k u win im leaving", "$k im done bye", "im done $k happy now") else emptyList()))
+        }
+
+        /** [quitter] has just walked out of the match. */
+        fun quitReaction(quitter: BotDialogue.Fighter): String? {
+            val n = ref(quitter)
+            return say("quit.reaction",
+                listOf("$n left $lol", "rage quit $lol", "$n rage quit $lol", "bye $n $lol", "and $n is gone", "cya $n $lol", "one down"),
+                listOf("aw $n left", "rip $n", "oh $n left", "gg $n", "did $n just leave"),
+                listOf("wish i could leave too", "$n left ofc", "great now its uneven", "lucky $n", "same honestly"))
+        }
+
         /** What it thinks of the map that was just played. */
         fun mapMoan(map: String): String? = map.lowercase().let { m -> say("mapmoan",
             listOf("$m is so bad", "who picked $m", "trash map", "never $m again", "$m $lol"),

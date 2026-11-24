@@ -267,6 +267,40 @@ class BotDialogueTest : StringSpec({
             stranger.poll(4000, listOf(human, bot, other)) { a, b -> a != b }!!.text.let { it.shouldNotContain("whos trash"); it.shouldNotContain("u were saying") }
         }
     }
+    "a bot walks out of a match only when the host allows it, rarely, one at most, and never a Chill one or one that is doing fine" {
+        // Off: never, whatever happens to it.
+        (0..500).none { RageQuit(Random(it), false).snaps(BotPersonality.SALTY, 3, 0, 1, 3) } shouldBe true
+        // On: in about one match in five, however many chances a match gives, and one bot at most.
+        var matches = 0
+        for (seed in 0..1999) {
+            val r = RageQuit(Random(seed), true)
+            val quits = (1..12).count { r.snaps(BotPersonality.SALTY, 3, 0, 1, 2) }
+            (quits <= 1) shouldBe true
+            if (quits == 1) matches++
+        }
+        (matches in 330..470) shouldBe true
+        for (seed in 0..500) {
+            RageQuit(Random(seed), true).snaps(BotPersonality.CHILL, 3, 0, 1, 3) shouldBe false
+            // Level on kills, dead only once, or already out of the match: not somebody who quits.
+            RageQuit(Random(seed), true).snaps(BotPersonality.SALTY, 2, 2, 2, 1) shouldBe false
+            RageQuit(Random(seed), true).snaps(BotPersonality.SALTY, 1, 0, 3, 1) shouldBe false
+            RageQuit(Random(seed), true).snaps(BotPersonality.TOXIC, 4, 0, 0, 4) shouldBe false
+        }
+    }
+    "a bot that walks out says so in its own voice, unless the bots are Silent, and somebody remarks on it" {
+        for (seed in 0..20) {
+            val last = engine(BotPersonality.SALTY, seed).rageLine(bot.id, human.id, listOf(human, bot, other), 5000)!!
+            last.speaker shouldBe bot.id
+            last.urgent shouldBe true
+            last.text shouldSay "done|out|quit|leaving|bye"
+            last.text shouldBe BotSlang.style(last.text)
+            val after = engine(BotPersonality.TOXIC, seed).quitReaction(bot, listOf(human, other), 9000)!!
+            after.speaker shouldBe other.id
+            after.text shouldSay "left|quit|bye|gone|cya|one down"
+        }
+        engine(BotPersonality.SILENT).rageLine(bot.id, human.id, listOf(human, bot), 5000) shouldBe null
+        engine(BotPersonality.SILENT).quitReaction(bot, listOf(human, other), 9000) shouldBe null
+    }
     "when a match is over a few of the bots say so one after another, the quiet ones included only in a test" {
         for (seed in 0..30) {
             val d = engine(BotPersonality.CHILL, seed)
