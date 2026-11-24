@@ -119,6 +119,23 @@ class LobbyTalkTest : StringSpec({
         // Nobody but the winner is spoken of as the winner.
         seen.filter { it.contains("always wins") || it.contains("got lucky") }.forEach { it shouldSay "jacob" }
     }
+    "back from a match they all won against one player, nobody calls it easy and nobody tells a teammate to cope" {
+        val seen = mutableSetOf<String>()
+        for (mode in listOf(BotPersonality.TOXIC, BotPersonality.SALTY, BotPersonality.CHILL)) for (seed in 0..80) {
+            val l = lobby(mode, seed)
+            l.poll(1000, listOf(dino, fox, mango))
+            l.matchOver(LobbyTalk.LastMatch(1000, "Skylands", listOf(
+                LobbyTalk.Score("Jacob", false, 2, 4, false, "ALONE"), LobbyTalk.Score("Dino", true, 1, 1, true, "ALL"),
+                LobbyTalk.Score("Fox", true, 2, 0, true, "ALL"), LobbyTalk.Score("Mango", true, 1, 1, true, "ALL")),
+                mapOf(("jacob" to "dino") to 1, ("jacob" to "mango") to 1, ("fox" to "jacob") to 2, ("dino" to "jacob") to 1, ("mango" to "jacob") to 1)))
+            seen += l.listen(9000, 40_000).map { it.text }
+        }
+        seen.forEach { line ->
+            Regex("ez game|that was free|too ez|carried|made that ez|close game|finally a good game").containsMatchIn(line) shouldBe false
+            Regex("^(cope|skill issue|cry|excuses|nobody asked)").containsMatchIn(line) shouldBe false
+        }
+        seen.any { "3v1" in it } shouldBe true
+    }
     "somebody who walks in after the match may say hi, and has nothing to say about a match it was not in" {
         val pebble = BotDialogue.Fighter(UUID(0, 6), "Pebble", "", 0, true, false)
         val hellos = mutableSetOf<String>()

@@ -11,8 +11,13 @@ import kotlin.random.Random
  *   starting). Real players do not comment on everything; 1.0 makes them (used by tests). */
 class BotDialogue(private val random: Random = Random.Default, memory: LineMemory = LineMemory.shared,
                   private val reactions: Double = 0.65) {
+    /**
+     * [side]: in a match of two teams, which one this fighter is on; nothing in a free-for-all,
+     * where everybody is on their own. What a bot says has to fit it: seven of them against one
+     * player have nothing to call unfair, and they do not turn on each other over it.
+     */
     data class Fighter(val id: UUID, val name: String, val kit: String, val lives: Int,
-                       val bot: Boolean, val fighting: Boolean = true)
+                       val bot: Boolean, val fighting: Boolean = true, val side: String? = null)
     /** [urgent]: somebody asked for this answer and is waiting for it, so it is typed now, not after the lines before it. */
     data class Reply(val speaker: UUID, val text: String, val urgent: Boolean = false)
     data class Death(val victim: UUID, val killer: UUID?, val ability: String, val time: Long)
@@ -228,7 +233,9 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
                 about = "hold"; who = actor
                 say.hold(actor, request.count, request.detail.toIntOrNull() ?: 0, level, repeated(actor.id)?.first)
             } else null
-            "burst" -> if (enemies(speaker.id, actor!!.id)) say.burst(actor, request.count).also { about = "burst"; who = actor } else null
+            // (Not about somebody who has died since: "that is so unfair" from the bot that then got the kill is nonsense.)
+            "burst" -> if (enemies(speaker.id, actor!!.id) && actor.fighting && deaths.none { it.victim == actor.id && now - it.time < 8000 })
+                say.burst(actor, request.count).also { about = "burst"; who = actor } else null
             "trap" -> if (enemies(speaker.id, actor!!.id)) say.trapped(actor, request.count) else null
             "retreat" -> if (speaker.fighting) {
                 val threat = fighters.find { it.id == request.other && it.fighting }
@@ -241,7 +248,9 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
                 if (a.farmedMe && personalityOf(speaker.id) != BotPersonality.CHILL && human.fighting && enemies(speaker.id, human.id)) owed = human.id
                 say.startKnown(human, a, a.fresh(clock()))
             } ?: say.start(fighters.firstOrNull { !it.bot })
-            "status" -> fighters.filter { it.fighting }.maxByOrNull { it.lives }?.let(say::status)
+            // (About somebody it is up against: "nobody ever hits kin" is not said of a teammate.)
+            "status" -> fighters.filter { it.fighting }.maxByOrNull { it.lives }
+                ?.takeIf { it.id == speaker.id || enemies(speaker.id, it.id) }?.let(say::status)
             else -> null
         } ?: return null
         ambient["${request.kind}:${request.actor}"] = now
@@ -285,6 +294,13 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
         val calm = idle.filter { mood(it) == BotPersonality.CHILL }
         val mean = idle.filter { mood(it) == BotPersonality.TOXIC }
         val sour = idle.filter { mood(it) == BotPersonality.SALTY }
+        // Having a go at each other is for bots that are fighting each other. Two on one team do
+        // not: seven of them against one player bickering over who got hit reads as nonsense.
+        // (In a free-for-all that is everybody, and nothing changes.)
+        fun rival(f: Fighter) = enemies(f.id, speaker.id)
+        val calmRivals = calm.filter(::rival)
+        val meanRivals = mean.filter(::rival)
+        val mates = idle.filter { !rival(it) }
         /** [a] says it is going after [b]: true when the two can actually fight each other. */
         fun feud(a: Fighter, b: Fighter) = a.lives > 0 && b.lives > 0 && enemies(a.id, b.id)
         /**
@@ -335,7 +351,7 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
                 if (answered && mood(aimedAt) == BotPersonality.TOXIC && roll(0.5)) queue(speaker, voice(speaker).comeback(aimedAt, "beef"))
             }
             // 2. A chill bystander steps in, gets told off, and may decide enough is enough.
-            val defender = calm.randomOrNull(random)
+            val defender = calmRivals.randomOrNull(random)
             if (defender != null && about != "retreat" && fresh && roll(0.65) && queue(defender, voice(defender).defend(who, speaker, about))) {
                 lastBanter = now
                 if (roll(0.7) && queue(speaker, voice(speaker).rebuke(defender))) teamUp(speaker, defender)
@@ -343,7 +359,7 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
             }
             if (answered) { lastBanter = now; return }
             // 3. Otherwise another toxic bot laughs at the excuse, or piles on.
-            val heckler = mean.randomOrNull(random)
+            val heckler = meanRivals.randomOrNull(random)
             if (about == "death" && heckler != null && fresh && roll(0.3) && queue(heckler, voice(heckler).mock(speaker, fell))) {
                 lastBanter = now
                 if (roll(0.5)) queue(speaker, voice(speaker).comeback(heckler, "beef"))
@@ -352,7 +368,7 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
             // A complaint (or a grudging "finally" after a kill).
             // 1. A toxic bot rubs it in: the one it was about if there is one, else a bystander.
             //    The salty one snaps and the two go for each other.
-            val heckler = aimedAt?.takeIf { mood(it) == BotPersonality.TOXIC } ?: mean.randomOrNull(random)
+            val heckler = aimedAt?.takeIf { mood(it) == BotPersonality.TOXIC && rival(it) } ?: meanRivals.randomOrNull(random)
             if (heckler != null && about != "kill" && roll(if (fresh) 0.65 else 0.25) &&
                 queue(heckler, voice(heckler).needle(speaker, about, about == "death" && heckler.id == who?.id))) {
                 lastBanter = now
@@ -374,9 +390,11 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
             // 4. Or another salty bot knows the feeling.
             val fellow = sour.randomOrNull(random)
             if (fellow != null && about != "kill" && roll(0.3)) queue(fellow, voice(fellow).sameHere())
+            // 5. Or somebody on its own team backs it up.
+            else pileOn(mates)
         } else {
             // A friendly line. 1. A toxic bot cannot stand it, and the chill one does not take the bait.
-            val hater = (mean + listOfNotNull(aimedAt?.takeIf { mood(it) == BotPersonality.TOXIC })).distinctBy { it.id }.randomOrNull(random)
+            val hater = (meanRivals + listOfNotNull(aimedAt?.takeIf { mood(it) == BotPersonality.TOXIC && rival(it) })).distinctBy { it.id }.randomOrNull(random)
             if (hater != null && about in setOf("kill", "death", "burst", "hold") && fresh && roll(0.45) &&
                 queue(hater, voice(hater).sneer(speaker, about))) {
                 lastBanter = now

@@ -302,6 +302,20 @@ class BotsCommand : KoinComponent {
         plugin.logger.info("[lobbytest] ${BotManager.displayNameOf(bot)} stands in for a player in lobby 1 (${mode.label}, matches of ${players.coerceIn(2, 16)})")
     }
 
+    @Execute(name = "lobbymode")
+    @Description("Debug: the stand-in player of a lobby test sets its match mode (ffa, team_ups, bots_vs_you, teams) and lives, for the match it starts next")
+    fun lobbyMode(@Context sender: CommandSender, @Arg mode: String, @Arg lives: Int) {
+        if (!allowed(sender)) return
+        val value = dev.betrix.superSmashMobsBrawl.services.MatchMode.entries.find { it.name.equals(mode, true) }
+            ?: return sender.sendMessage("Mode is one of ffa, team_ups, bots_vs_you, teams")
+        for (id in BotManager.standIns) {
+            val host = org.bukkit.Bukkit.getPlayer(id) ?: continue
+            val setup = dev.betrix.superSmashMobsBrawl.services.GameSetupService.setupOf(host)
+            setup.matchMode = value; setup.lives = lives.coerceIn(1, 8)
+            plugin.logger.info("[lobbytest] ${BotManager.displayNameOf(host)} sets the mode to ${value.label(setup.players)} with ${setup.lives} lives")
+        }
+    }
+
     @Execute(name = "lobbysay")
     @Description("Debug: the stand-in player of a lobby test says this in chat, in the lobby or in its match ({bot} stands for the name of one of the bots with it)")
     fun lobbySay(@Context sender: CommandSender, @dev.rollczi.litecommands.annotations.join.Join("text") text: String) {

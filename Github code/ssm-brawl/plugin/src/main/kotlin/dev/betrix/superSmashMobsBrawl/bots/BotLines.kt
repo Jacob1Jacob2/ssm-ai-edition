@@ -92,6 +92,15 @@ class BotVoice private constructor(seed: Long) {
  * many lives) and returns one line in that bot's voice; nothing here invents an event.
  * A " / " in a line means the bot sends it as two messages.
  */
+/** Wordings that call the match unfair: not for the side that has the numbers. */
+private val UNFAIR = Regex("unfair|not fair|that fair")
+/** Wordings that call a kill or a win easy: not for a side with twice the numbers. */
+private val BRAG = Regex("\\be+z+\\b|ggez|\\bfree\\b|get good|skill issue|\\bdiff\\b|too strong for u")
+/** Wordings about a whole lobby being after this bot: not with one opponent. */
+private val CROWD = Regex("everyone (goes for|targets|targeted|fought|camp)|everyone on me|fighting 2 ppl|targeted first")
+/** Wordings that send somebody off to fight another fighter: not in a match of two. */
+private val OTHERS = Regex("someone else|nobody else")
+
 class BotLines(private val random: Random, private val memory: LineMemory) {
     /** [personality] is this bot's own: in a Random match the bots in one lobby differ. */
     fun speaker(bot: BotDialogue.Fighter, fighters: List<BotDialogue.Fighter>, personality: BotPersonality) =
@@ -113,6 +122,31 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
         private val lol = voice.lol
         private val names = HashMap<UUID, String>()
         private val myKit get() = BotSlang.kit(bot.kit)
+
+        // The numbers, in a match of two teams: how many are on this bot's side (itself included)
+        // and how many it is up against. In a free-for-all it is one against all the others.
+        private val mates = if (bot.side == null) 1 else 1 + fighters.count { it.id != bot.id && it.side == bot.side }
+        private val foes = fighters.count { it.id != bot.id && (bot.side == null || it.side != bot.side) }
+        /** Its side has the numbers. */
+        private val stacked = foes in 1 until mates
+        /** Its side has at least twice the numbers: nothing it does to the other side is skill. */
+        private val ganging = foes >= 1 && mates >= 2 * foes
+        /** Its side is the smaller one. */
+        private val outnumbered = bot.side != null && mates < foes
+        /** "7v1", its own side first. */
+        private val odds = "${mates}v$foes"
+        private fun mate(f: BotDialogue.Fighter) = bot.side != null && f.side == bot.side && f.id != bot.id
+
+        /**
+         * A wording has to be true of the match it is said in. The side with more fighters does
+         * not call anything unfair, the side with twice as many does not call a kill easy, and
+         * with one opponent there is no "everyone" who is after this bot.
+         */
+        private fun fits(line: String) = !(stacked && UNFAIR.containsMatchIn(line)) && !(ganging && BRAG.containsMatchIn(line)) &&
+            !(foes <= 1 && CROWD.containsMatchIn(line)) && !(fighters.size <= 2 && OTHERS.containsMatchIn(line))
+        /** (Every line of this bot goes through here, [say] included.) */
+        private fun pick(pool: String, options: List<String>, personality: BotPersonality) =
+            this@BotLines.pick(pool, options.filter(::fits), personality)
         /**
          * One line from the pool for this bot's personality. A Salty bot (the complainer) uses its
          * own wording where it has one and otherwise sounds like a Toxic one.
@@ -146,6 +180,15 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
 
         fun start(human: BotDialogue.Fighter?): String? {
             val kit = human?.let { BotSlang.kit(it.kit) }
+            // Lopsided teams: somebody says so, the way anybody would on seeing a 7v1.
+            if (ganging && random.nextDouble() < 0.6) return say("start.ganging",
+                listOf("$odds $lol", "$odds this wont take long", "$odds gl with that $lol", "$odds ok then"),
+                listOf("$odds gl", "$odds is rough gl", "$odds $lol gl", "thats a lot of us $lol gl"),
+                listOf("$odds and ill still die first", "$odds and i bet i still lose", "$odds watch me die anyway"))
+            if (outnumbered && random.nextDouble() < 0.6) return say("start.outnumbered",
+                listOf("$odds ok", "$odds whatever lets go", "$odds $lol ok", "$odds bring it"),
+                listOf("$odds lets try", "$odds gl $lol", "$odds this will be hard gl"),
+                listOf("$odds great", "$odds ofc", "$odds how is that fair", "$odds im so dead"))
             return say("start",
                 listOf("gl", "yo", "lets go", "gl dont camp", "no campers this round pls", "pls actually fight this time",
                     "first one to camp gets reported $lol", "gl no hiding") +
@@ -165,12 +208,16 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
                 listOf("finally", "about time $v", "took way too long", "ok finally one goes my way", "finally $v is out", "thank god"))
             else say("kill",
                 listOf("ez", "ez $v", "ezz", "get rekt", "$v down to $left $lol", "get good $v", "skill issue", "thats $left left $v",
-                    "u good $v? $lol", "free", "sit $v", "too ez", "$v $left lives left keep talking", "ez / skill issue") + withMove,
+                    "u good $v? $lol", "free", "sit $v", "too ez", "$v $left lives left keep talking", "ez / skill issue") + withMove +
+                    (if (ganging) listOf("$odds $lol", "$v had no chance $lol", "nowhere to run $v") else emptyList()) +
+                    (if (outnumbered) listOf("$odds and u still die $lol", "$odds btw $v") else emptyList()),
                 listOf("gf", "nice fight $v", "got u $lol", "gf $v", "close one", "wp") +
-                    if (named(ability)) listOf("that $a finally hit $lol") else emptyList(),
+                    (if (named(ability)) listOf("that $a finally hit $lol") else emptyList()) +
+                    (if (ganging) listOf("sorry $v $odds is rough", "$odds isnt fun for u $v sorry $lol") else emptyList()),
                 listOf("finally", "about time", "finally a hit registers", "see when the game actually works", "took like 5 tries",
                     "ok finally", "one thing goes right for once", "$v still has $left tho ugh") +
-                    if (named(ability)) listOf("finally $a hits something", "$a actually worked for once") else emptyList())
+                    (if (named(ability)) listOf("finally $a hits something", "$a actually worked for once") else emptyList()) +
+                    (if (outnumbered) listOf("finally and its $odds") else emptyList()))
         }
 
         fun diedTo(killer: BotDialogue.Fighter?, ability: String, killerSpams: Boolean): String? {
@@ -187,17 +234,27 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
             val k = ref(killer)
             val withMove = if (named(ability)) listOf("$a is so bs", "nah that $a is broken", "ofc $a", "one $a and hes cocky", "how did that $a hit") else emptyList()
             val spam = if (killerSpams && named(ability)) listOf("$k only knows one button $lol", "all $k does is $a") else emptyList()
+            // Dying to the smaller side, or to the bigger one: the numbers are part of what it says.
+            val numbers = when {
+                stacked -> Triple(listOf("$mates of us and i die $lol", "how is $k still alive", "$odds and $k gets me ok"),
+                    listOf("ok $k is good", "$k is cracked", "$odds and u still got me $lol"),
+                    listOf("theres $mates of us how did i die", "$mates of us and $k still gets me", "$odds and its me who dies ofc"))
+                outnumbered -> Triple(listOf("$odds btw", "$odds ok"), listOf("$odds is hard $lol"),
+                    listOf("$odds what do u expect", "its $odds ofc i die", "$odds is so unfair"))
+                else -> Triple(emptyList(), emptyList(), emptyList())
+            }
             return say("death",
                 listOf("wtf", "bs", "how did that hit", "ok $k", "$bro what", "lucky", "$k got lucky", "ok that was bs", "im lagging",
-                    "that hitbox $lol", "whatever", "bruh", "??", "wtf / how") + withMove + spam,
+                    "that hitbox $lol", "whatever", "bruh", "??", "wtf / how") + withMove + spam + numbers.first,
                 listOf("gf", "ok that was clean", "u got me $lol", "nice one", "wp $k", "oof") +
-                    if (named(ability)) listOf("nice $a $k") else emptyList(),
+                    (if (named(ability)) listOf("nice $a $k") else emptyList()) + numbers.second,
                 listOf("are u kidding", "every time", "im so done", "this is so unfair", "why is it always me", "i cant do anything",
                     "i was one hit off", "nothing i do works", "i had u $k", "my $myKit does nothing", "this kit is so bad", "ofc i die",
                     "i cant even play", "omg", "why do i even try", "are u kidding / i was one hit off", "im so done / every single time") +
                     (if (named(ability)) listOf("$a again really", "im so sick of $a", "$a needs a nerf", "how do u even dodge $a",
                         "i cant do anything about $a") else emptyList()) +
-                    if (killerSpams && named(ability)) listOf("$k just spams $a its not fair", "all i ever see is $a") else emptyList())
+                    (if (killerSpams && named(ability)) listOf("$k just spams $a its not fair", "all i ever see is $a") else emptyList()) +
+                    numbers.third)
         }
 
         fun crystal(holder: BotDialogue.Fighter, tier: String): String? {
@@ -306,23 +363,38 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
                 listOf("how does $n still have ${leader.lives} lives", "$n has ${leader.lives} lives its so over", "nobody ever hits $n"))
         }
 
-        fun won(): String? = say("won", listOf("gg ez", "ez", "ggez", "gg", "too ez", "ez game", "gg get good"), listOf("gg", "gg all", "ggs", "gg wp", "that was fun gg"),
-            listOf("finally", "gg finally", "about time i won one", "gg that was stressful", "ok finally a win"))
+        fun won(): String? = when {
+            // Nobody brags about winning with twice the numbers, and winning against them is worth a word.
+            ganging -> say("won.ganging", listOf("gg", "gg $lol", "ggs", "$odds gg $lol"), listOf("gg", "ggs", "gg wp", "gg that was a lot of us $lol"),
+                listOf("gg", "finally", "gg finally", "ok finally a win"))
+            outnumbered -> say("won.outnumbered", listOf("gg ez", "$odds and ${if (mates > 1) "we" else "i"} won $lol", "ez $odds", "gg get good"),
+                listOf("gg", "gg wp", "$odds and ${if (mates > 1) "we" else "i"} did it $lol", "that was fun gg"),
+                listOf("finally", "gg finally", "finally and it was $odds", "gg that was stressful"))
+            else -> say("won", listOf("gg ez", "ez", "ggez", "gg", "too ez", "ez game", "gg get good"), listOf("gg", "gg all", "ggs", "gg wp", "that was fun gg"),
+                listOf("finally", "gg finally", "about time i won one", "gg that was stressful", "ok finally a win"))
+        }
 
         /** [streak]: how many matches in a row with this bot in them [winner] has now won, as far as it remembers. */
         fun lost(winner: BotDialogue.Fighter, camped: Boolean, streak: Int = 0): String? {
             val w = ref(winner)
             val again = streak >= 2
+            // Losing with the numbers on its side, or against them.
+            val numbers = when {
+                stacked -> Triple(listOf("how did we lose a $odds", "$odds and we lost $lol", "$mates of us and we lost to $w"),
+                    listOf("gg $w that was insane", "$odds and u won wp $w"), listOf("$mates of us and we still lost", "we lost a $odds im done"))
+                outnumbered -> Triple(listOf("$odds gg", "gg it was $odds"), listOf("gg $odds was hard"), listOf("it was $odds what do u expect", "$odds ofc we lose"))
+                else -> Triple(emptyList(), emptyList(), emptyList())
+            }
             return say("lost",
                 listOf("gg", "gg i guess", "ok $w", "whatever gg", "$w got lucky", "rematch", "run it back", "bs game") +
                     (if (camped) listOf("gg $w nice camping", "camped the whole game and won gg") else emptyList()) +
-                    (if (again) listOf("$streak in a row ok $w", "$w again whatever", "someone beat $w pls", "$w wins again wow") else emptyList()),
+                    (if (again) listOf("$streak in a row ok $w", "$w again whatever", "someone beat $w pls", "$w wins again wow") else emptyList()) + numbers.first,
                 listOf("gg $w", "gg wp", "wp $w", "ggs", "gg that was close") +
-                    (if (again) listOf("$w again gg", "$streak in a row $w wp", "$w is on a streak gg") else emptyList()),
+                    (if (again) listOf("$w again gg", "$streak in a row $w wp", "$w is on a streak gg") else emptyList()) + numbers.second,
                 listOf("gg i guess", "ofc", "i never win", "this game hates me", "gg whatever i had the worst luck", "i was lagging the whole game",
                     "everyone targeted me all game", "i hate this kit", "im done") +
                     (if (camped) listOf("$w camped all game ofc", "cant win when $w hides the whole time") else emptyList()) +
-                    (if (again) listOf("$w wins every game", "$streak in a row how", "ofc $w again", "does $w ever lose") else emptyList()))
+                    (if (again) listOf("$w wins every game", "$streak in a row how", "ofc $w again", "does $w ever lose") else emptyList()) + numbers.third)
         }
 
         /** A second bot backing up what another bot just said. */
@@ -729,11 +801,15 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
         fun neverHit(p: BotDialogue.Fighter) = say("neverhit",
             listOf("i havent even hit u", "i didnt touch u", "wasnt me", "$bro i havent hit u once", "im not even near u"),
             listOf("wasnt me ${ref(p)}", "i havent hit u", "not me $lol"))
-        fun manyHit(p: BotDialogue.Fighter, attackers: Int) = say("manyhit",
+        /** Two teams: why this bot and the rest of its side are all on [p]. It is not a free-for-all, and it does not say it is. */
+        private fun sidedWhy(p: BotDialogue.Fighter) = say("sided.why",
+            listOf("its $odds $bro", "its $odds thats the mode", "were a team $lol", "its teams $bro", "thats what $odds means $lol", "ur on the other team $lol"),
+            listOf("its $odds sorry $lol", "thats the mode ${ref(p)}", "were a team sorry", "its teams nothing personal $lol"))
+        fun manyHit(p: BotDialogue.Fighter, attackers: Int) = if (bot.side != null) sidedWhy(p) else say("manyhit",
             listOf("$attackers of us hit u its ffa", "its ffa $bro", "ur just in the middle of it $lol", "$attackers ppl hit u thats not a team thats ffa",
                 "everyone hits everyone its not teaming"),
             listOf("its just a messy fight ${ref(p)}", "$attackers of us were there not teaming", "ffa things $lol"))
-        fun opponents(p: BotDialogue.Fighter) = say("opponents",
+        fun opponents(p: BotDialogue.Fighter) = if (bot.side != null) sidedWhy(p) else say("opponents",
             listOf("its ffa", "ur the closest", "im allowed to hit u $lol", "thats the game $bro", "cry", "stop being close to me then", "nobody else is near me"),
             listOf("ur just closest $lol", "nothing personal ${ref(p)}", "its ffa sorry"))
 
@@ -792,7 +868,9 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
             listOf("we can switch kits next round", "sorry $lol", "its just a game"))
 
         fun aboutSpam(ability: String) = move(ability).let { a -> say("about.spam", listOf("the $a", "im talking about $a", "$a $bro", "u know what"), listOf("the $a $lol", "i meant $a")) }
-        fun aboutTargeting() = say("about.target", listOf("bc its ffa", "bc ur there", "nothing personal"), listOf("just the fight", "no hard feelings"))
+        fun aboutTargeting() = if (bot.side != null) say("about.target.sided", listOf("bc its $odds", "bc were a team", "thats the mode"),
+                listOf("its just the mode", "no hard feelings its $odds"))
+            else say("about.target", listOf("bc its ffa", "bc ur there", "nothing personal"), listOf("just the fight", "no hard feelings"))
         fun aboutFighting() = say("about.fight", listOf("then come", "stop typing and fight", "less typing more fighting", "im waiting"), listOf("ready when u are", "lets go then"))
         fun aboutFun() = say("about.fun", listOf("to win", "same reason as u", "bc winning"), listOf("were both trying to win $lol"))
         fun aboutScore(p: BotDialogue.Fighter) = say("about.score", listOf("this round ${p.lives} to ${bot.lives}", "the score ${p.lives} to ${bot.lives}"),
@@ -893,6 +971,11 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
         /** [quitter] has just walked out of the match. */
         fun quitReaction(quitter: BotDialogue.Fighter): String? {
             val n = ref(quitter)
+            // (One of its own team walking out is not "one down".)
+            if (mate(quitter)) return say("quit.mate",
+                listOf("$n left us $lol", "great $n left", "thx for leaving $n", "and now were down one", "$bro $n just left us"),
+                listOf("aw $n left", "oh $n left", "rip were down one", "did $n just leave"),
+                listOf("ofc $n leaves", "great now its even harder", "$n left us wow", "wish i could leave too"))
             return say("quit.reaction",
                 listOf("$n left $lol", "rage quit $lol", "$n rage quit $lol", "bye $n $lol", "and $n is gone", "cya $n $lol", "one down"),
                 listOf("aw $n left", "rip $n", "oh $n left", "gg $n", "did $n just leave"),
@@ -942,19 +1025,32 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
          * Back in the lobby after a match this bot was in. [winner] is who won it (null: this bot
          * did), [kills] and [deaths] its own, and [nemesis] whoever killed it most, [times] times.
          */
-        fun lobbyAfter(winner: BotDialogue.Fighter?, kills: Int, deaths: Int, nemesis: BotDialogue.Fighter?, times: Int): String? {
+        fun lobbyAfter(winner: BotDialogue.Fighter?, kills: Int, deaths: Int, nemesis: BotDialogue.Fighter?, times: Int,
+                       sided: Pair<Int, Int>? = null): String? {
             val w = winner?.let(::ref)
             val x = nemesis?.takeIf { times >= 2 && it.id != winner?.id }?.let(::ref)
-            val toxic = (if (w == null) listOf("ez game", "that was free", "too ez", "carried that lobby", "yall made that ez") +
+            // [sided]: that match was two teams, with this many on this bot's side and on the other.
+            // Winning it with twice the numbers is nothing to brag about, and losing it with more is.
+            val m = sided?.first ?: 1; val f = sided?.second ?: 0
+            val was = "${m}v$f"
+            val gang = sided != null && f >= 1 && m >= 2 * f
+            val more = sided != null && f in 1 until m
+            val toxic = (if (w == null) (if (gang) listOf("$was $lol", "that was quick", "$was isnt even a game $lol")
+                        else listOf("ez game", "that was free", "too ez", "carried that lobby", "yall made that ez")) +
                     (if (kills >= 2) listOf("$kills kills $lol") else emptyList())
-                else listOf("$w got lucky", "$w only won bc everyone fought me", "rematch $w", "$w wont win again", "that game was bs")) +
+                else listOf("$w got lucky", "rematch $w", "$w wont win again", "that game was bs") +
+                    (if (sided == null) listOf("$w only won bc everyone fought me") else emptyList()) +
+                    (if (more) listOf("how did we lose a $was", "$w beat $m of us ok") else emptyList())) +
                 if (x != null) listOf("$x only went for me", "$x killed me $times times / ur first next game", "why u targeting me $x") else emptyList()
-            val chill = (if (w == null) listOf("that was fun", "that was a good one", "ggs all", "close game")
-                else listOf("gg $w", "$w was cracked", "wp $w that was clean", "$w deserved that one", "good game $w")) +
+            val chill = (if (w == null) listOf("that was fun", "that was a good one", "ggs all") +
+                    (if (gang) listOf("that was a lot of us $lol", "$was was rough on them") else listOf("close game"))
+                else listOf("gg $w", "$w was cracked", "wp $w that was clean", "$w deserved that one", "good game $w") +
+                    (if (more) listOf("$w beat $m of us wp") else emptyList())) +
                 if (x != null) listOf("$x got me $times times $lol", "$x u had my number") else emptyList()
-            val salty = (if (w == null) listOf("finally won one", "ok that felt good", "about time", "finally a good game")
+            val salty = (if (w == null) listOf("finally won one", "ok that felt good", "about time") + (if (gang) emptyList() else listOf("finally a good game"))
                 else listOf("i was so close", "$w always wins", "i had no chance", "that game was so bad") +
-                    (if (deaths >= 2) listOf("i died $deaths times how") else emptyList())) +
+                    (if (deaths >= 2) listOf("i died $deaths times how") else emptyList()) +
+                    (if (more) listOf("$m of us and we still lost") else emptyList())) +
                 if (x != null) listOf("$x killed me $times times", "$x wouldnt leave me alone", "$x targeted me all game", "why always me $x") else emptyList()
             return say("lobby.after", toxic, chill, salty)
         }
@@ -980,7 +1076,10 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
         }
 
         /** A word from a second bot after something another one said in the lobby. [sour]: that was a complaint or a boast. */
-        fun lobbyEcho(sour: Boolean): String? = if (sour) say("lobby.echo.sour",
+        fun lobbyEcho(sour: Boolean, mate: Boolean = false): String? =
+            // ([mate]: the two were on one team in the match it is about. They agree; they do not tell each other to cope.)
+            if (sour && mate) say("lobby.echo.mate", listOf("fr", "real", "$lol", "facts"), listOf("fr", "ya", "lol", "true"), listOf("fr", "same", "ikr"))
+            else if (sour) say("lobby.echo.sour",
                 listOf("cope", "$lol", "nobody asked", "skill issue", "cry", "sure $lol", "excuses"),
                 listOf("lol", "it was close tho", "next one", "gg tho", "u played fine", "happens"),
                 listOf("same", "fr", "same here", "ikr", "this game $lol"))

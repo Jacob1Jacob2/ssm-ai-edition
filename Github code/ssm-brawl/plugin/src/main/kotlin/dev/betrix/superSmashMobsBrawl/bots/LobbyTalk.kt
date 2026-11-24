@@ -23,7 +23,8 @@ class LobbyTalk(private val random: Random = Random.Default, memory: LineMemory 
                 private val clock: () -> Long = System::currentTimeMillis,
                 private val eager: Boolean = false) {
     /** How somebody did in the last match played out of this lobby. */
-    data class Score(val name: String, val bot: Boolean, val kills: Int, val deaths: Int, val won: Boolean)
+    /** [side]: the team it was on, in a match of two teams ([BotDialogue.Fighter.side]). */
+    data class Score(val name: String, val bot: Boolean, val kills: Int, val deaths: Int, val won: Boolean, val side: String? = null)
 
     /**
      * The last match played out of this lobby: when it ended (on the clock [poll] is called
@@ -191,7 +192,9 @@ class LobbyTalk(private val random: Random = Random.Default, memory: LineMemory 
                 val worst = match.kills.filterKeys { it.second == speaker.name.lowercase() }.maxByOrNull { it.value }
                 val nemesis = worst?.let { w -> match.scores.find { it.name.lowercase() == w.key.first } }?.let { person(it, members) }
                 // (With nobody to name as the winner there is nothing true to say about losing to them.)
-                if (!mine.won && winner == null) null else say.lobbyAfter(winner, mine.kills, mine.deaths, nemesis, worst?.value ?: 0)
+                // (Two teams: how many were on its side and on the other.)
+                val sided = mine.side?.let { s -> match.scores.count { it.side == s } to match.scores.count { it.side != s } }
+                if (!mine.won && winner == null) null else say.lobbyAfter(winner, mine.kills, mine.deaths, nemesis, worst?.value ?: 0, sided)
             }
             // (Somebody who was not in it has no opinion of the map it was on.)
             else -> say.lobbyWait(people.first())
@@ -202,7 +205,8 @@ class LobbyTalk(private val random: Random = Random.Default, memory: LineMemory 
         val reply = send(speaker, text ?: return null, now)
         // (What is said back about the match comes from somebody else who was in it.)
         val other = pick((if (sour) played else talkers).filter { it.id != speaker.id })
-        if (other != null && chance(0.35)) later(other, voice(other, members).lobbyEcho(sour), now, 1500, 3500)
+        val mate = mine?.side?.let { s -> match?.scores?.find { it.bot && it.name.equals(other?.name, true) }?.side == s } == true
+        if (other != null && chance(0.35)) later(other, voice(other, members).lobbyEcho(sour, mate), now, 1500, 3500)
         return reply
     }
 

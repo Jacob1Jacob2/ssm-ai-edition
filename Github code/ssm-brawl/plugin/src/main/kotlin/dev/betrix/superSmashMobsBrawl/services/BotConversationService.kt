@@ -355,7 +355,7 @@ object BotConversationService : KoinComponent, Listener {
         }
         BotMemory.shared.save()
         val names = facts.associate { it.id to it.name.lowercase() }
-        val scores = facts.map { f -> LobbyTalk.Score(f.name, f.bot, s.kills.filterKeys { it.first == f.id }.values.sum(), s.deaths[f.id] ?: 0, f.id in winners) }
+        val scores = facts.map { f -> LobbyTalk.Score(f.name, f.bot, s.kills.filterKeys { it.first == f.id }.values.sum(), s.deaths[f.id] ?: 0, f.id in winners, f.side) }
         val kills = HashMap<Pair<String, String>, Int>()
         s.kills.forEach { (pair, count) -> val a = names[pair.first]; val b = names[pair.second]; if (a != null && b != null) kills[a to b] = count }
         lobby(game.lobbyId).talk.matchOver(LobbyTalk.LastMatch(now(), map, scores, kills))
@@ -429,7 +429,9 @@ object BotConversationService : KoinComponent, Listener {
             val kit = KitService.getKitForPlayer(p)?.id ?: KitService.currentSelectedKitForPlayer(p).id
             BotDialogue.Fighter(p.uniqueId, BotManager.displayNameOf(p), plain.serialize(lang.t("kits.$kit.name")),
                 (game.teamManager.findTeamOf(p)?.metadata?.get("stocks") as? Int ?: 0).coerceAtLeast(0),
-                BotManager.isBot(p) && p.uniqueId !in BotManager.standIns, p.gameMode == GameMode.SURVIVAL && !game.respawnManager.isRespawning(p))
+                BotManager.isBot(p) && p.uniqueId !in BotManager.standIns, p.gameMode == GameMode.SURVIVAL && !game.respawnManager.isRespawning(p),
+                // Which side it is on: the two teams of a Teams match, or the bots and the player they are all against.
+                game.sideOf(p)?.name ?: game.host?.takeIf { game.settings.allBotsVsPlayer }?.let { host -> if (p.uniqueId == host) "ALONE" else "ALL" })
         }
     private fun tick() {
         if (!running) return

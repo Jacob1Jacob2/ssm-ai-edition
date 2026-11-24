@@ -407,16 +407,116 @@ class BotDialogueTest : StringSpec({
         (snapped > 60) shouldBe true
         (mutual > 30) shouldBe true
     }
-    "teammates can argue but never get a grudge against each other" {
+    // ---------------------------------------------------------------- two teams (the user's 7v1)
+
+    // Seven bots on one side, one player on the other: what the user was looking at when a bot
+    // called a combo "so unfair" and two of the seven then told each other to shut up.
+    val lone = human.copy(name = "Jacob1Jacob2", side = "RED")
+    val seven = listOf("sebas1en" to BotPersonality.SALTY, "KinTheInfinite" to BotPersonality.TOXIC, "HotCold" to BotPersonality.CHILL,
+        "Thundr" to BotPersonality.TOXIC, "Vespherous" to BotPersonality.SALTY, "ExpiredRock" to BotPersonality.CHILL,
+        "Charlie_Skirk" to BotPersonality.TOXIC).mapIndexed { i, (name, _) ->
+            BotDialogue.Fighter(UUID(7, i.toLong()), name, listOf("Skeleton", "Wolf", "Guardian", "Creeper", "Pig", "Squid", "Zombie")[i], 4, true, side = "BLUE") }
+    val moods = listOf(BotPersonality.SALTY, BotPersonality.TOXIC, BotPersonality.CHILL, BotPersonality.TOXIC, BotPersonality.SALTY,
+        BotPersonality.CHILL, BotPersonality.TOXIC)
+    val sevenVsOne = listOf(lone) + seven
+    fun sided(seed: Int) = engine(BotPersonality.RANDOM, seed).also { d -> seven.forEachIndexed { i, f -> d.assign(f.id, moods[i]) } }
+    fun BotDialogue.hear(from: Long, until: Long, facts: List<BotDialogue.Fighter>): List<BotDialogue.Reply> {
+        val side = facts.associate { it.id to it.side }
+        return (from..until step 250).mapNotNull { poll(it, facts) { a, b -> side[a] != side[b] } }
+    }
+    // Everything one bot says to wind up, tell off or laugh at another.
+    val hostile = Regex("shut up|cry|whining|stay mad|skill issue|excuses|complaining|tissue|^mad\\?|called a combo|learn to dodge|stood still|" +
+        "sick of u|thats it|ur dead|coming for u|say that again|ur first|ur next|done with u|come then|come get me|so scared|nobody asked|" +
+        "stay out of it|who asked|chill |relax|calm down|not that deep|breathe|why so salty|so mad|u problem|go hit them")
+
+    "bots on one team do not have a go at each other, and nobody is hunted for it" {
+        var complaints = 0; var backed = 0
+        for (seed in 0..300) {
+            val d = sided(seed)
+            // The player lands a combo on sebas1en, or kills it.
+            if (seed % 2 == 0) d.burst(seven[0].id, lone.id, 3, 1000) else d.death(seven[0].id, lone.id, "Chicken Missile", 1000)
+            val said = d.hear(1500, 25_000, sevenVsOne)
+            if (said.firstOrNull()?.speaker != seven[0].id) continue
+            complaints++
+            said.drop(1).filter { it.speaker != seven[0].id }.forEach { hostile.containsMatchIn(it.text) shouldBe false }
+            if (said.any { it.speaker != seven[0].id }) backed++
+            seven.forEach { d.grudge(it.id, 25_000) shouldBe null }
+        }
+        (complaints > 100) shouldBe true
+        // They are not silent about it either: now and then a teammate has a word of its own.
+        (backed > 5) shouldBe true
+    }
+    "the side with the numbers calls nothing unfair and no kill easy, and one opponent is not everyone" {
+        val said = mutableListOf<String>()
+        for (seed in 0..400) {
+            val d = sided(seed)
+            val who = seven[seed % 7]
+            when (seed % 5) {
+                0 -> d.burst(who.id, lone.id, 3, 1000)
+                1 -> d.death(who.id, lone.id, "Chicken Missile", 1000)
+                2 -> d.death(lone.id, who.id, "Bone Rush", 1000)
+                3 -> d.holding(lone.id, who.id, 25, 1, 1000)
+                else -> d.start(1000)
+            }
+            said += d.hear(1500, 25_000, sevenVsOne).map { it.text }
+            said += d.finishAll(if (seed % 2 == 0) seven.map { it.id }.toSet() else setOf(lone.id), sevenVsOne, 60_000).map { it.reply.text }
+        }
+        (said.size > 600) shouldBe true
+        said.forEach { line ->
+            Regex("unfair|not fair|that fair").containsMatchIn(line) shouldBe false
+            Regex("\\be+z+\\b|ggez|\\bfree\\b|get good|skill issue").containsMatchIn(line) shouldBe false
+            Regex("everyone (goes for|targets|targeted|fought)|everyone on me|fighting 2 ppl|targeted first").containsMatchIn(line) shouldBe false
+        }
+        // And the numbers are something they talk about.
+        (said.count { "7v1" in it || "7 of us" in it } > 20) shouldBe true
+    }
+    "a bot that has since killed whoever comboed it does not complain about the combo" {
         for (seed in 0..150) {
-            val d = engine(BotPersonality.RANDOM, seed)
-            d.assign(bot.id, BotPersonality.TOXIC); d.assign(other.id, BotPersonality.SALTY)
-            val facts = listOf(human, bot, other)
-            // Fox dies to the human while Dino, on Fox's team, watches and may rub it in.
-            d.death(other.id, human.id, "Chicken Missile", 1000)
-            (1500L..20_000L step 250).forEach { d.poll(it, facts) { a, b -> setOf(a, b) != setOf(bot.id, other.id) } }
-            d.grudge(bot.id, 20_000) shouldBe null
-            d.grudge(other.id, 20_000) shouldBe null
+            val d = sided(seed)
+            d.burst(seven[0].id, lone.id, 3, 1000)
+            d.death(lone.id, seven[0].id, "Bone Rush", 2400)
+            val said = d.hear(2500, 20_000, listOf(lone.copy(fighting = false)) + seven)
+            said.forEach { Regex("unfair|hack|reported|couldnt|cant even hit|how do i even fight|no time to react|hits").containsMatchIn(it.text) shouldBe false }
+        }
+    }
+    "the smaller side may say what it is up against, and a team that loses a bot does not call it one down" {
+        val alone = seven[0].copy(side = "RED")
+        val facts = listOf(alone) + (1..3).map { human.copy(id = UUID(8, it.toLong()), name = "P$it", side = "BLUE") }
+        val said = (0..200).mapNotNull { seed ->
+            val d = engine(BotPersonality.SALTY, seed)
+            d.death(alone.id, facts[1].id, "Chicken Missile", 1000)
+            d.hear(1500, 6000, facts).firstOrNull()?.text
+        }
+        (said.count { "1v3" in it } > 5) shouldBe true
+        for (seed in 0..60) {
+            val d = sided(seed)
+            d.quitReaction(seven[0], sevenVsOne.filter { it.id != seven[0].id }, 5000)?.let { it.text.shouldNotContain("one down") }
+        }
+    }
+    "told to stop teaming in a match of two teams, a bot does not answer that it is a free-for-all" {
+        var answered = 0
+        for (seed in 0..120) {
+            val d = sided(seed)
+            seven.take(3).forEach { d.damage(it.id, lone.id, 900) }
+            d.chat(lone.id, if (seed % 2 == 0) "stop teaming on me" else "7v1 really", 1000)
+            val said = d.hear(1500, 12_000, sevenVsOne)
+            if (said.isNotEmpty()) answered++
+            said.forEach { it.text.shouldNotContain("ffa"); it.text.shouldNotContain("not teaming"); it.text.shouldNotContain("messy fight") }
+        }
+        (answered > 60) shouldBe true
+    }
+    "with one opponent nobody says the whole lobby is after them" {
+        for (seed in 0..300) {
+            val d = engine(BotPersonality.SALTY, seed)
+            when (seed % 4) {
+                0 -> d.start(1000)
+                1 -> d.death(bot.id, human.id, "Chicken Missile", 1000)
+                2 -> d.retreat(bot.id, human.id, 1000)
+                else -> d.holding(human.id, bot.id, 45, 1, 1000)
+            }
+            val said = d.listen(1500, 12_000, listOf(human, bot)) + listOfNotNull(d.finish(setOf(human.id), listOf(human, bot), 40_000))
+            // (Nor is there anybody else to send them off to.)
+            said.forEach { it.text.shouldNotContain("everyone"); it.text.shouldNotContain("someone else") }
         }
     }
     "a salty bot complains about what happened to it, and a toxic bystander rubs it in" {
