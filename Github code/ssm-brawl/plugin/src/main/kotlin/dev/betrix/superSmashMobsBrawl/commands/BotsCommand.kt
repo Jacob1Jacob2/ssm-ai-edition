@@ -311,6 +311,23 @@ class BotsCommand : KoinComponent {
         if (sender is Player) sender.sendMessage(status)
     }
 
+    @Execute(name = "botchat")
+    @Description("What Bot Chat in Misc Settings does, from the console: writer script|small|big|auto, filter on|off, word <a word to block>, unword <a word to let through again>")
+    fun botChat(@Context sender: CommandSender, @Arg what: String, @dev.rollczi.litecommands.annotations.join.Join("value") value: String) {
+        if (!allowed(sender)) return
+        val chat = dev.betrix.superSmashMobsBrawl.services.ChatModelService
+        val done = when (what.lowercase()) {
+            "writer" -> dev.betrix.superSmashMobsBrawl.services.ChatModelService.Writer.entries.find { it.key == value.lowercase() }
+                ?.let { if (chat.has(it)) { chat.pick(it); "writer ${it.key}" } else "${it.key} is not installed on this server" } ?: "a writer is one of script, small, big, auto"
+            "filter" -> when (value.lowercase()) { "on" -> { chat.filtering(true); "word filter on" }; "off" -> { chat.filtering(false); "word filter off" }; else -> "filter on, or filter off" }
+            "word" -> chat.addWord(value)?.let { "the bots will not say \"$it\"" } ?: "that cannot be added"
+            "unword" -> { chat.removeWord(value.trim().lowercase()); "taken out of the filter" }
+            else -> "writer, filter, word or unword"
+        }
+        plugin.logger.info("[chatai] Bot Chat: $done")
+        if (sender is Player) sender.sendMessage("Bot Chat: $done")
+    }
+
     @Execute(name = "lobbymode")
     @Description("Debug: the stand-in player of a lobby test sets its match mode (ffa, team_ups, bots_vs_you, teams) and lives, for the match it starts next")
     fun lobbyMode(@Context sender: CommandSender, @Arg mode: String, @Arg lives: Int) {
@@ -356,7 +373,7 @@ class BotsCommand : KoinComponent {
     }
 
     @Execute(name = "misctest")
-    @Description("Debug: opens Game Settings for a bot, goes into Misc Settings, clicks its three switches and Back, says no to the resource pack for it, and logs what the slots hold and what each click changed as [misctest]")
+    @Description("Debug: opens Game Settings for a bot, goes into Misc Settings, clicks its switches, goes through Bot Chat as an operator would (and is kept out of it as anybody else), says no to the resource pack for it, and logs what the slots hold and what each click changed as [misctest]")
     fun miscTest(@Context sender: CommandSender) {
         if (!allowed(sender)) return
         val profile = BotManager.rosterProfiles().firstOrNull() ?: return sender.sendMessage("The roster is empty")
@@ -385,12 +402,36 @@ class BotsCommand : KoinComponent {
             log("opened '${title()}'; slot 50: ${describe(50)}; slot 51: ${describe(51)}; slot 52: ${describe(52)}")
             log("before anything is clicked: ${state()}")
             click(51); log("click slot 51 -> '${title()}', ${top().size} slots")
-            listOf(11, 13, 15, 18).forEach { log("slot $it: ${describe(it)}") }
-            click(11); log("click Auto L -> ${state()}; slot 11: ${describe(11)}")
-            click(13); log("click Bot Rage Quits -> ${state()}; slot 13: ${describe(13)}")
-            click(15); log("click Resource Pack -> ${state()}; slot 15: ${describe(15)}")
-            click(15); log("click Resource Pack again -> ${state()}; slot 15: ${describe(15)}")
-            click(11); click(13); log("Auto L and Bot Rage Quits clicked back -> ${state()}")
+            listOf(10, 12, 14, 16, 18).forEach { log("slot $it: ${describe(it)}") }
+            click(10); log("click Auto L -> ${state()}; slot 10: ${describe(10)}")
+            click(12); log("click Bot Rage Quits -> ${state()}; slot 12: ${describe(12)}")
+            click(14); log("click Resource Pack -> ${state()}; slot 14: ${describe(14)}")
+            click(14); log("click Resource Pack again -> ${state()}; slot 14: ${describe(14)}")
+            click(10); click(12); log("Auto L and Bot Rage Quits clicked back -> ${state()}")
+            // Bot Chat is the server's: it does not open for somebody who is not an operator...
+            click(16); log("click Bot Chat, not an operator -> still '${title()}'")
+            // ...and for one it does.
+            val chat = dev.betrix.superSmashMobsBrawl.services.ChatModelService
+            val menu = dev.betrix.superSmashMobsBrawl.services.BotChatMenu
+            fun picked() = "picked ${chat.writer.key}, word filter ${if (chat.filtering) "on" else "off"}, own words ${chat.ownWords()}"
+            val before = chat.writer
+            menu.standIns += bot.uniqueId
+            dev.betrix.superSmashMobsBrawl.services.MiscSettings.openMenu(bot)
+            log("as an operator, slot 16: ${describe(16)}")
+            click(16); log("click Bot Chat -> '${title()}', ${top().size} slots; ${picked()}")
+            listOf(4, 10, 11, 12, 13, 15, 16, 17, 18).forEach { log("slot $it: ${describe(it)}") }
+            click(10); log("click Script -> ${picked()}; slot 10: ${describe(10)}; slot 4: ${describe(4)}")
+            click(15); log("click Word Filter -> ${picked()}; slot 15: ${describe(15)}")
+            click(15); log("click Word Filter again -> ${picked()}; slot 15: ${describe(15)}")
+            click(16); log("click Add Word -> menu closed: ${title() != dev.betrix.superSmashMobsBrawl.services.BotChatMenu.TITLE}")
+            menu.typed(bot, "Test Word"); log("typed \"Test Word\" -> '${title()}'; ${picked()}; slot 17: ${describe(17)}")
+            menu.typed(bot, "no!"); log("typed \"no!\" (not a word) -> ${picked()}")
+            click(17); log("click Your Words -> '${title()}'; slot 0: ${describe(0)}")
+            click(0); log("click the word -> ${picked()}; slot 22: ${describe(22)}")
+            click(45); log("click Back -> '${title()}'")
+            if (chat.has(before)) chat.pick(before)
+            click(18); log("click Back -> '${title()}'; ${picked()}")
+            menu.standIns -= bot.uniqueId
             click(18); log("click Back -> '${title()}'")
             bot.closeInventory()
             // Saying no to the pack: no kick, and it is not asked for again until they turn it on.

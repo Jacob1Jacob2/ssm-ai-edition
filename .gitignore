@@ -51,6 +51,9 @@ advancements/
 # where the local chat model and its runner are on this PC, and what the runner printed
 /test-server/plugins/super-smash-mobs-brawl/chat-model.properties
 /test-server/plugins/super-smash-mobs-brawl/chat-model.log
+# what is picked in Bot Chat (Misc Settings), and the words the owner added to the word filter
+/test-server/plugins/super-smash-mobs-brawl/bot-chat.properties
+/test-server/plugins/super-smash-mobs-brawl/bot-chat-words.txt
 # every event of every match of a /bots balance run: megabytes each; the reports made from them are in /reports
 /test-server/plugins/super-smash-mobs-brawl/item-stats/
 # worlds of finished matches

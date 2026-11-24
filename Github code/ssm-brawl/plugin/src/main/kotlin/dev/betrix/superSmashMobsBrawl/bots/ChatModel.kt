@@ -44,10 +44,12 @@ class ChatModel(base: String, private val timeoutMs: Long = 1500, private val mo
      * One short answer to [user] under [system], or null. The model stops at the end of the line.
      * [shots] are questions and answers it is shown as a conversation already had, before the real
      * one: the same every time, so the server keeps them in mind and only reads what is new.
-     * [seed] makes it repeatable (tests); otherwise each answer is a new roll.
+     * [seed] makes it repeatable (tests); otherwise each answer is a new roll. [patienceMs] is for
+     * the one question nobody is waiting on: the first after a model is loaded, which has all of
+     * [system] and [shots] to read before the server can keep them in mind.
      */
     fun complete(system: String, user: String, shots: List<Pair<String, String>> = emptyList(), maxTokens: Int = 40, temperature: Double = 1.0,
-                 seed: Long? = null): CompletableFuture<String?> {
+                 seed: Long? = null, patienceMs: Long? = null): CompletableFuture<String?> {
         if (busy.incrementAndGet() > most) { busy.decrementAndGet(); return CompletableFuture.completedFuture(null) }
         val body = buildJsonObject {
             putJsonArray("messages") {
@@ -65,7 +67,7 @@ class ChatModel(base: String, private val timeoutMs: Long = 1500, private val mo
             put("cache_prompt", true)
             if (seed != null) put("seed", seed)
         }.toString()
-        val request = HttpRequest.newBuilder(URI.create("$root/v1/chat/completions")).timeout(Duration.ofMillis(timeoutMs))
+        val request = HttpRequest.newBuilder(URI.create("$root/v1/chat/completions")).timeout(Duration.ofMillis(patienceMs ?: timeoutMs))
             .header("Content-Type", "application/json; charset=utf-8").POST(HttpRequest.BodyPublishers.ofString(body, Charsets.UTF_8)).build()
         return http.sendAsync(request, HttpResponse.BodyHandlers.ofString(Charsets.UTF_8)).handle { response, error ->
             busy.decrementAndGet()

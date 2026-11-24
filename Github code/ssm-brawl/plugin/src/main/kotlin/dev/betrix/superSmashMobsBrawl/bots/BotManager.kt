@@ -187,6 +187,8 @@ object BotManager : KoinComponent {
     fun onlineBots(): List<Player> = bots.values.map { it.nms.bukkitEntity }
 
     fun isLobbyBot(player: Player): Boolean = bots[player.uniqueId]?.lobbyPreview == true
+    /** A bot of a match a debug command started ([startBotGame]): it is that match's, whichever lobby it stands in on its way there. */
+    fun isTestBot(player: Player): Boolean = bots[player.uniqueId]?.testBot == true
     fun isReserved(player: Player): Boolean = player.uniqueId in pendingBots || QueueService.getQueueEntry(player) != null || minigameService.isPlayerInMinigame(player)
     fun claimLobbyBot(player: Player, kitId: String?) {
         val bot = bots[player.uniqueId] ?: return

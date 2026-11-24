@@ -40,7 +40,7 @@ object ChatPrompt {
         - kids in a game lobby, not an assistant: no "hey there", no explaining, no advice, no emojis, no hashtags, no quotation marks
         - they call people by name, by a short form of the name, by their kit ("chicken", "skeleton"), or just "u". never "he" or "she"
         - they only talk about what really happened: never make up a kill, a number, a name or an event that is not in the facts you were given
-        - trash talk is about the game only: skill, luck, camping, spamming one ability, hacks, lag. never slurs, no swear words spelled out, nothing sexual, nothing about real life or family, never tell anybody to hurt themselves
+        - trash talk is about the game only: skill, luck, camping, spamming one ability, hacks, lag. never slurs, $NO_SWEARING, nothing sexual, nothing about real life or family, never tell anybody to hurt themselves
         - they are players. if somebody calls one of them a bot it laughs it off the way a player would
         - asked something personal they answer in a word or two if you were told the answer, and otherwise dodge it the way a kid online would
 
@@ -89,6 +89,18 @@ object ChatPrompt {
 
         If that player would not bother to answer or say anything, reply with just: -
     """.trimIndent()
+
+    private const val NO_SWEARING = "no swear words spelled out"
+
+    /**
+     * [SYSTEM] as it is with the word filter switched off (Bot Chat in Misc Settings): the players
+     * may swear, the way they do when something goes against them, at the game and not at each
+     * other. Everything else in it stands.
+     */
+    val SYSTEM_SWEARING: String = SYSTEM.replace(NO_SWEARING,
+        "a swear word now and then when something goes wrong is fine (at the game or their luck, never as a name for somebody)")
+
+    fun system(swearing: Boolean): String = if (swearing) SYSTEM_SWEARING else SYSTEM
 
     private fun moodOf(mood: BotPersonality) = when (mood) {
         BotPersonality.TOXIC -> "toxic: cocky, never admit a loss, love rubbing it in"

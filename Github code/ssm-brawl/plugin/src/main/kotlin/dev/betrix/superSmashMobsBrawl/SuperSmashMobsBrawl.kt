@@ -79,6 +79,7 @@ class SuperSmashMobsBrawl : SuspendingJavaPlugin(), KoinComponent {
         ApiService.setup()
         ClassicChatService.setup()
         BotConversationService.setup()
+        dev.betrix.superSmashMobsBrawl.services.BotChatMenu.setup()
         WorldService.setup()
         MapVoteService.setup()
         HubService.initialize(this)

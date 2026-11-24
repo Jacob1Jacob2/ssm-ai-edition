@@ -102,8 +102,10 @@ object LobbyBotService : KoinComponent {
             it.difficulty == BotManager.profileOf(bot)?.difficulty } }
         val positions = ArrayDeque(removed.map { it.location })
         removed.forEach(BotManager::despawn)
-        // Reclaim only this lobby's ended-match leftovers; never another lobby's previews or fighters.
-        BotManager.onlineBots().filter { !BotManager.isLobbyBot(it) && LobbyService.lobbyOf(it) == id && it.uniqueId !in BotManager.lobbyStandIns &&
+        // Reclaim only this lobby's ended-match leftovers; never another lobby's previews or fighters,
+        // nor the bots of a test match that is about to start out of this lobby (cleared away in the
+        // second before it began, such a match "did not start": 2026-11-24, with all five lobbies in use).
+        BotManager.onlineBots().filter { !BotManager.isLobbyBot(it) && !BotManager.isTestBot(it) && LobbyService.lobbyOf(it) == id && it.uniqueId !in BotManager.lobbyStandIns &&
             it.world == LobbyService.hub(id)?.world && !BotManager.isReserved(it) }.forEach(BotManager::despawn)
         for (profile in chosen) {
             if (botsIn(id).any { BotManager.displayNameOf(it).equals(profile.name, true) }) continue

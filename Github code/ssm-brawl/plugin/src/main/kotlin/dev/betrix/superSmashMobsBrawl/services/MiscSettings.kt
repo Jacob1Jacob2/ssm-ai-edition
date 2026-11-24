@@ -86,20 +86,22 @@ object MiscSettings {
         player.openInventory(brawlGui(Component.text("Misc Settings"), 27, selectionEffects = true) {
             onClick { isCancelled = true }
             val autoL = AutoL.on(id)
-            set(11, button(Material.NAME_TAG, "Auto L", autoL, "Says L in chat after each of your kills")) {
+            set(10, button(Material.NAME_TAG, "Auto L", autoL, "Says L in chat after each of your kills")) {
                 click(AutoL.toggle(id)); openMenu(player)
             }
             val quits = on(id, Option.RAGE_QUITS)
-            set(13, button(Material.IRON_DOOR, "Bot Rage Quits", quits, "Once in a while a bot leaves mid-match")) {
+            set(12, button(Material.IRON_DOOR, "Bot Rage Quits", quits, "Once in a while a bot leaves mid-match")) {
                 set(id, Option.RAGE_QUITS, !quits); click(!quits); openMenu(player)
             }
             val pack = on(id, Option.RESOURCE_PACK)
-            set(15, button(Material.PAINTING, "Resource Pack", pack, "Map pictures and menu icons")) {
+            set(14, button(Material.PAINTING, "Resource Pack", pack, "Map pictures and menu icons")) {
                 set(id, Option.RESOURCE_PACK, !pack); click(!pack)
                 // (The pack is taken off or asked for now, not at the next join.)
                 ResourcePackService.apply(player)
                 openMenu(player)
             }
+            // (The server's, not this player's: who writes the bots' chat, and its word filter. See [BotChatMenu].)
+            set(16, BotChatMenu.button(player)) { BotChatMenu.open(player) }
             set(18, ItemStack.of(Material.ARROW).apply {
                 editMeta { it.displayName(Component.text("Back", NamedTextColor.YELLOW).decoration(TextDecoration.ITALIC, false)) }
             }) { GameSetupService.openMenu(player) }

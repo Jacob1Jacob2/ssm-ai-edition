@@ -12,8 +12,12 @@ package dev.betrix.superSmashMobsBrawl.bots
  *
  * @param banned words and phrases that are never said, one to an entry, in any case. A word of four
  *   letters or more in it also bans the words that begin with it.
+ * @param swearing the word filter is switched off (Bot Chat in Misc Settings): the plain swear
+ *   words in [banned] may be said ([SWEARS]). That is all that switch lets through. Slurs, anything
+ *   sexual, name-calling, anybody's family and telling somebody to hurt themselves stay out
+ *   whatever it is set to, as they were asked to from the first line the bots ever said.
  */
-class ChatFilter(banned: Collection<String> = emptyList()) {
+class ChatFilter(banned: Collection<String> = emptyList(), swearing: Boolean = false) {
     sealed interface Verdict
     /** It can be said, and this is how it is typed. */
     data class Line(val text: String) : Verdict
@@ -22,7 +26,8 @@ class ChatFilter(banned: Collection<String> = emptyList()) {
     data class Rejected(val why: String) : Verdict
 
     private fun single(entry: String) = entry.all { it in 'a'..'z' || it in '0'..'9' }
-    private val listed = banned.map { it.trim().lowercase() }.filter { it.isNotEmpty() && it !in ALLOWED }.toSet()
+    private val listed = (banned.map { it.trim().lowercase() } + if (swearing) emptyList() else CENSORED)
+        .filter { it.isNotEmpty() && it !in ALLOWED && !(swearing && it in SWEARS) }.toSet()
     private val words = (listed + ALWAYS).filter(::single).toSet()
     // (Only the list's own words ban what begins with them: "hello" is not to go because of a four-letter word in [ALWAYS].)
     private val stems = listed.filter { single(it) && it.length >= 4 }
@@ -100,6 +105,10 @@ class ChatFilter(banned: Collection<String> = emptyList()) {
          * its words: "Trade Scatter" is an ability.
          */
         private val ALLOWED = setOf("suck", "sucks", "sucked", "butt", "cocky", "scatter", "scattered")
+        /** Swearing as such, at nobody: what the word filter being switched off lets through, and nothing else. */
+        val SWEARS = setOf("ass", "shit", "shitty", "bullshit", "fuck", "fucking", "fucked", "fuckin", "piss", "pissed", "damn", "goddamn", "hell", "crap")
+        /** The same with letters left out, which a list of whole words does not have. */
+        private val CENSORED = listOf("fk", "fck", "fuk", "fking", "sht")
         /**
          * Never said, whatever list is loaded: telling somebody to hurt themselves, slurs a general
          * word list leaves out, anybody's family, and what a game lobby is not the place for.
@@ -111,10 +120,12 @@ class ChatFilter(banned: Collection<String> = emptyList()) {
             "ur mom", "your mom", "ur mum", "your mum", "ur mother", "your mother", "ur dad", "your dad", "ur sister", "your sister",
             "ur family", "your family", "dox", "doxx", "doxxed", "ddos", "swat", "swatted", "ip address", "home address", "phone number",
             "snapchat", "instagram", "tiktok", "onlyfans", "paypal", "cashapp", "school shoot", "shoot up", "drugs", "weed", "vape", "drunk",
-            "fk", "fck", "fuk", "fking", "sht", "btch",
             // Calling somebody names is not talk about the game: "ur bad" is, "u idiot" is not.
+            // (The first few are swear words turned on a person: out even where swearing is let through.)
+            "asshole", "assholes", "asshat", "jackass", "fucker", "fuckers", "fuckface", "fucktard", "shithead", "shitface", "dipshit", "bitch", "bitches",
             // ("this is so dumb" is about the game, and stays; "ur dumb" is about a person.)
-            "idiot", "idiots", "dumbass", "moron", "morons", "ugly", "fat", "braindead", "brain dead", "clown", "worthless", "pathetic",
+            "idiot", "idiots", "dumbass", "dummy", "dummies", "dimwit", "dunce", "imbecile", "moron", "morons", "ugly", "fat", "braindead", "brain dead",
+            "clown", "worthless", "pathetic",
             "u stupid", "ur stupid", "you stupid", "youre stupid", "ur so stupid", "u r stupid", "stupid kid",
             "u dumb", "ur dumb", "you dumb", "youre dumb", "ur so dumb", "u r dumb", "dumb kid")
     }

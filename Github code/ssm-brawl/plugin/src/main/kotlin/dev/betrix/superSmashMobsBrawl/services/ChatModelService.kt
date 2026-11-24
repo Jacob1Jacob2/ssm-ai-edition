@@ -79,6 +79,14 @@ object ChatModelService {
     /** Free and used video memory, in MiB. */
     data class Video(val total: Int, val used: Int) { val free: Int get() = total - used }
 
+    /**
+     * Who writes the bots' chat, as picked in Bot Chat (Misc Settings): the script alone, one of
+     * the two models whatever the video card is doing, or the big model while there is room for it
+     * and the small one when there is not. The script is for a computer that cannot run a model,
+     * and is what a server without one has whatever is picked.
+     */
+    enum class Writer(val key: String) { AUTO("auto"), BIG("big"), SMALL("small"), SCRIPT("script") }
+
     @Volatile var ready = false; private set
     @Volatile private var model: ChatModel? = null
     @Volatile private var filter = ChatFilter()
@@ -86,22 +94,99 @@ object ChatModelService {
     @Volatile private var stopping = false
     /** The model that is loaded: the small one, or else the main one. */
     @Volatile private var small = false
+    /** The model is somebody else's to start and stop (another copy of the server's): it is only used. */
+    @Volatile private var borrowed = false
     private var hooked = false
     private var settings = Settings()
     private var log: Logger = Logger.getLogger("ChatModel")
     val asked = AtomicInteger(); val used = AtomicInteger(); val refused = AtomicInteger(); val missed = AtomicInteger()
 
+    // ------------------------------------------------------------------ what the owner picked in the menu
+
+    /** What is picked in Bot Chat; kept in [CHOICES] next to the plugin's other settings. */
+    @Volatile var writer = Writer.AUTO; private set
+    /** The word filter is on: no swearing, and none of [ownWords]. (Off, the bots may swear and nothing more: see [ChatFilter].) */
+    @Volatile var filtering = true; private set
+    private val own = java.util.TreeSet<String>()
+    private var listed: List<String> = emptyList()
+    private var folder: File? = null
+
+    /** The words the owner added to the filter, in order. */
+    fun ownWords(): List<String> = synchronized(own) { own.toList() }
+
+    /** Is [choice] there to be picked on this server? The script always is; a model only where its file is. */
+    fun has(choice: Writer): Boolean = when (choice) {
+        Writer.SCRIPT -> true
+        Writer.BIG -> settings.enabled && (borrowed || File(settings.model).isFile && File(settings.runner).isFile)
+        Writer.SMALL -> settings.enabled && !borrowed && File(settings.smallModel).isFile && File(settings.runner).isFile
+        Writer.AUTO -> has(Writer.BIG) && has(Writer.SMALL)
+    }
+
+    /** The owner picks who writes the chat. The change is made by [run] within a second; the script takes over at once. */
+    fun pick(choice: Writer) {
+        if (!has(choice)) return
+        writer = choice
+        if (choice == Writer.SCRIPT) ready = false
+        save()
+    }
+
+    // (The model is told the rule that changes with it, which makes its rules new to it: they are read again now, not at the next line.)
+    fun filtering(on: Boolean) { filtering = on; refilter(); save(); wake() }
+
+    /**
+     * Adds [word] to the filter: a word or a short phrase, as letters, digits and spaces. Returns
+     * it as it was taken, or null when it is not one (empty, too long, something else in it) or
+     * there are [MOST_WORDS] already.
+     */
+    fun addWord(word: String): String? {
+        val clean = word.trim().lowercase().replace(Regex("\\s+"), " ")
+        if (clean.length !in 2..MOST_LETTERS || !clean.all { it in 'a'..'z' || it in '0'..'9' || it == ' ' }) return null
+        synchronized(own) { if (own.size >= MOST_WORDS && clean !in own) return null; own += clean }
+        refilter(); save()
+        return clean
+    }
+
+    fun removeWord(word: String) { synchronized(own) { own -= word }; refilter(); save() }
+
+    private fun refilter() { filter = ChatFilter(listed + if (filtering) ownWords() else emptyList(), swearing = !filtering) }
+
+    private fun save() {
+        val dir = folder ?: return
+        runCatching {
+            dir.mkdirs()
+            Properties().apply { setProperty("writer", writer.key); setProperty("word-filter", filtering.toString()) }
+                .let { p -> File(dir, CHOICES).outputStream().use { p.store(it, "SSM AI Edition - what is picked in Bot Chat (Misc Settings)") } }
+            File(dir, WORDS).writeText(ownWords().joinToString("\n"), Charsets.UTF_8)
+        }.onFailure { log.warning("Chat model: could not save what was picked in Bot Chat (${it.message})") }
+    }
+
     fun setup(folder: File, logger: Logger) {
-        log = logger; stopping = false
+        log = logger; stopping = false; this.folder = folder
         settings = Settings.read(File(folder, FILE))
+        // What was picked in the menu before the server last stopped; with nothing picked yet, the
+        // models look after themselves and the filter is on.
+        writer = Writer.AUTO; filtering = true; borrowed = false
+        File(folder, CHOICES).takeIf { it.isFile }?.let { file ->
+            val p = Properties().also { props -> file.inputStream().use(props::load) }
+            writer = Writer.entries.find { it.key == p.getProperty("writer") } ?: Writer.AUTO
+            filtering = p.getProperty("word-filter")?.toBooleanStrictOrNull() ?: true
+        }
+        synchronized(own) { own.clear(); File(folder, WORDS).takeIf { it.isFile }?.readLines(Charsets.UTF_8)?.map { it.trim().lowercase() }?.filter { it.isNotEmpty() }?.let(own::addAll) }
+        listed = settings.words.takeIf { it.isNotEmpty() }?.let(::File)?.takeIf { it.isFile }?.readLines(Charsets.UTF_8).orEmpty()
+        refilter()
         if (!settings.enabled) return
-        filter = ChatFilter(settings.words.takeIf { it.isNotEmpty() }?.let(::File)?.takeIf { it.isFile }?.readLines(Charsets.UTF_8).orEmpty())
         val client = ChatModel(settings.url, settings.timeoutMs)
         model = client
         // (The runner is this server's own: it goes when the server does, however the server goes.)
         if (!hooked) { hooked = true; Runtime.getRuntime().addShutdownHook(Thread { runCatching { process?.destroyForcibly() } }) }
         // Loading a model takes seconds: not on the server thread, and the bots talk from their scripts meanwhile.
         Thread({ run(client, File(folder, "chat-model.log")) }, "ssm-chat-model").apply { isDaemon = true }.start()
+    }
+
+    /** Waits, a little at a time so that the server stopping or a new pick is noticed, for as long as [whilst] holds and at most [atMost] ms. */
+    private fun pause(atMost: Long = Long.MAX_VALUE, whilst: () -> Boolean = { true }) {
+        var waited = 0L
+        while (!stopping && waited < atMost && whilst()) { Thread.sleep(250); waited += 250 }
     }
 
     /** What the video card has in use, as `nvidia-smi` tells it; null when it cannot be asked. */
@@ -136,33 +221,68 @@ object ChatModelService {
      */
     private fun run(client: ChatModel, output: File) {
         try {
-            if (client.healthy()) { ready = true; log.info("Chat model: found one already running at ${settings.url}"); return }
             val runner = File(settings.runner); val big = File(settings.model)
             val little = settings.smallModel.takeIf { it.isNotEmpty() }?.let(::File)?.takeIf { it.isFile }
-            if (settings.runner.isEmpty()) { log.warning("Chat model: nothing answers at ${settings.url} and no runner is set; the bots use their scripted lines"); return }
+            // Somebody else's model (no runner of this server's own, or one is answering already):
+            // it is used while it answers, and neither started nor stopped from here.
+            if (settings.runner.isEmpty() || client.healthy()) {
+                borrowed = true
+                if (writer != Writer.SCRIPT && !has(writer)) writer = Writer.BIG
+                var told = false
+                while (!stopping) {
+                    val up = writer != Writer.SCRIPT && client.healthy()
+                    if (up && !told) { told = true; log.info("Chat model: using the one already running at ${settings.url}") }
+                    small = false; ready = up
+                    pause(5000)
+                }
+                return
+            }
             if (!runner.isFile || !big.isFile) { log.warning("Chat model: ${if (!runner.isFile) runner else big} is not there; the bots use their scripted lines"); return }
+            if (!has(writer)) writer = if (little != null) Writer.AUTO else Writer.BIG
             // What each takes of the video card: a guess from the file until it has been loaded once and measured.
             var bigNeed = megabytes(big) + 500
             var littleNeed = little?.let { megabytes(it) * 2 / 3 + 300 } ?: 0
-            small = little != null && video()?.let { it.free < bigNeed + settings.reserveMb } == true
+            // What "auto" last settled on, while that still stands.
+            var settled: Boolean? = null
             var failures = 0
             while (!stopping) {
+                val want = writer
+                if (want == Writer.SCRIPT) {
+                    // The script alone: the model goes, and the video card has its memory back.
+                    if (process != null) log.info("Chat model: switched off in Bot Chat; the bots use their scripted lines")
+                    ready = false; halt(); settled = null; failures = 0
+                    pause { writer == Writer.SCRIPT }
+                    continue
+                }
+                small = when (want) {
+                    Writer.SMALL -> little != null
+                    Writer.BIG -> false
+                    else -> settled ?: (little != null && video()?.let { it.free < bigNeed + settings.reserveMb } == true)
+                }
                 val weights = if (small) little!! else big
                 val before = video()
                 if (!launch(runner, weights, client, output)) {
                     if (stopping) return
-                    if (++failures >= 3) { log.warning("Chat model: gave up on ${weights.name} after three tries; the bots use their scripted lines"); return }
-                    if (!small && little != null) small = true
-                    Thread.sleep(5000); continue
+                    if (++failures >= 3) {
+                        log.warning("Chat model: gave up on ${weights.name} after three tries; the bots use their scripted lines until something else is picked in Bot Chat")
+                        ready = false; halt(); failures = 0
+                        pause { writer == want }
+                        continue
+                    }
+                    if (want == Writer.AUTO && !small && little != null) settled = true
+                    pause(5000) { writer == want }; continue
                 }
                 lastUse = System.currentTimeMillis()
                 video()?.let { now -> before?.let { was -> (now.used - was.used).takeIf { it in 800..40_000 }?.let { if (small) littleNeed = it else bigNeed = it } } }
-                log.info("Chat model: ${weights.name} is up" + (if (little != null) " (the ${if (small) "small" else "big"} one)" else "") +
+                log.info("Chat model: ${weights.name} is up" + (if (little != null) " (the ${if (small) "small" else "big"} one, picked: ${want.key})" else "") +
                     "; it writes ${if (small) settings.smallScope else settings.scope}")
-                var low = 0; var roomy = 0; var changed = false
-                while (!stopping && process?.isAlive == true && !changed) {
-                    Thread.sleep(CHECK_MS)
-                    if (little == null) continue
+                var low = 0; var roomy = 0; var changed = false; var waited = 0L
+                while (!stopping && process?.isAlive == true && !changed && writer == want) {
+                    Thread.sleep(250); waited += 250
+                    if (waited < CHECK_MS) continue
+                    waited = 0
+                    // (Only "auto" looks at the video card: a model picked by name stays, whatever else is on the card.)
+                    if (want != Writer.AUTO || little == null) continue
                     val free = video()?.free ?: continue
                     if (small) {
                         roomy = if (room(free, bigNeed, littleNeed, asleep(), settings.reserveMb)) roomy + 1 else 0
@@ -173,13 +293,21 @@ object ChatModelService {
                     }
                 }
                 if (stopping) return
-                if (changed) { small = !small; failures = 0 }
-                // (A runner that keeps dying is not started for ever.)
-                else if (++failures >= 3) { log.warning("Chat model: the runner keeps stopping by itself; see ${output.name}. The bots use their scripted lines"); ready = false; halt(); return }
-                else log.warning("Chat model: the runner stopped by itself; see ${output.name}. Starting it again")
+                when {
+                    writer != want -> { settled = null; failures = 0 }
+                    changed -> { settled = !small; failures = 0 }
+                    // (A runner that keeps dying is not started for ever.)
+                    ++failures >= 3 -> {
+                        log.warning("Chat model: the runner keeps stopping by itself; see ${output.name}. The bots use their scripted lines until something else is picked in Bot Chat")
+                        ready = false; halt(); failures = 0
+                        pause { writer == want }
+                        continue
+                    }
+                    else -> log.warning("Chat model: the runner stopped by itself; see ${output.name}. Starting it again")
+                }
                 ready = false
                 halt()
-                Thread.sleep(1500)
+                pause(1000)
             }
         } catch (e: InterruptedException) {
         } catch (e: Exception) {
@@ -209,9 +337,15 @@ object ChatModelService {
         }
         if (stopping) return false
         if (!p.isAlive) { log.warning("Chat model: the runner stopped with code ${p.exitValue()} loading ${weights.name}; see ${output.name}"); return false }
+        // The rules and the worked examples are read once now, with nobody waiting: read for the
+        // first real line they took the big model 1.4 of the 1.5 seconds a line is given.
+        runCatching { warm(client)?.get(40, TimeUnit.SECONDS) }
         ready = true
         return true
     }
+
+    private fun warm(client: ChatModel) =
+        client.complete(ChatPrompt.system(swearing = !filtering), "Reply with just: -", ChatPrompt.SHOTS, maxTokens = 1, patienceMs = 30_000)
 
     private fun halt() {
         process?.let { p ->
@@ -227,7 +361,7 @@ object ChatModelService {
     }
 
     /** How far down [BotDialogue.Brief.Kind] the model that is loaded words the bots' lines ([Settings.scope]); null while there is none. */
-    fun reach(): BotDialogue.Brief.Kind? = if (!ready) null else when (if (small) settings.smallScope else settings.scope) {
+    fun reach(): BotDialogue.Brief.Kind? = if (!ready || writer == Writer.SCRIPT) null else when (if (small) settings.smallScope else settings.scope) {
         "all" -> BotDialogue.Brief.Kind.REMARK
         "chat" -> BotDialogue.Brief.Kind.ANSWER
         else -> BotDialogue.Brief.Kind.UNSURE
@@ -253,7 +387,9 @@ object ChatModelService {
         asked.incrementAndGet()
         lastUse = System.currentTimeMillis()
         val began = System.nanoTime()
-        return client.complete(ChatPrompt.SYSTEM, prompt, ChatPrompt.SHOTS, temperature = settings.temperature).thenApply { raw ->
+        // (One filter for the whole of this line, even if the owner switches it while the model is writing.)
+        val filter = filter
+        return client.complete(ChatPrompt.system(swearing = !filtering), prompt, ChatPrompt.SHOTS, temperature = settings.temperature).thenApply { raw ->
             val ms = (System.nanoTime() - began) / 1_000_000
             if (raw == null) { missed.incrementAndGet(); return@thenApply Outcome(null, "no answer in time", ms) }
             when (val verdict = filter.check(raw, me.name, others, prompt)) {
@@ -281,14 +417,24 @@ object ChatModelService {
     }
 
     /** A request that only wakes a model that has gone to sleep, so that the next real one is answered in time. */
-    fun wake() { model?.takeIf { ready }?.let { lastUse = System.currentTimeMillis(); it.complete(ChatPrompt.SYSTEM, "Reply with just: -", ChatPrompt.SHOTS, maxTokens = 1) } }
+    fun wake() { model?.takeIf { ready }?.let { lastUse = System.currentTimeMillis(); warm(it) } }
 
     fun status(): String = if (!settings.enabled) "off (no $FILE, or enabled=false)" else {
-        val file = File(if (small) settings.smallModel else settings.model).name.ifEmpty { "no model set" }
+        val file = if (borrowed) "somebody else's" else File(if (small) settings.smallModel else settings.model).name.ifEmpty { "no model set" }
         "${if (ready) "up" else "not up"} at ${settings.url}, $file, writes ${if (small) settings.smallScope else settings.scope}; " +
+            "picked ${writer.key}, word filter ${if (filtering) "on" else "off"}, ${ownWords().size} own words; " +
             "asked ${asked.get()}, said ${used.get()}, refused ${refused.get()}, too slow ${missed.get()}" +
             (video()?.let { "; video memory ${it.free} MiB free of ${it.total}" } ?: "")
     }
+
+    /** What is loaded now, for the menu: null for none. */
+    fun loaded(): String? = if (!ready) null else if (borrowed) "a model" else if (small) "the small model" else "the big model"
+
+    /** What is picked in Bot Chat, and the owner's own words for the filter: this server's, and kept out of the public backup. */
+    const val CHOICES = "bot-chat.properties"
+    const val WORDS = "bot-chat-words.txt"
+    const val MOST_WORDS = 45
+    const val MOST_LETTERS = 24
 
     /** How often the video card is looked at, and how many looks in a row decide a change of model. */
     private const val CHECK_MS = 15_000L

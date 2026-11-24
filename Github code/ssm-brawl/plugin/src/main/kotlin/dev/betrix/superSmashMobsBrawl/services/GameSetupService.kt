@@ -419,7 +419,7 @@ object GameSetupService : KoinComponent {
             set(47, menuItem(Material.FILLED_MAP,"Choose Map",lore=listOf("Choose the arena for your next match"))) {MapVoteService.openVoteGui(player)}
             set(49, menuItem(Material.REDSTONE_BLOCK, "Close", NamedTextColor.RED)) { player.closeInventory() }
             // (At the foot of the white column: the odds and ends that are not about the match itself.)
-            set(51, menuItem(Material.COMPARATOR, "Misc Settings", lore = listOf("Auto L, bot rage quits, resource pack"))) { MiscSettings.openMenu(player) }
+            set(51, menuItem(Material.COMPARATOR, "Misc Settings", lore = listOf("Auto L, rage quits, resource pack,", "bot chat"))) { MiscSettings.openMenu(player) }
             set(53, menuItem(Material.CREEPER_HEAD, "Choose Kit", lore = listOf("Choose your mob"))) {
                 KitService.openKitSelectionGui(player)
             }

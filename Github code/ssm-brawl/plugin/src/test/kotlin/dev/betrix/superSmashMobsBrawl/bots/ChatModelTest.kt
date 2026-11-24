@@ -73,6 +73,7 @@ class ChatModelTest : StringSpec({
         // Name-calling is not talk about the game; grumbling about the game is.
         said("just press space u idiot").shouldBeInstanceOf<ChatFilter.Rejected>()
         said("ur so dumb lol").shouldBeInstanceOf<ChatFilter.Rejected>()
+        said("7v1 is the point u dummy").shouldBeInstanceOf<ChatFilter.Rejected>()
         line("this is so dumb") shouldBe "this is so dumb"
         line("map is fine its just u thats bad") shouldBe "map is fine its just u thats bad"
         // The words a model pads a line with and these players do not type are taken out of it.
@@ -210,6 +211,81 @@ class ChatModelTest : StringSpec({
             read.reserveMb shouldBe 2000
             read.url shouldBe "http://127.0.0.1:8090"
         } finally { dir.deleteRecursively() }
+    }
+    // ---------------------------------------------------------------- Bot Chat, in Misc Settings
+
+    "the word filter switched off lets swearing through, and nothing else" {
+        val list = listOf("shit", "fuck", "slurword", "very bad phrase")
+        val on = ChatFilter(list)
+        val off = ChatFilter(list, swearing = true)
+        fun ChatFilter.says(raw: String) = (check(raw, "Kin", others, "") as? ChatFilter.Line)?.text
+        // On: no swearing, with letters left out or not.
+        on.says("oh shit i missed") shouldBe null
+        on.says("fucking lag") shouldBe null
+        on.says("sht") shouldBe null
+        // Off: at the game, at luck, at nobody.
+        off.says("oh shit i missed") shouldBe "oh shit i missed"
+        off.says("fucking lag") shouldBe "fucking lag"
+        // But a swear word turned on a person is name-calling, a slur is a slur, and the rest was never the filter's to give up.
+        off.says("u fucker") shouldBe null
+        off.says("ur a shithead") shouldBe null
+        off.says("slurword") shouldBe null
+        off.says("that was a very bad phrase") shouldBe null
+        off.says("kys") shouldBe null
+        off.says("ur mom plays better") shouldBe null
+        off.says("just press space u idiot") shouldBe null
+        // And the model is told so: it is not told to swear with the filter on.
+        ChatPrompt.system(swearing = false) shouldContain "no swear words spelled out"
+        ChatPrompt.system(swearing = true).shouldNotContain("no swear words spelled out")
+        ChatPrompt.system(swearing = true) shouldContain "never slurs"
+    }
+    "what is picked in Bot Chat is kept, and the owner's own words are words the bots do not say" {
+        val service = dev.betrix.superSmashMobsBrawl.services.ChatModelService
+        val dir = java.io.File(System.getProperty("java.io.tmpdir"), "ssm-bot-chat-test-${System.nanoTime()}").also { it.mkdirs() }
+        val logger = java.util.logging.Logger.getLogger("test")
+        try {
+            service.setup(dir, logger)
+            // A server with no model on it: the script is all there is to pick, and picking a model does nothing.
+            service.writer shouldBe dev.betrix.superSmashMobsBrawl.services.ChatModelService.Writer.AUTO
+            service.has(dev.betrix.superSmashMobsBrawl.services.ChatModelService.Writer.SCRIPT) shouldBe true
+            service.has(dev.betrix.superSmashMobsBrawl.services.ChatModelService.Writer.BIG) shouldBe false
+            service.has(dev.betrix.superSmashMobsBrawl.services.ChatModelService.Writer.AUTO) shouldBe false
+            service.pick(dev.betrix.superSmashMobsBrawl.services.ChatModelService.Writer.BIG)
+            service.writer shouldBe dev.betrix.superSmashMobsBrawl.services.ChatModelService.Writer.AUTO
+            service.pick(dev.betrix.superSmashMobsBrawl.services.ChatModelService.Writer.SCRIPT)
+            service.reach() shouldBe null
+            // A word of the owner's own, as typed; what is not a word is not taken.
+            service.addWord("  Noob  Tube ") shouldBe "noob tube"
+            service.addWord("Bozo") shouldBe "bozo"
+            service.addWord("no!") shouldBe null
+            service.addWord("x") shouldBe null
+            service.addWord("a".repeat(40)) shouldBe null
+            service.ownWords() shouldBe listOf("bozo", "noob tube")
+            (service.banned("what a bozo") != null) shouldBe true
+            (service.banned("u noob tube") != null) shouldBe true
+            // With the filter off the owner's words are off with it; back on, they are back.
+            service.filtering(false)
+            service.banned("what a bozo") shouldBe null
+            (service.banned("kys") != null) shouldBe true
+            service.filtering(true)
+            (service.banned("what a bozo") != null) shouldBe true
+            service.removeWord("bozo")
+            service.banned("what a bozo") shouldBe null
+            service.filtering(false)
+            // The server stops and starts: everything is as it was left.
+            service.shutdown()
+            service.setup(dir, logger)
+            service.writer shouldBe dev.betrix.superSmashMobsBrawl.services.ChatModelService.Writer.SCRIPT
+            service.filtering shouldBe false
+            service.ownWords() shouldBe listOf("noob tube")
+        } finally {
+            // (It is one service for the whole server: left as a server nobody has touched.)
+            service.shutdown()
+            dir.deleteRecursively()
+            service.setup(java.io.File(dir, "nothing-here"), logger)
+        }
+        service.filtering shouldBe true
+        service.ownWords() shouldBe emptyList()
     }
     "a model writes names out in full; the bot that says the line calls people what it calls them" {
         val service = dev.betrix.superSmashMobsBrawl.services.ChatModelService
