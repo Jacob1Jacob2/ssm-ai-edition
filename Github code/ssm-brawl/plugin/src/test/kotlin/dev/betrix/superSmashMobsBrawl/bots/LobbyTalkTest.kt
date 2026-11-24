@@ -136,6 +136,27 @@ class LobbyTalkTest : StringSpec({
         }
         seen.any { "3v1" in it } shouldBe true
     }
+    "with a model the lobby's lines come with what they are about, and what the script has no line for is handed on" {
+        var open = 0
+        for (seed in 0..30) {
+            val l = lobby(seed = seed).also { it.wordsmith = BotDialogue.Brief.Kind.REMARK }
+            l.poll(1000, everybody)
+            l.chat(jacob.id, "does anyone here like pizza", 9000)
+            val said = l.listen(1250, 20_000)
+            // (The hello to whoever walked in is said as scripted, model or no model.)
+            said.firstOrNull { it.brief?.open == true }?.let { reply ->
+                open++
+                reply.text shouldBe ""
+                (reply.brief!!.event.contains("Jacob typed \"does anyone here like pizza\" in the lobby.")) shouldBe true
+            }
+        }
+        (open > 25) shouldBe true
+        // Without a model nothing changes: no briefs, and a question the script does not know gets no answer.
+        val l = lobby()
+        l.poll(1000, everybody)
+        l.chat(jacob.id, "does anyone here like pizza", 9000)
+        l.listen(1250, 20_000).forEach { it.brief shouldBe null; (it.text.isNotEmpty()) shouldBe true }
+    }
     "somebody who walks in after the match may say hi, and has nothing to say about a match it was not in" {
         val pebble = BotDialogue.Fighter(UUID(0, 6), "Pebble", "", 0, true, false)
         val hellos = mutableSetOf<String>()

@@ -371,7 +371,15 @@ object BotManager : KoinComponent {
                      kits: List<String> = emptyList(), lobby: Int? = null,
                      setup: dev.betrix.superSmashMobsBrawl.services.GameSetupService.Setup? = null,
                      anyProfile: Boolean = false): List<Player> {
-        val lobbyId = lobby ?: dev.betrix.superSmashMobsBrawl.services.LobbyRouting.ids.firstOrNull { !dev.betrix.superSmashMobsBrawl.services.LobbyService.busy(it) } ?: return emptyList()
+        // A lobby somebody is standing in keeps its own bots and clears any others out of it
+        // (LobbyBotService), these included, before their match can start: so not from there while
+        // another lobby is free. (Found 2026-11-24: a test match handed the lobby a stand-in was
+        // waiting in "did not start", eleven times running.)
+        val free = dev.betrix.superSmashMobsBrawl.services.LobbyRouting.ids.filter { !dev.betrix.superSmashMobsBrawl.services.LobbyService.busy(it) }
+        val lobbyId = lobby ?: free.firstOrNull { id ->
+            Bukkit.getOnlinePlayers().none { (!isBot(it) || it.uniqueId in lobbyStandIns) && !minigameService.isPlayerInMinigame(it) &&
+                dev.betrix.superSmashMobsBrawl.services.LobbyService.lobbyOf(it) == id }
+        } ?: free.firstOrNull() ?: return emptyList()
         val spawned = freeProfiles()
             .filter { anyProfile || difficulty == null || it.difficulty == difficulty }
             .shuffled()

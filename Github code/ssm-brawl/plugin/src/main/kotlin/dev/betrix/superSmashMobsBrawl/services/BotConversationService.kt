@@ -72,9 +72,20 @@ object BotConversationService : KoinComponent, Listener {
         var castLogged = false
         /** Two teams: what each bot was asked to do by a player on its own side, while that still stands ([TeamTalk]). */
         val orders = HashMap<UUID, TeamTalk.Standing>()
+        /** The last lines of the match's chat, bots' and players', as they stood on the screen: what a model words the next one in the light of. */
+        val heard = Heard()
+    }
+    /** The last few lines of a chat, and the lines being worded for it by the model ([ChatModelService]), which are said in the order they were decided on. */
+    private class Heard {
+        val lines = ArrayDeque<ChatPrompt.Said>()
+        var wording: java.util.concurrent.CompletableFuture<Void?> = java.util.concurrent.CompletableFuture.completedFuture(null)
+        fun note(name: String, text: String) { lines.addLast(ChatPrompt.Said(name, text.take(120))); while (lines.size > 8) lines.removeFirst() }
+        fun said(text: String) = lines.any { it.text == text }
     }
     /** The pause between one chat line landing and the next bot starting to type. */
     private const val READING_TICKS = 14
+    /** How often a line whose typist was hit while typing it goes out unfinished. */
+    private const val CUT_OFF = 0.3
     private val sessions = mutableMapOf<BrawlMinigame, Session>()
     private var task: BukkitTask? = null
     private var running = false
@@ -90,6 +101,7 @@ object BotConversationService : KoinComponent, Listener {
     private fun session(game: BrawlMinigame): Session = sessions.getOrPut(game) {
         Session(game.settings.teamUps).also {
             it.dialogue.mode = game.settings.botPersonality
+            it.dialogue.tally = { killer, victim -> it.kills[killer to victim] ?: 0 }
             it.rage = RageQuit(kotlin.random.Random.Default, game.host?.let { host -> MiscSettings.on(host, MiscSettings.Option.RAGE_QUITS) } == true)
         }
     }
@@ -101,7 +113,10 @@ object BotConversationService : KoinComponent, Listener {
     /** Publishes to the bus of [player]'s live match. [event] receives the match clock in ms. */
     fun publish(player: Player, event: (Long) -> CombatEvent) { game(player)?.let { session(it).bus.publish(event(now())) } }
     fun started(game: BrawlMinigame) {
-        if (running) session(game).bus.publish(MatchStarted(now()))
+        if (!running) return
+        session(game).bus.publish(MatchStarted(now()))
+        // (A model that has gone to sleep is woken now, so that it is there for the first thing said.)
+        if (game.allPlayers().any { !BotManager.isBot(it.uniqueId) }) ChatModelService.wake()
     }
     fun abilityUsed(player: Player, ability: String) = publish(player) { AbilityCast(player.uniqueId, ability, it) }
     fun damage(victim: Player, attacker: Player, amount: Double, source: String) {
@@ -215,6 +230,7 @@ object BotConversationService : KoinComponent, Listener {
                 s.mouthed.getOrPut(id) { HashSet() } += if (at.isEmpty()) listOf("*") else at.map { it.lowercase() }
             } else if (Regex(BotSlang.NICE).containsMatchIn(low)) s.nice += id
         }
+        s.heard.note(BotManager.displayNameOf(player), body)
         // What a player types counts with the lobby too: trash talk heats it up, an apology cools it.
         s.teamUps.said(id, body.take(256).lowercase(), now())
         if (s.dialogue.chat(id, body, now())) s.chatAudience = audience
@@ -370,6 +386,10 @@ object BotConversationService : KoinComponent, Listener {
         val talk = LobbyTalk(recall = BotMemory.shared::recall)
         /** Server tick at which the line being typed now will have been sent. */
         var chatFreeAt = 0
+        /** The last lines of the lobby's chat, for a model to word the next one in the light of. */
+        val heard = Heard()
+        /** Who was standing in it at the last look: somebody new is somebody who may be about to say something. */
+        var present: Set<UUID> = emptySet()
     }
     private val lobbies = HashMap<Int, Lobby>()
     private fun lobby(id: Int) = lobbies.getOrPut(id) {
@@ -390,7 +410,7 @@ object BotConversationService : KoinComponent, Listener {
             else -> null
         }
         if (BotManager.debug) plugin.logger.info("[chatdbg] (lobby $id) ${BotManager.displayNameOf(player)} typed: " + (why?.let { "nobody hears it, $it" } ?: "heard"))
-        if (why == null) lobby(id).talk.chat(player.uniqueId, body, now())
+        if (why == null) lobby(id).let { it.heard.note(BotManager.displayNameOf(player), body); it.talk.chat(player.uniqueId, body, now()) }
     }
 
     private fun tickLobbies() {
@@ -403,12 +423,39 @@ object BotConversationService : KoinComponent, Listener {
             if (host != null) l.talk.mode = GameSetupService.setupOf(host).botPersonality
             val members = (listOfNotNull(host) + waiting.filter { it != host }).map { BotDialogue.Fighter(it.uniqueId, BotManager.displayNameOf(it), "", 0, false, false) } +
                 LobbyBotService.botsIn(id).map { BotDialogue.Fighter(it.uniqueId, BotManager.displayNameOf(it), "", 0, true, false) }
-            l.talk.poll(now(), members)?.let { sendLobby(id, l, it) }
+            l.talk.wordsmith = ChatModelService.reach()
+            // (A model that went to sleep while nobody was about is woken when somebody walks in, to be there by the time they type.)
+            val ids = waiting.filter { !BotManager.isBot(it) }.map { it.uniqueId }.toSet()
+            if (ids.any { it !in l.present }) ChatModelService.wake()
+            l.present = ids
+            l.talk.poll(now(), members)?.let { sendLobby(id, l, it, members, host?.let { h -> BotManager.displayNameOf(h) }) }
         }
     }
 
+    /**
+     * A line for the lobby: worded by the model when there is one ([ChatModelService]) and
+     * otherwise as the script has it, then typed.
+     */
+    private fun sendLobby(id: Int, l: Lobby, reply: BotDialogue.Reply, members: List<BotDialogue.Fighter>, host: String?) {
+        val brief = reply.brief
+        val me = members.find { it.id == reply.speaker }
+        if (brief == null || me == null || !ChatModelService.ready) { if (reply.text.isNotEmpty()) typeLobby(id, l, reply); return }
+        val ask = ChatModelService.write(ChatPrompt.persona(me.name, "", BotCharacter.of(me.name).nature.takeIf { l.talk.mode == BotPersonality.RANDOM } ?: l.talk.mode),
+            ChatPrompt.lobby(me, members, host), l.heard.lines.toList(), brief, reply.text, members.filter { it.id != me.id }.map { it.name })
+        l.heard.wording = l.heard.wording.thenCombine(ask) { _, outcome -> outcome }.thenAccept { outcome ->
+            Bukkit.getScheduler().runTask(plugin, Runnable {
+                if (!running || lobbies[id] !== l) return@Runnable
+                val worded = outcome.text?.takeIf { !l.heard.said(it) }
+                val text = worded ?: reply.text
+                if (BotManager.debug) plugin.logger.info("[chatai] (lobby $id) ${me.name}: " + (if (worded != null) "\"$worded\" in ${outcome.ms} ms" else "no (${outcome.note})") +
+                    "; scripted: " + reply.text.ifEmpty { "nothing" })
+                if (text.isNotEmpty()) typeLobby(id, l, reply.copy(text = text))
+            })
+        }.exceptionally { null }
+    }
+
     /** As in a match, a line takes as long to appear as it takes to type, and they come one after another. */
-    private fun sendLobby(id: Int, l: Lobby, reply: BotDialogue.Reply) {
+    private fun typeLobby(id: Int, l: Lobby, reply: BotDialogue.Reply) {
         val speaker = Bukkit.getPlayer(reply.speaker)?.takeIf { BotManager.isBot(it) && it.isOnline }
             ?: return l.talk.trace?.invoke("\"${reply.text}\" is not said: its speaker is not there any more") ?: Unit
         val tick = Bukkit.getCurrentTick()
@@ -419,6 +466,7 @@ object BotConversationService : KoinComponent, Listener {
         Bukkit.getScheduler().runTaskLater(plugin, Runnable {
             if (!running || !speaker.isOnline) { l.talk.trace?.invoke("\"${reply.text}\" is not said: its speaker left while typing it"); return@Runnable }
             if (BotManager.debug) plugin.logger.info("[chatdbg] (lobby $id) ${BotManager.displayNameOf(speaker)}: ${reply.text}")
+            l.heard.note(BotManager.displayNameOf(speaker), reply.text)
             val message = ClassicChatService.message(speaker, Component.text(reply.text))
             waitingIn(id).filter { !BotManager.isBot(it) }.forEach { it.sendMessage(message) }
         }, (startIn + typing).toLong())
@@ -452,6 +500,9 @@ object BotConversationService : KoinComponent, Listener {
                 s.bus.publish(FighterSample(f.id, at.x, at.y, at.z, p.health,
                     p.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH)?.value ?: 20.0, time))
             }
+            s.dialogue.wordsmith = ChatModelService.reach()
+            // Down to the last few: those who are out are watching, and may say something about it.
+            if (facts.count { it.lives > 0 } <= BotDialogue.WATCHED && facts.any { it.bot && it.lives <= 0 }) s.dialogue.watching(time)
             s.dialogue.poll(time, facts) { a,b ->
                 val first = Bukkit.getPlayer(a); val second = Bukkit.getPlayer(b)
                 first != null && second != null && !game.arePlayersOnSameTeam(first, second)
@@ -528,15 +579,51 @@ object BotConversationService : KoinComponent, Listener {
     private fun send(game: BrawlMinigame, reply: BotDialogue.Reply, audience: Set<UUID>?, typed: Boolean = true) {
         if (game.settings.botPersonality == BotPersonality.SILENT) return
         val speaker = Bukkit.getPlayer(reply.speaker)?.takeIf { BotManager.isBot(it) && it.isOnline } ?: return
-        fun deliver() {
+        val s = sessions[game]
+        val brief = reply.brief
+        // No model to word it (or nothing for one to work from): the scripted line, as ever.
+        if (brief == null || s == null || !ChatModelService.ready) { if (reply.text.isNotEmpty()) type(game, speaker, reply, audience, typed); return }
+        val facts = fighters(game)
+        val me = facts.find { it.id == reply.speaker } ?: return
+        val map = game.worldManager.getWorld()?.data?.let { it.displayName ?: it.id } ?: ""
+        val name = BotManager.displayNameOf(speaker)
+        val ask = ChatModelService.write(ChatPrompt.persona(me.name, me.kit, s.dialogue.personalityOf(me.id)), ChatPrompt.match(me, facts, map),
+            s.heard.lines.toList(), brief, reply.text, facts.filter { it.id != me.id }.map { it.name })
+        // The model takes a moment (the bot is thinking of what to say); lines still come out in the order they were decided on.
+        s.heard.wording = s.heard.wording.thenCombine(ask) { _, outcome -> outcome }.thenAccept { outcome ->
+            Bukkit.getScheduler().runTask(plugin, Runnable {
+                if (!running || sessions[game] !== s || !speaker.isOnline) return@Runnable
+                // The same words twice in a few lines read as a script, whoever wrote them.
+                val worded = outcome.text?.takeIf { !s.heard.said(it) }
+                // Where the script had a line, a model that would rather say nothing does not get its way; where it had none, it does.
+                val text = worded ?: reply.text
+                if (BotManager.debug) plugin.logger.info("[chatai] $name: " + (if (worded != null) "\"$worded\" in ${outcome.ms} ms" else "no (${outcome.note})") +
+                    "; scripted: " + reply.text.ifEmpty { "nothing" })
+                if (text.isNotEmpty()) type(game, speaker, reply.copy(text = text), audience, typed)
+            })
+        }.exceptionally { null }
+    }
+
+    /** [reply] is typed by [speaker] and then stands in the chat of [game]. */
+    private fun type(game: BrawlMinigame, speaker: Player, reply: BotDialogue.Reply, audience: Set<UUID>?, typed: Boolean) {
+        val s = sessions[game]
+        fun deliver(typedForMs: Long = 0) {
             if (!speaker.isOnline) return
-            if (BotManager.debug) plugin.logger.info("[chatdbg] ${speaker.name}: ${reply.text}")
-            val message = ClassicChatService.message(speaker, Component.text(reply.text))
+            // Hit while typing: now and then what goes out is only what had been typed by then,
+            // the way somebody gets out of the chat box in a hurry. (An answer a teammate asked for is finished.)
+            val words = reply.text.split(' ')
+            val cut = typedForMs > 0 && !reply.urgent && words.size >= 4 && CombatLogService.recentAttackers(speaker, typedForMs).isNotEmpty() &&
+                kotlin.random.Random.nextDouble() < CUT_OFF
+            // (At least two words of it: "the" by itself is not somebody cut short, it is nothing.)
+            val text = if (!cut) reply.text else words.take(kotlin.random.Random.nextInt(2, words.size)).joinToString(" ")
+                .takeIf { ChatModelService.banned(it) == null } ?: reply.text
+            if (BotManager.debug) plugin.logger.info("[chatdbg] ${speaker.name}: $text" + if (text != reply.text) " (cut off by a hit: \"${reply.text}\")" else "")
+            s?.heard?.note(BotManager.displayNameOf(speaker), text)
+            val message = ClassicChatService.message(speaker, Component.text(text))
             game.allPlayers().mapNotNull { it.player }.filter {
                 it.isOnline && !BotManager.isBot(it) && games.getMinigameForPlayer(it) === game && (audience == null || it.uniqueId in audience)
             }.forEach { it.sendMessage(message) }
         }
-        val s = sessions[game]
         if (!typed || s == null) return deliver()
         val tick = Bukkit.getCurrentTick()
         // (An answer a teammate is waiting for is typed now, not after whatever else is being said.)
@@ -545,7 +632,7 @@ object BotConversationService : KoinComponent, Listener {
         // Whoever answers has to read this line first, so the next one starts a beat after it lands.
         s.chatFreeAt = maxOf(s.chatFreeAt, tick + startIn + typing + READING_TICKS)
         BotManager.brainOf(speaker)?.typeFor(startIn, typing)
-        Bukkit.getScheduler().runTaskLater(plugin, Runnable { if (running) deliver() }, (startIn + typing).toLong())
+        Bukkit.getScheduler().runTaskLater(plugin, Runnable { if (running) deliver(typing * 50L) }, (startIn + typing).toLong())
     }
 
     /** Explicit debugging command still respects Silent and the match audience/rate limits. */

@@ -35,6 +35,16 @@ class BotCharacter private constructor(name: String) {
     /** Where it stands in the range of levels of whatever difficulty it plays at: 0 the bottom, 1 the top. */
     val standing: Double = r.nextDouble()
 
+    // What it says of itself when asked, the same every time ([ChatPrompt]). (These come last: the
+    // ones above are rolled in this order, and a new one in between would change who everybody is.)
+    /** The year it started playing. */
+    val since: Int = 2014 + r.nextInt(9)
+    /** Where it is from, as loosely as anybody says that to a stranger in a lobby. */
+    val from: String = listOf("the us", "the us", "the us", "the us", "canada", "the uk", "the uk", "australia", "germany", "sweden").random(r)
+    /** A way of typing that is its own, if it has one. */
+    val habit: String = listOf("", "", "", "you stretch a word now and then, like nooo or brooo", "you mostly type just one or two words",
+        "you ask short questions a lot", "you say ngl and fr a lot", "now and then you send just ? or ??", "you hardly ever use anybody's name").random(r)
+
     companion object {
         private val known = ConcurrentHashMap<String, BotCharacter>()
 

@@ -302,6 +302,15 @@ class BotsCommand : KoinComponent {
         plugin.logger.info("[lobbytest] ${BotManager.displayNameOf(bot)} stands in for a player in lobby 1 (${mode.label}, matches of ${players.coerceIn(2, 16)})")
     }
 
+    @Execute(name = "chatmodel")
+    @Description("Debug: whether the language model that words the bots' chat is up, and how many lines it has been asked for, said, been refused and been too slow for")
+    fun chatModel(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        val status = "Chat model: ${dev.betrix.superSmashMobsBrawl.services.ChatModelService.status()}"
+        plugin.logger.info("[chatai] $status")
+        if (sender is Player) sender.sendMessage(status)
+    }
+
     @Execute(name = "lobbymode")
     @Description("Debug: the stand-in player of a lobby test sets its match mode (ffa, team_ups, bots_vs_you, teams) and lives, for the match it starts next")
     fun lobbyMode(@Context sender: CommandSender, @Arg mode: String, @Arg lives: Int) {

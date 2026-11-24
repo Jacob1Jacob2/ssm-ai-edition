@@ -33,7 +33,8 @@ class LobbyTalk(private val random: Random = Random.Default, memory: LineMemory 
      */
     data class LastMatch(val endedAt: Long, val map: String, val scores: List<Score>, val kills: Map<Pair<String, String>, Int>)
 
-    private data class Line(val speaker: UUID, val text: String, val due: Long)
+    /** [why]: what the line is for, in plain words, when a model may word it ([BotDialogue.Brief]). */
+    private data class Line(val speaker: UUID, val text: String, val due: Long, val why: String? = null)
     private class Asked(val player: UUID, val text: String, val due: Long, val expires: Long)
 
     private val lines = BotLines(random, memory)
@@ -64,6 +65,8 @@ class LobbyTalk(private val random: Random = Random.Default, memory: LineMemory 
     private var idleSaid = 0
 
     val hasPending: Boolean get() = queue.isNotEmpty() || asked != null || hello.isNotEmpty()
+    /** A language model is there to answer what the script cannot, and to word lines this far down ([BotDialogue.wordsmith]); null for no model. */
+    var wordsmith: BotDialogue.Brief.Kind? = null
     /** Debug: told why something a player typed got the answer it did, or none. */
     var trace: ((String) -> Unit)? = null
 
@@ -116,7 +119,7 @@ class LobbyTalk(private val random: Random = Random.Default, memory: LineMemory 
         queue.firstOrNull()?.takeIf { now >= it.due }?.let { next ->
             queue.removeFirst()
             val speaker = talkers.find { it.id == next.speaker }
-            if (speaker != null && now - next.due < 6000) return send(speaker, next.text, now)
+            if (speaker != null && now - next.due < 6000) return send(speaker, next.text, now, next.why)
             // (Whoever was going to say it has left.)
             queue.clear()
         }
@@ -167,11 +170,22 @@ class LobbyTalk(private val random: Random = Random.Default, memory: LineMemory 
         val a = recall(first.name, p.id)
         val text = voice(first, members).lobbyHello(p, a, a?.fresh(clock()) == true) ?: return null
         greetedAt[p.id] = now
+        // (A hello is said as scripted, model or no model, and so is "gg", "ready" and waiting about:
+        // "hi jacob" cannot be bettered, and a small model given it to put in its own words said "ok".
+        // The model words what there is something to say about.)
         val reply = send(first, text, now)
         val second = pick(ready.filter { it.id != first.id })
         if (second != null && chance(0.35)) later(second, voice(second, members).lobbyHi(), now, 1200, 3000)
         return reply
     }
+
+    /** What a bot remembers of [p], as a sentence of facts: nothing, for somebody it has not played. */
+    private fun remembered(p: BotDialogue.Fighter, a: Acquaintance?): String = if (a == null) " You have not played ${p.name} before." else
+        " You remember ${p.name} from ${if (a.fresh(clock())) "a match a few minutes ago" else "a match some days ago"}" +
+            (if (a.map.isNotEmpty()) " on ${a.map}" else "") + ": kills between you two then were ${p.name} ${a.killedMe}, you ${a.killedThem}, and " +
+            (if (a.theyWon) "${p.name} won it" else if (a.iWon) "you won it" else "neither of you won it") + "." +
+            (if (a.theirStreak >= 2) " ${p.name} has won ${a.theirStreak} matches in a row with you in them." else "") +
+            (if (a.mouthed) " ${p.name} talked trash at you then." else "")
 
     private fun idle(people: List<BotDialogue.Fighter>, talkers: List<BotDialogue.Fighter>, members: List<BotDialogue.Fighter>, now: Long): BotDialogue.Reply? {
         // Nobody has answered for a while: the lobby goes quiet until somebody says something or a match is played.
@@ -185,6 +199,7 @@ class LobbyTalk(private val random: Random = Random.Default, memory: LineMemory 
         val say = voice(speaker, members)
         val mine = match?.scores?.find { it.bot && it.name.equals(speaker.name, true) }
         var sour = false
+        var why: String? = null
         val text = when {
             match != null && mine != null && matchTalk < 2 -> {
                 matchTalk++; sour = true
@@ -194,6 +209,11 @@ class LobbyTalk(private val random: Random = Random.Default, memory: LineMemory 
                 // (With nobody to name as the winner there is nothing true to say about losing to them.)
                 // (Two teams: how many were on its side and on the other.)
                 val sided = mine.side?.let { s -> match.scores.count { it.side == s } to match.scores.count { it.side != s } }
+                why = "You are back in the lobby from the match" + (if (match.map.isNotEmpty()) " on ${match.map}" else "") + ". " +
+                    (if (sided != null) "It was two teams, ${sided.first} on your side against ${sided.second}. " else "") +
+                    "You got ${mine.kills} ${if (mine.kills == 1) "kill" else "kills"} and died ${mine.deaths} ${if (mine.deaths == 1) "time" else "times"}. " +
+                    (if (mine.won) "You won it." else if (winner != null) "${winner.name} won it." else "You did not win it.") +
+                    (nemesis?.takeIf { (worst?.value ?: 0) >= 2 }?.let { " ${it.name} killed you ${worst!!.value} times." } ?: "")
                 if (!mine.won && winner == null) null else say.lobbyAfter(winner, mine.kills, mine.deaths, nemesis, worst?.value ?: 0, sided)
             }
             // (Somebody who was not in it has no opinion of the map it was on.)
@@ -202,11 +222,14 @@ class LobbyTalk(private val random: Random = Random.Default, memory: LineMemory 
         idleSaid++
         // Longer and longer gaps: people run out of things to say to a lobby that is not going anywhere.
         idleAt = now + (random.nextLong(40_000, 100_001) * Math.pow(1.6, idleSaid.toDouble())).toLong()
-        val reply = send(speaker, text ?: return null, now)
+        val reply = send(speaker, text ?: return null, now, why)
         // (What is said back about the match comes from somebody else who was in it.)
         val other = pick((if (sour) played else talkers).filter { it.id != speaker.id })
         val mate = mine?.side?.let { s -> match?.scores?.find { it.bot && it.name.equals(other?.name, true) }?.side == s } == true
-        if (other != null && chance(0.35)) later(other, voice(other, members).lobbyEcho(sour, mate), now, 1500, 3500)
+        if (other != null && chance(0.35)) later(other, voice(other, members).lobbyEcho(sour, mate), now, 1500, 3500,
+            if (!sour) null
+            else if (mate) "${speaker.name}, who was on your team in the last match, has just said something about it. You agree."
+            else "${speaker.name} has just said something about the last match, which you were in too. You react to it.")
         return reply
     }
 
@@ -234,7 +257,23 @@ class LobbyTalk(private val random: Random = Random.Default, memory: LineMemory 
             else -> null
         }
         trace?.invoke("typed: about ${kind ?: "nothing they know"}, to ${named?.name ?: "nobody by name"}; ${talkers.size} of ${members.count { it.bot }} bots talk")
-        if (kind == null && named == null) return null
+        val match = last
+        // What was typed, and what the bots know that bears on it: for a model to answer from.
+        fun heard(bot: BotDialogue.Fighter) = "${player.name} typed \"$text\" in the lobby" + (if (named?.id == bot.id) ", to you." else ".") +
+            remembered(player, recall(bot.name, player.id)) + (match?.let { m ->
+                " The last match played from this lobby" + (if (m.map.isNotEmpty()) " was on ${m.map} and" else "") +
+                    " was won by ${m.scores.filter { it.won }.joinToString(" and ") { it.name }.ifEmpty { "nobody" }}." +
+                    (m.scores.find { it.bot && it.name.equals(bot.name, true) }?.let { " You were in it: ${it.kills} kills, ${it.deaths} deaths." } ?: " You were not in it.")
+            } ?: "")
+        if (kind == null && named == null) {
+            // Nothing the script has a line for, and said to nobody. With a model to write an answer
+            // somebody may still give one: more likely to a question than to a remark.
+            val asks = Regex("\\?|^(who|whos|what|whats|why|how|when|where|does|do|did|is|are|can|anyone|any1|anybody|wanna|want|should|u guys|yall)\\b").containsMatchIn(text)
+            if (wordsmith == null || !chance(if (asks) 0.6 else 0.2)) return null
+            val bot = pick(talkers) ?: return null
+            lastSpoke = now
+            return BotDialogue.Reply(bot.id, "", brief = BotDialogue.Brief(heard(bot), BotDialogue.Brief.Kind.OPEN))
+        }
         // Not everything typed into a lobby gets an answer. Something said to a bot by name does.
         if (named == null && !chance(0.93)) { trace?.invoke("nobody bothers to answer (one time in fourteen)"); return null }
         val knowing = talkers.filter { recall(it.name, player.id) != null }
@@ -242,7 +281,6 @@ class LobbyTalk(private val random: Random = Random.Default, memory: LineMemory 
         val say = voice(bot, members)
         val a = recall(bot.name, player.id)
         val fresh = a?.fresh(clock()) == true
-        val match = last
         val line = when (kind) {
             "comeback" -> say.lobbyComeback(player, a, fresh)
             "whowon" -> match?.let { m ->
@@ -260,7 +298,9 @@ class LobbyTalk(private val random: Random = Random.Default, memory: LineMemory 
             "hi" -> say.greet(player)
             else -> say.lobbyWhat()
         } ?: return null
-        val reply = send(bot, line, now)
+        // ("hi", "gg", "ready", "bye" and "np" are said as scripted: there is nothing in them for a model to add.)
+        val reply = send(bot, line, now, heard(bot).takeIf { kind !in SMALL_TALK },
+            if (kind == null) BotDialogue.Brief.Kind.UNSURE else BotDialogue.Brief.Kind.ANSWER)
         // A couple of things a second one says too: "ready", "gg", "hi".
         val other = pick(talkers.filter { it.id != bot.id })
         if (other != null && named == null) voice(other, members).let { v ->
@@ -273,19 +313,25 @@ class LobbyTalk(private val random: Random = Random.Default, memory: LineMemory 
         return reply
     }
 
-    private fun later(speaker: BotDialogue.Fighter, text: String?, now: Long, from: Long, until: Long) {
+    private fun later(speaker: BotDialogue.Fighter, text: String?, now: Long, from: Long, until: Long, why: String? = null) {
         if (text == null || queue.size >= MAX_QUEUED) return
         val after = maxOf(now, queue.lastOrNull()?.due ?: now)
-        queue.addLast(Line(speaker.id, text, after + random.nextLong(from, until + 1)))
+        queue.addLast(Line(speaker.id, text, after + random.nextLong(from, until + 1), why))
     }
 
-    /** Styles a line and sends its first message; a second message after " / " follows a moment later. */
-    private fun send(speaker: BotDialogue.Fighter, raw: String, now: Long): BotDialogue.Reply? {
+    /**
+     * Styles a line and sends its first message; a second message after " / " follows a moment
+     * later. With a model there to word it ([wordsmith]) the line goes out with [why] it is said,
+     * and as one message: the model writes one.
+     */
+    private fun send(speaker: BotDialogue.Fighter, raw: String, now: Long, why: String? = null,
+                     kind: BotDialogue.Brief.Kind = BotDialogue.Brief.Kind.REMARK): BotDialogue.Reply? {
         val parts = raw.split(" / ").map(BotSlang::style).filter { it.isNotEmpty() }
         val text = parts.firstOrNull() ?: return null
-        if (parts.size > 1) queue.addFirst(Line(speaker.id, parts.drop(1).joinToString(" / "), now + random.nextLong(900, 2201)))
+        val brief = why?.takeIf { wordsmith?.let { most -> kind <= most } == true }?.let { BotDialogue.Brief(it, kind) }
+        if (parts.size > 1 && brief == null) queue.addFirst(Line(speaker.id, parts.drop(1).joinToString(" / "), now + random.nextLong(900, 2201)))
         lastSpoke = now
-        return BotDialogue.Reply(speaker.id, text)
+        return BotDialogue.Reply(speaker.id, text, brief = brief)
     }
 
     companion object {
@@ -302,5 +348,7 @@ class LobbyTalk(private val random: Random = Random.Default, memory: LineMemory 
         /** Lines said to a lobby in which nobody answers, before it goes quiet. */
         const val MAX_IDLE = 5
         const val MAX_QUEUED = 4
+        /** Answers that are a word of politeness and nothing else: these stay as scripted when a model words the rest. */
+        private val SMALL_TALK = setOf("hi", "gg", "bye", "ready", "sorry")
     }
 }

@@ -404,6 +404,8 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
                 listOf("fr its so annoying", "ikr i cant reach either", "same", "fr im so sick of it", "every game"))
             "burst" -> say("agree.burst", listOf("fr", "i saw that", "yea thats sus", "sus", "reported too"), listOf("that was clean", "cracked", "fr"),
                 listOf("same thing happened to me", "fr its not fair", "ikr u cant do anything"))
+            "run" -> say("agree.run", listOf("fr thats hacks", "reported", "hacks", "fr", "how is that allowed", "someone stop that"),
+                listOf("fr", "cracked", "lol ya", "good luck stopping that"), listOf("fr its not fair", "ikr", "i cant even get near", "same got me too"))
             else -> say("agree.kill", listOf("rip", "f", "lol", "oof"), listOf("rip", "f", "oof", "gf"), listOf("rip", "f", "thatll be me next", "oof"))
         }
 
@@ -837,6 +839,62 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
                 if (named(ability)) listOf("$a is carrying u", "u hit one $a", "lucky $a") else emptyList(),
                 listOf("ya u got me", "fair $lol", "that was a good one") + if (named(ability)) listOf("nice $a") else emptyList())
         }
+        /** [p] has now killed this bot [times] times in the match and is rubbing it in: "one kill" it is not. */
+        fun killedAgain(p: BotDialogue.Fighter, times: Int): String? {
+            val n = ref(p)
+            return say("killedagain",
+                listOf("ok thats $times whatever", "$times kills on me and ur proud", "go fight someone else $n", "ur obsessed with me $n", "keep counting $n",
+                    "ok $n i get it", "$times and ur still typing"),
+                listOf("ok u got me again $lol", "thats $times now $lol", "ur too good $n", "again really $lol", "ok ok $n"),
+                listOf("$times times now come on", "why always me $n", "can u pick someone else", "im so sick of u $n", "ok i get it $n", "$times times how"))
+        }
+
+        /** [p] is on a run of [run] kills, has just killed this bot too, and is rubbing it in. */
+        fun onRun(p: BotDialogue.Fighter, run: Int): String? {
+            val n = ref(p)
+            return say("onrun",
+                listOf("ok hacker", "$run in a row sure thats legit", "nobody is that good $n", "turn it off $n", "reported $n", "nice client $n", "yeah ok $n $lol"),
+                listOf("ok ur cracked $n", "$run in a row wow", "how r u doing that $lol", "ok that is impressive ngl", "chill $n $lol"),
+                listOf("$run kills in like a min how", "this is so dumb", "i cant even respawn in peace", "how is that fair", "ofc $n kills everyone", "whats even the point"))
+        }
+
+        /** [p] has killed [count] fighters in under a minute without dying. Said by one of those it is being done to. */
+        fun run(p: BotDialogue.Fighter, count: Int): String? {
+            val n = ref(p)
+            return say("run",
+                listOf("$n is hacking", "wtf $n", "$count kills in a row??", "someone kill $n", "how is $n not dead yet", "nah $n is cheating", "reported $n",
+                    "can someone stop $n", "aint no way thats legit", "$n has kill aura $lol"),
+                listOf("$n is cracked", "ok $n is on one", "someone stop $n $lol", "$count in a row wow", "how do we stop $n $lol", "$n is on fire"),
+                listOf("$n just kills everyone", "how do u even stop $n", "$count kills and nobody can touch $n", "this is so unfair", "can we all just get $n",
+                    "whats the point $n kills everyone", "im not even getting to play"))
+        }
+
+        /** This bot is out of the match and watching the end of it. [left] are the fighters still in it. */
+        fun watching(left: List<BotDialogue.Fighter>): String? {
+            // Somebody of its own team still in it is who it is for.
+            left.firstOrNull { mate(it) }?.let { m ->
+                val n = ref(m)
+                return say("watch.mate", listOf("cmon $n", "$n carry", "$n dont choke", "its on u $n", "$n u got this"),
+                    listOf("cmon $n", "gl $n", "u got this $n", "lets go $n", "$n is still in it"),
+                    listOf("$n pls win this", "cmon $n dont die too", "its all on $n now", "at least $n is alive"))
+            }
+            val n = ref(left.first())
+            return if (left.size == 1) null else say("watch",
+                listOf("just end it already", "this is taking forever", "someone win pls", "wake me up when its over", "$n is so lucky to be alive $lol", "fight already"),
+                listOf("gl both", "good fight", "this is close", "cmon $n", "this is a good one", "who wins this"),
+                listOf("i should still be in this", "wish that was me", "how is $n still alive", "$n got lucky to be there", "at least its not me dying"))
+        }
+
+        /** [p] types [word] straight after every kill: it is a macro, and this bot says so. */
+        fun macro(p: BotDialogue.Fighter, word: String): String? {
+            val n = ref(p); val w = word.take(8)
+            return say("macro",
+                listOf("nice auto $w $n", "$bro has it on a macro $lol", "turn off the macro $n", "auto $w $lol ok", "u dont even type that urself $n",
+                    "imagine needing a macro to talk"),
+                listOf("is that a macro $lol", "auto $w $lol", "u got that on a macro $n?", "ok we get it $n $lol"),
+                listOf("ofc $n has auto $w on", "even the $w is automatic", "the auto $w is so annoying", "can u turn that off $n", "great an auto $w"))
+        }
+
         fun youDied(ability: String) = move(ability).let { a ->
             say("youdied", listOf("u just died to me", "didnt u just die", "ur the one who died $lol", "says the dead guy") +
                 if (named(ability)) listOf("$bro u died to $a", "i just killed u with $a") else emptyList(),

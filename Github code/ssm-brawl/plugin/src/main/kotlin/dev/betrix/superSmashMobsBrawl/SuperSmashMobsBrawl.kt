@@ -94,6 +94,7 @@ class SuperSmashMobsBrawl : SuspendingJavaPlugin(), KoinComponent {
         runCatching { dev.betrix.superSmashMobsBrawl.services.AutoL.setup(dataFolder) }.onFailure { logger.warning("Auto L choices not loaded: ${it.message}") }
         runCatching { dev.betrix.superSmashMobsBrawl.bots.BotMemory.shared.setup(dataFolder) }.onFailure { logger.warning("What the bots remember not loaded: ${it.message}") }
         runCatching { dev.betrix.superSmashMobsBrawl.services.MiscSettings.setup(dataFolder) }.onFailure { logger.warning("Misc settings not loaded: ${it.message}") }
+        runCatching { dev.betrix.superSmashMobsBrawl.services.ChatModelService.setup(dataFolder, logger) }.onFailure { logger.warning("Chat model not started: ${it.message}") }
         dev.betrix.superSmashMobsBrawl.services.LobbyEdits.setup(dataFolder)
         ScoreboardService.setup()
         CombatLogService.setup()
@@ -228,6 +229,7 @@ class SuperSmashMobsBrawl : SuspendingJavaPlugin(), KoinComponent {
         // (A balance run cut short by the server stopping keeps what it had recorded.)
         dev.betrix.superSmashMobsBrawl.bots.BalanceRunner.stop("the server is stopping")
         BotConversationService.shutdown()
+        runCatching { dev.betrix.superSmashMobsBrawl.services.ChatModelService.shutdown() }
         dev.betrix.superSmashMobsBrawl.services.BotSkinService.teardown()
         dev.betrix.superSmashMobsBrawl.items.ItemService.teardown()
         dev.betrix.superSmashMobsBrawl.items.CarSteering.stop()
