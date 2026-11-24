@@ -230,10 +230,17 @@ object GameSetupService : KoinComponent {
     }
 
     /** Rolls the number of players of a setup on Random: one of the sizes the chosen map and the server have room for. */
-    internal fun rollPlayers(player: Player, s: Setup) {
-        val fitting = PLAYER_COUNTS.filter { MapVoteService.hasRoomFor(player, it) && minigameService.capacityRejection(it) == null }
-        s.players = fitting.ifEmpty { listOf(PLAYER_COUNTS.first()) }.random()
-    }
+    private fun fitting(player: Player) = PLAYER_COUNTS.filter { MapVoteService.hasRoomFor(player, it) && minigameService.capacityRejection(it) == null }
+        .ifEmpty { listOf(PLAYER_COUNTS.first()) }
+    internal fun rollPlayers(player: Player, s: Setup) { s.players = fitting(player).random() }
+
+    /**
+     * How many bots stand in the lobby of [player]: the bots of the match, except on Random
+     * players, where it is as many as the biggest match it could turn out to be. The size that was
+     * rolled is not to be read off the lobby before the match starts (the user, 2026-11-24: "its
+     * not random if you can see how many is in the lobby"); those not in it are gone when it does.
+     */
+    fun lobbyBots(player: Player, s: Setup): Int = if (s.playersRandom) fitting(player).max() - 1 else s.bots
 
     private val CHOICE_COLUMNS = listOf(2, 3, 4, 5, 7)
     private val CHOICE_COLORS = listOf(NamedTextColor.GREEN, NamedTextColor.YELLOW, NamedTextColor.GOLD, NamedTextColor.RED, NamedTextColor.LIGHT_PURPLE)

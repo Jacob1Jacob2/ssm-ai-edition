@@ -354,6 +354,19 @@ class BotsCommand : KoinComponent {
         }
     }
 
+    @Execute(name = "lobbyrandom")
+    @Description("Debug: the stand-in player of a lobby test picks Random players; the size rolled for its next match is logged, the lobby is not to show it")
+    fun lobbyRandom(@Context sender: CommandSender) {
+        if (!allowed(sender)) return
+        for (id in BotManager.standIns) {
+            val host = org.bukkit.Bukkit.getPlayer(id) ?: continue
+            val setup = dev.betrix.superSmashMobsBrawl.services.GameSetupService.setupOf(host)
+            setup.playersRandom = true
+            dev.betrix.superSmashMobsBrawl.services.GameSetupService.rollPlayers(host, setup)
+            plugin.logger.info("[lobbytest] ${BotManager.displayNameOf(host)} picks Random players: the next match is rolled at ${setup.players}")
+        }
+    }
+
     @Execute(name = "lobbysay")
     @Description("Debug: the stand-in player of a lobby test says this in chat, in the lobby or in its match ({bot} stands for the name of one of the bots with it)")
     fun lobbySay(@Context sender: CommandSender, @dev.rollczi.litecommands.annotations.join.Join("text") text: String) {

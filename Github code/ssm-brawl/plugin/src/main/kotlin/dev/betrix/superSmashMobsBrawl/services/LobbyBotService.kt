@@ -121,9 +121,11 @@ object LobbyBotService : KoinComponent {
                 val host = waiting.find { it.uniqueId == hosts[id] } ?: waiting.first().also { hosts[id] = it.uniqueId }
                 // Who the people waiting here know to be about: the bots they have watched standing
                 // in this lobby, or, just back from a match, those of it that said they would stay.
-                val before = shown[id] ?: stayers[id]?.takeIf { id in returning && it.second > ticks }?.first
+                // (Not on Random players: the lobby then holds many more than were in the match, and a
+                // dozen "Join>" lines for those who had only been standing there would be noise.)
+                val before = shown[id] ?: stayers[id]?.takeIf { id in returning && it.second > ticks && !GameSetupService.setupOf(host).playersRandom }?.first
                 returning -= id
-                reconcileGroup(id, GameSetupService.setupOf(host))
+                GameSetupService.setupOf(host).let { reconcileGroup(id, it, GameSetupService.lobbyBots(host, it)) }
                 if (before != null) comings(id, before)
                 shown[id] = botsIn(id).map(BotManager::displayNameOf)
             }
@@ -131,14 +133,14 @@ object LobbyBotService : KoinComponent {
         } finally { reconciling = false }
     }
 
-    private fun reconcileGroup(id: Int, settings: GameSetupService.Setup) {
+    private fun reconcileGroup(id: Int, settings: GameSetupService.Setup, shown: Int) {
         val built = BotManager.rosterProfiles()
         val custom = CustomBotService.profiles()
         val profiles = (built + custom).associateBy { it.name.lowercase() }
         val current = botsIn(id)
         // Whoever is standing here already stays; after a match, so do the bots that said they would.
         val back = stayers[id]?.takeIf { it.second > ticks }?.first.orEmpty()
-        val desired = LobbyRoster.choose(settings.bots, settings.wantedBotNames,
+        val desired = LobbyRoster.choose(shown, settings.wantedBotNames,
             current.map(BotManager::displayNameOf) + back, built.shuffled().map { it.name }, custom.map { it.name },
             gone = leavers[id]?.takeIf { it.second > ticks }?.first.orEmpty())
         val chosen = desired.mapNotNull { profiles[it.lowercase()] }.map { profile ->
@@ -170,8 +172,9 @@ object LobbyBotService : KoinComponent {
         if (LobbyService.busy(id)) return emptyList()
         hosts[id] = host.uniqueId
         val settings = GameSetupService.setupOf(host)
-        reconcileGroup(id, settings)
-        val available = botsIn(id)
+        reconcileGroup(id, settings, GameSetupService.lobbyBots(host, settings))
+        // (On Random players the lobby holds more than the match takes: who is in it is as much a matter of chance as how many.)
+        val available = botsIn(id).let { if (settings.playersRandom) it.shuffled() else it }
         val selected = settings.wantedBotNames.mapNotNull { name -> available.find { BotManager.displayNameOf(it).equals(name, true) } }
         val chosen = (selected + available.filter { it !in selected }).take(count)
         if (chosen.size != count) return emptyList()
