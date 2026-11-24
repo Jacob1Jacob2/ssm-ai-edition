@@ -38,7 +38,7 @@ object ChatPrompt {
         - most messages have no "lol" and no "bro" in them at all. never start two messages the same way
         - they do not say "literally", "honestly" or "actually"
         - kids in a game lobby, not an assistant: no "hey there", no explaining, no advice, no emojis, no hashtags, no quotation marks
-        - they call people by name, by a short form of the name, by their kit ("chicken", "skeleton"), or just "u". never "he" or "she"
+        - they call people by name, by a short form of the name, by their kit ("chicken", "skeleton"), or just "u". never "he", "she", "him" or "her"
         - they only talk about what really happened: never make up a kill, a number, a name or an event that is not in the facts you were given
         - trash talk is about the game only: skill, luck, camping, spamming one ability, hacks, lag. never slurs, $NO_SWEARING, nothing sexual, nothing about real life or family, never tell anybody to hurt themselves
         - they are players. if somebody calls one of them a bot it laughs it off the way a player would
@@ -104,7 +104,11 @@ object ChatPrompt {
 
     private fun moodOf(mood: BotPersonality) = when (mood) {
         BotPersonality.TOXIC -> "toxic: cocky, never admit a loss, love rubbing it in"
-        BotPersonality.SALTY -> "salty: you complain, blame the game and your luck, feel hard done by"
+        // (Whatever it is told to blame, it blames in every line. "blame the game and your luck" gave
+        // "this game is so rigged", "the game is just broken"; a list with "lag" in it gave "lag must
+        // have been bad", "the lag was crazy man", "the glitch is real" from three bots in one match.
+        // So it is told no topic: only to stay on what happened.)
+        BotPersonality.SALTY -> "salty: a sore loser. you grumble about the exact thing that just happened to you, and feel hard done by"
         else -> "chill: friendly, a good sport, laugh things off"
     }
 
@@ -157,21 +161,62 @@ object ChatPrompt {
      * Everything for one line. [like] is the line the script would say here, given as what somebody
      * else typed in the same spot: it shows the model what kind of thing fits, and the model puts
      * it its own way. [filler]: the bot's own filler word and laugh are named (not every time, or
-     * every line has them).
+     * every line has them). [mine]: what this bot has typed before in this match or lobby, which it
+     * is not to come out with again. Without it a salty one made the same complaint all match long:
+     * "i need a win", "i just want one win for once", "this game is so rigged", "the game is just
+     * broken" (the user's match of 2026-11-24).
      */
-    fun user(me: Persona, scene: String, chat: List<Said>, brief: BotDialogue.Brief, like: String?, filler: Boolean = false): String = buildString {
+    fun user(me: Persona, scene: String, chat: List<Said>, brief: BotDialogue.Brief, like: String?, filler: Boolean = false,
+             mine: List<String> = emptyList()): String = buildString {
         append(who(me, scene.startsWith("Match"), filler))
         append("\n").append(scene)
         append("\nRecent chat:\n")
         append(if (chat.isEmpty()) "(nothing yet)" else chat.takeLast(MOST_CHAT).joinToString("\n") { "${it.name}: ${it.text}" })
+        if (mine.isNotEmpty()) append("\nYou have already typed: ${mine.takeLast(MOST_MINE).joinToString(", ") { "\"$it\"" }}. " +
+            "Do not say any of that again or make the same point in other words: this message is about something else.")
         append("\nWhat just happened: ").append(brief.event)
         if (like != null) append("\nSomebody else in the same spot typed: $like. Say that kind of thing in your own words.")
         append("\nWrite ${me.name}'s chat message.")
     }
 
+    /** Words that say nothing of what a line is about: two lines are on the same thing by the rest ([stale]). */
+    private val FILLER = setOf("i", "im", "a", "an", "the", "is", "so", "just", "u", "ur", "you", "your", "this", "that", "it", "its", "to", "of", "for",
+        "and", "me", "my", "bro", "lol", "lmao", "no", "not", "be", "on", "in", "at", "was", "are", "we", "really", "one", "with", "all", "do", "did",
+        "does", "how", "what", "why", "can", "cant", "get", "got", "have", "has", "again", "even", "ever", "like", "man", "dude", "ngl", "fr", "nah",
+        "wtf", "omg", "bruh", "dawg", "xd", "haha", "once")
+    private val notWord = Regex("[^a-z0-9]+")
+
+    /** What [text] is about: its words without the filler and without anybody's name (or the short form of one). */
+    private fun gist(text: String, names: Collection<String>): Set<String> {
+        val called = names.map { it.lowercase() }
+        return text.lowercase().split(notWord).filter { w -> w.isNotEmpty() && w !in FILLER && called.none { w == it || (w.length >= 3 && it.startsWith(w)) } }.toSet()
+    }
+
+    /**
+     * Has whoever typed [mine] said [text] already, near enough? The same words, or half of what
+     * the shorter of the two lines is about: "this game is so rigged" after "the game is just
+     * broken", "i just want one win for once" after "i need a win". A model told not to repeat
+     * itself mostly does not; this is for when it does. One-word lines are let be ("ez" twice in a
+     * match is how people type). [names]: the people there, who are not what a line is about.
+     */
+    fun stale(text: String, mine: Collection<String>, names: Collection<String> = emptyList()): Boolean {
+        val now = gist(text, names)
+        if (now.isEmpty()) return false
+        val long = text.trim().count { it == ' ' } >= 2
+        return mine.any { old ->
+            if (old == text) return@any long
+            val then = gist(old, names)
+            if (then.isEmpty()) return@any false
+            val shared = now.count { it in then }
+            val least = minOf(now.size, then.size)
+            if (least == 1) long && shared == 1 && now.size == then.size else shared * 2 >= least
+        }
+    }
+
     private fun shot(name: String, kit: String, mood: BotPersonality, scene: String, chat: List<Pair<String, String>>, event: String, like: String?,
-                     answer: String, since: Int = 2016, from: String = "the us") =
-        user(Persona(name, kit, mood, "bro", "lol", since, from, ""), scene, chat.map { Said(it.first, it.second) }, BotDialogue.Brief(event), like) to answer
+                     answer: String, since: Int = 2016, from: String = "the us", mine: List<String> = emptyList()) =
+        user(Persona(name, kit, mood, "bro", "lol", since, from, ""), scene, chat.map { Said(it.first, it.second) }, BotDialogue.Brief(event), like,
+            mine = mine) to answer
 
     /**
      * Worked examples, each a question as [user] puts it and the line that answers it. They go to
@@ -233,8 +278,14 @@ object ChatPrompt {
             listOf("Fox" to "i couldnt even move"), "Fox is complaining. You rub it in.", "cry more fox", "skill issue fox"),
         shot("Dino", "Guardian", BotPersonality.CHILL, "Match: free-for-all on Desert, 5 players.\nLives: you 3, Alex (chicken) 3, Pebble (slime) 1.",
             listOf("Pebble" to "why is it always me"), "Pebble is having a bad time and complaining. You try to cheer Pebble up.", "unlucky pebble", "u got this pebble"),
+        // (What it has said already is not said again: the next complaint is about the next thing.)
+        shot("Pebble", "Slime", BotPersonality.SALTY, "Match: free-for-all on Desert, 5 players.\nLives: you 1, Alex (chicken) 3, Dino (guardian) 2.",
+            listOf("Pebble" to "this game is rigged", "Mango" to "lol", "Pebble" to "i need a win"),
+            "Dino just killed you with target laser. You have 1 life left. Kills between you two this match: Dino 2, you 0.",
+            "this game hates me", "that laser goes through walls i swear", mine = listOf("this game is rigged", "i need a win")),
     )
 
     private const val MOST_LISTED = 9
     private const val MOST_CHAT = 8
+    private const val MOST_MINE = 5
 }

@@ -8,9 +8,11 @@ import kotlin.random.Random
  * This class decides who speaks, when, and about what; [BotLines] holds the wording.
  *
  * @param reactions how often bots voice optional reactions (kills, deaths, crystals, the match
- *   starting). Real players do not comment on everything; 1.0 makes them (used by tests). */
+ *   starting). Real players do not comment on everything; 1.0 makes them (used by tests).
+ * @param tire how ready a bot that has this moment typed a line is to type another of its own
+ *   accord ([fresh]); 1.0 for the bots as they were, when one of them could do most of the talking. */
 class BotDialogue(private val random: Random = Random.Default, memory: LineMemory = LineMemory.shared,
-                  private val reactions: Double = 0.65) {
+                  private val reactions: Double = 0.65, private val tire: Double = TIRE) {
     /**
      * [side]: in a match of two teams, which one this fighter is on; nothing in a free-for-all,
      * where everybody is on their own. What a bot says has to fit it: seven of them against one
@@ -39,8 +41,16 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
             UNSURE,
             /** The script's answer to something a player typed. */
             ANSWER,
-            /** What a bot says of its own accord about the match, or to another bot. */
-            REMARK
+            /** What a bot says of its own accord about the match. */
+            REMARK,
+            /**
+             * What one bot answers another: a comeback, a "calm down", a "same here". The hand-written
+             * ones are short and to the point, and a model that reworded them lost the thread of who
+             * had said what to whom ("no way i was camping ducksicle", from the one who had been
+             * accused of nothing; the user's match of 2026-11-24). So no model is let this far
+             * unless it is asked for by name ([ChatModelService.Settings.scope] "banter").
+             */
+            BANTER
         }
         val open: Boolean get() = kind == Kind.OPEN
     }
@@ -73,6 +83,8 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
     private val deaths = ArrayDeque<Death>()
     private val topics = mutableMapOf<UUID, Topic>()
     private val lastBot = mutableMapOf<UUID, Long>()
+    /** When each bot said each of its last lines, for [fresh]. */
+    private val spoke = HashMap<UUID, ArrayDeque<Long>>()
     private val recentLines = ArrayDeque<String>()
     private val ambient = mutableMapOf<String, Long>()
     /** How many times each fighter has been called out for camping, and when they may be again. */
@@ -142,6 +154,28 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
 
     private fun voiced(share: Double) = reactions >= 1.0 || random.nextDouble() < reactions * share
 
+    /** [id] types a line at [now]. */
+    private fun says(id: UUID, now: Long) {
+        lastSpoke = now; lastBot[id] = now
+        val times = spoke.getOrPut(id) { ArrayDeque() }
+        // (The second message of a two-message line is the same thing being said.)
+        if (times.isEmpty() || now - times.last() > 4000) times.addLast(now)
+        while (times.isNotEmpty() && now - times.first() > TIRE_MS) times.removeFirst()
+    }
+
+    /**
+     * How ready [id] is to say something more of its own accord: 1 for somebody who has not said a
+     * word lately, and less for every line of theirs in the last three minutes, the newest
+     * counting the most. Nobody in a lobby of eight does most of the talking, and a bot did: the one
+     * that kept dying was the one every death line belonged to, and it said 8 of the 14 lines of a
+     * five-minute match (the user's, 2026-11-24). With this somebody else says the next one, or
+     * nobody does. It does not count against answering to one's own name.
+     */
+    private fun fresh(id: UUID, now: Long): Double {
+        val weight = spoke[id]?.sumOf { (1.0 - (now - it).toDouble() / TIRE_MS).coerceIn(0.0, 1.0) } ?: return 1.0
+        return Math.pow(tire, weight)
+    }
+
     fun cast(player: UUID, ability: String, now: Long) {
         prune(now)
         casts.addLast(Cast(player, ability.take(64), now))
@@ -202,7 +236,7 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
     }
     private var nextWatch = 0L
     fun clear() {
-        pending = null; followups.clear(); casts.clear(); hits.clear(); deaths.clear(); topics.clear(); lastBot.clear()
+        pending = null; followups.clear(); casts.clear(); hits.clear(); deaths.clear(); topics.clear(); lastBot.clear(); spoke.clear()
         recentLines.clear(); ambient.clear(); callouts.clear(); quietUntil.clear(); cast.clear(); grudges.clear(); settled.clear()
         runs.clear(); typed.clear(); macros.clear(); nextWatch = 0L
     }
@@ -253,7 +287,8 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
         val mentioned = able.find { names(it, request.detail) }
         // Some hardly say a word ([BotCharacter.chatty]): they answer to their name, and little else.
         val crowd = fighters.count { it.bot }
-        val bots = if (reactions >= 1.0) able else able.filter { it.id == mentioned?.id || random.nextDouble() < BotCharacter.chattyAmong(it.name, crowd) }
+        // And whoever has just been talking leaves the next one to somebody else ([fresh]).
+        val bots = if (reactions >= 1.0) able else able.filter { it.id == mentioned?.id || random.nextDouble() < BotCharacter.chattyAmong(it.name, crowd) * fresh(it.id, now) }
         if (bots.isEmpty()) return null
         // The match starting: with somebody in it that one of them has played before there is more to say than "gl".
         if (request.kind == "start" && !voiced(if (bots.any { b -> fighters.any { !it.bot && recall(b.name, it.id) != null } }) 1.3 else 0.55)) return null
@@ -360,7 +395,7 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
             // one, to a question more often than to a remark; without one it is left alone.
             if (event == null) return null
             if (reactions < 1.0 && random.nextDouble() >= (if (OPEN_QUESTION.containsMatchIn(request.detail)) 0.6 else 0.2)) return null
-            lastSpoke = now; lastBot[speaker.id] = now
+            says(speaker.id, now)
             return Reply(speaker.id, "", brief = Brief(event, Brief.Kind.OPEN))
         }
         ambient["${request.kind}:${request.actor}"] = now
@@ -468,13 +503,14 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
         fun queue(f: Fighter, text: String?, grudge: UUID? = null, allies: List<UUID> = emptyList(), why: String? = null): Boolean {
             if (text == null || followups.size >= MAX_CONVERSATION) return false
             at += random.nextLong(1500, 3501)
-            followups.addLast(Followup(f.id, text, at, grudge, allies, brief = why?.takeIf { worded(Brief.Kind.REMARK) }?.let { Brief(it) }))
+            // (One bot answering another: as it was written by hand, unless a model is let that far, [Brief.Kind.BANTER].)
+            followups.addLast(Followup(f.id, text, at, grudge, allies, brief = why?.takeIf { worded(Brief.Kind.BANTER) }?.let { Brief(it, Brief.Kind.BANTER) }))
             return true
         }
         val said = "${speaker.name}'s last message"
         val crowd = fighters.count { it.bot }
         val talkers = fighters.filter { it.bot && it.id != speaker.id && talks(it.id) &&
-            (reactions >= 1.0 || random.nextDouble() < BotCharacter.chattyAmong(it.name, crowd)) }
+            (reactions >= 1.0 || random.nextDouble() < BotCharacter.chattyAmong(it.name, crowd) * fresh(it.id, now)) }
         // The bot the line was about answers for itself, even from the respawn screen.
         val aimedAt = who?.let { w -> talkers.find { it.id == w.id } }
         // Bystanders: still in the match (a respawning bot can type), not the subject, and not
@@ -754,7 +790,7 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
         // Whatever else was about to be said can wait: this is the last thing it types.
         pending = null
         val styled = BotSlang.style(text.substringBefore(" / ")).takeIf { it.isNotEmpty() } ?: return null
-        lastSpoke = now; lastBot[f.id] = now
+        says(f.id, now)
         recentLines.addLast(styled); while (recentLines.size > 12) recentLines.removeFirst()
         return Reply(f.id, styled, urgent = true)
     }
@@ -815,7 +851,7 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
         // The rest of this bot's own line comes before anybody else's answer to it. (A model writes
         // one message: the second half of a scripted line would not follow from it.)
         if (parts.size > 1 && worded == null) followups.addFirst(Followup(speaker.id, parts.drop(1).joinToString(" / "), now + random.nextLong(900, 2201)))
-        lastSpoke = now; lastBot[speaker.id] = now
+        says(speaker.id, now)
         recentLines.addLast(text); while (recentLines.size > 12) recentLines.removeFirst()
         return Reply(speaker.id, text, brief = worded)
     }
@@ -956,6 +992,15 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
         /** A line typed this soon after the player's own kill, [MACRO_LINES] kills running with the same first word, is automatic. */
         const val MACRO_MS = 1500L
         const val MACRO_LINES = 3
+        /**
+         * A line a bot typed counts against its next one for this long, less and less ([fresh]), and
+         * a line typed this moment leaves it [TIRE] as ready as it was. Measured on a bot killed
+         * every 40 seconds for five minutes (ChatModelTest): it had a line for three deaths in four
+         * as it was, and has one for about two in five now, while it answers to its name as often
+         * as ever.
+         */
+        const val TIRE_MS = 180_000L
+        const val TIRE = 0.25
         /** Something typed that reads as a question to whoever is there. */
         private val OPEN_QUESTION = Regex("\\?|^(who|whos|what|whats|why|how|when|where|does|do|did|is|are|can|anyone|any1|anybody|wanna|want|should|u guys|yall)\\b")
         /** A player asking why they are being targeted, or saying that they are being teamed on. */

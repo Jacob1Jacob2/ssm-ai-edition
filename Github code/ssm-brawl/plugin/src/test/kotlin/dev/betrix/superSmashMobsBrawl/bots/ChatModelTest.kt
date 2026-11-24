@@ -352,6 +352,91 @@ class ChatModelTest : StringSpec({
         all.chat(human.id, "gg", 1000)
         all.poll(4000, listOf(human, bot)) { a, b -> a != b }!!.brief shouldBe null
     }
+    "what one bot answers another is said as written by hand, unless a model is let that far" {
+        // Every bot toxic: Dino is killed by Fox and has something to say about it, and Fox answers back as often as not.
+        fun answers(reach: BotDialogue.Brief.Kind): List<BotDialogue.Reply> = (0..60).flatMap { seed ->
+            val d = engine(seed = seed).also { it.wordsmith = reach }
+            d.death(bot.id, other.id, "Explode", 1000)
+            val facts = listOf(human, bot.copy(lives = 2), other)
+            val first = d.poll(4000, facts) { a, b -> a != b } ?: return@flatMap emptyList()
+            // (What Dino says of its own death is its own remark, and a model words that.)
+            first.brief!!.kind shouldBe BotDialogue.Brief.Kind.REMARK
+            (4500L..20_000L step 250).mapNotNull { t -> d.poll(t, facts) { a, b -> a != b } }.filter { it.speaker == other.id }
+        }
+        val written = answers(BotDialogue.Brief.Kind.REMARK)
+        (written.size > 10) shouldBe true
+        written.forEach { it.brief shouldBe null; (it.text.isNotEmpty()) shouldBe true }
+        val worded = answers(BotDialogue.Brief.Kind.BANTER)
+        worded.any { it.brief?.kind == BotDialogue.Brief.Kind.BANTER } shouldBe true
+        // "all" in the settings file is all a bot says of the match and to a player; "banter" is this as well.
+        (BotDialogue.Brief.Kind.BANTER > BotDialogue.Brief.Kind.REMARK) shouldBe true
+    }
+    "a bot that has just been talking leaves the next line to somebody else" {
+        // The user's match of 2026-11-24: the bot that kept dying said 7 of the 11 lines of it, a
+        // line for every death. Dino dies to the player every 40 seconds for five minutes.
+        val mango = BotDialogue.Fighter(UUID(0, 7), "Mango", "Wolf", 3, true)
+        val facts = listOf(human, bot, other, mango)
+        // (How many lines Dino says, and how many times out of those it answers when it is then spoken to by name.)
+        fun talk(tire: Double): Pair<Int, Int> {
+            var lines = 0; var answers = 0
+            for (seed in 0..120) {
+                val d = BotDialogue(Random(seed), LineMemory(), 0.65, tire).also { it.mode = BotPersonality.CHILL }
+                var t = 1000L
+                while (t < 300_000L) {
+                    if (t % 40_000L == 1000L) d.death(bot.id, human.id, "Chicken Missile", t)
+                    if (d.poll(t, facts) { a, b -> a != b }?.speaker == bot.id) lines++
+                    t += 250
+                }
+                d.chat(human.id, "dino what kit is that", t)
+                if ((t..t + 12_000L step 250).any { d.poll(it, facts) { a, b -> a != b }?.speaker == bot.id }) answers++
+            }
+            return lines to answers
+        }
+        val (before, answeredBefore) = talk(1.0)
+        val (after, answeredAfter) = talk(BotDialogue.TIRE)
+        println("lines by the bot that keeps dying: $before as it was, $after now; answers to its name: $answeredBefore as it was, $answeredAfter now")
+        // It has a good deal less to say about dying yet again...
+        (before > 300) shouldBe true
+        (after * 10 < before * 6) shouldBe true
+        (after > 100) shouldBe true
+        // ...and answers to its name as it always did, however much it has just said.
+        (answeredBefore > 100) shouldBe true
+        (answeredAfter * 10 >= answeredBefore * 9) shouldBe true
+    }
+    "nobody is called he or she: a line that does it is not said" {
+        val filter = ChatFilter()
+        filter.check("finally got him", "Lyzardguy", listOf("Jacob"), "").shouldBeInstanceOf<ChatFilter.Rejected>()
+        filter.check("she just spams missile", "Lyzardguy", listOf("Jacob"), "").shouldBeInstanceOf<ChatFilter.Rejected>()
+        // (Words that only have those letters in them are words like any other.)
+        filter.check("the chicken got there first", "Lyzardguy", listOf("Jacob"), "") shouldBe ChatFilter.Line("the chicken got there first")
+        filter.check("finally got jacob", "Lyzardguy", listOf("Jacob"), "") shouldBe ChatFilter.Line("finally got jacob")
+    }
+    "a bot is told what it has said already, and a line that says it again is known for one" {
+        val who = ChatPrompt.persona("Aoryuuu", "Slime", BotPersonality.SALTY)
+        val brief = BotDialogue.Brief("Jacob just killed you with chicken missile. You have 1 life left.")
+        val plain = ChatPrompt.user(who, "Match: free-for-all, 4 players.", emptyList(), brief, "why me")
+        plain shouldNotContain "already typed"
+        val told = ChatPrompt.user(who, "Match: free-for-all, 4 players.", emptyList(), brief, "why me", mine = listOf("i need a win", "this game is so rigged"))
+        told shouldContain "You have already typed: \"i need a win\", \"this game is so rigged\"."
+        told shouldContain "Do not say any of that again"
+        // The four lines of the user's match were one complaint made four times over.
+        val mine = listOf("i need a win", "this game is so rigged")
+        ChatPrompt.stale("i just want one win for once", mine) shouldBe true
+        ChatPrompt.stale("the game is just broken", mine) shouldBe true
+        ChatPrompt.stale("bro i need a win", mine) shouldBe true
+        // Something else is something else, whoever it is said to...
+        ChatPrompt.stale("that missile goes through walls", mine) shouldBe false
+        ChatPrompt.stale("jacob was on fire lol", listOf("jacob is just camping"), listOf("Jacob1Jacob2", "Aoryuuu")) shouldBe false
+        ChatPrompt.stale("nice one jacob", listOf("gg jacob"), listOf("Jacob1Jacob2")) shouldBe false
+        // (The same goes for what somebody else has just said: three bots blaming the lag in a row is one script talking.)
+        ChatPrompt.stale("the lag was crazy man", listOf("lag must have been bad", "gg")) shouldBe true
+        // ...and the one-word lines everybody types all match long are let be.
+        ChatPrompt.stale("ez", listOf("ez")) shouldBe false
+        ChatPrompt.stale("gg", listOf("gg", "wtf")) shouldBe false
+        ChatPrompt.stale("wtf", emptyList()) shouldBe false
+        // (The worked examples still answer their own questions with nothing they are told not to say.)
+        ChatPrompt.SHOTS.count { "already typed" in it.first } shouldBe 1
+    }
     "a bot spoken to by name answers even what it can make nothing of" {
         for (seed in 0..20) {
             val reply = engine(seed = seed).also { it.chat(human.id, "dino the window is open", 1000) }.poll(4000, listOf(human, bot, other)) { a, b -> a != b }!!

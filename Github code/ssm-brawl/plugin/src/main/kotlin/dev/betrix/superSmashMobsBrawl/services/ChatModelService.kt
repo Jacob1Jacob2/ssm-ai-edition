@@ -100,6 +100,8 @@ object ChatModelService {
     private var settings = Settings()
     private var log: Logger = Logger.getLogger("ChatModel")
     val asked = AtomicInteger(); val used = AtomicInteger(); val refused = AtomicInteger(); val missed = AtomicInteger()
+    /** Lines the model wrote that its bot had said already, near enough ([ChatPrompt.stale]). */
+    val repeats = AtomicInteger()
 
     // ------------------------------------------------------------------ what the owner picked in the menu
 
@@ -362,6 +364,9 @@ object ChatModelService {
 
     /** How far down [BotDialogue.Brief.Kind] the model that is loaded words the bots' lines ([Settings.scope]); null while there is none. */
     fun reach(): BotDialogue.Brief.Kind? = if (!ready || writer == Writer.SCRIPT) null else when (if (small) settings.smallScope else settings.scope) {
+        // ("all" is all that a bot says about the match and to a player. What one bot answers another
+        // stays as it was written by hand, unless that is asked for too.)
+        "banter" -> BotDialogue.Brief.Kind.BANTER
         "all" -> BotDialogue.Brief.Kind.REMARK
         "chat" -> BotDialogue.Brief.Kind.ANSWER
         else -> BotDialogue.Brief.Kind.UNSURE
@@ -374,16 +379,24 @@ object ChatModelService {
      * The line for [me] to say about [brief], worded by the model, once it has been through
      * [ChatFilter]. [scene] is how the match or lobby stands, [chat] what was last said there,
      * [fallback] the scripted line (empty when there is none) and [others] everybody else's name.
+     * [mine] is what this bot has typed before, here: the model is shown it and told to say
+     * something else, and a line that comes back as the same thing over again is not used.
      */
     fun write(me: ChatPrompt.Persona, scene: String, chat: List<ChatPrompt.Said>, brief: BotDialogue.Brief, fallback: String,
-              others: Collection<String>): CompletableFuture<Outcome> {
+              others: Collection<String>, mine: List<String> = emptyList()): CompletableFuture<Outcome> {
         val client = model?.takeIf { ready } ?: return CompletableFuture.completedFuture(Outcome(null, "no model"))
         // What a player typed goes to the model only if it could be said here itself.
         val names = others + me.name
         if (filter.banned(brief.event, names) != null) return CompletableFuture.completedFuture(Outcome(null, "not put to the model"))
-        // (The stand-in "what?" for something the script did not understand is no guide to an answer: the model is not shown it.)
-        val like = fallback.takeIf { it.isNotEmpty() && brief.kind != BotDialogue.Brief.Kind.UNSURE }
-        val prompt = ChatPrompt.user(me, scene, chat.filter { filter.banned(it.text, names) == null }, brief, like, filler = settings.voices)
+        val said = mine.filter { filter.banned(it, names) == null }
+        // A remark of the bot's own is not to be what somebody else has just said either: three bots
+        // blaming the lag one after another is one script talking. (An answer may well use the
+        // words of what it answers, and is not held to this.)
+        val around = if (brief.kind != BotDialogue.Brief.Kind.REMARK) emptyList() else chat.filter { !it.name.equals(me.name, true) }.map { it.text }
+        // (The stand-in "what?" for something the script did not understand is no guide to an answer: the model is not shown it.
+        // Nor is a scripted line that is what this bot said a minute ago: shown it, the model says it again.)
+        val like = fallback.takeIf { it.isNotEmpty() && brief.kind != BotDialogue.Brief.Kind.UNSURE && !ChatPrompt.stale(it, said, names) }
+        val prompt = ChatPrompt.user(me, scene, chat.filter { filter.banned(it.text, names) == null }, brief, like, filler = settings.voices, mine = said)
         asked.incrementAndGet()
         lastUse = System.currentTimeMillis()
         val began = System.nanoTime()
@@ -393,7 +406,10 @@ object ChatModelService {
             val ms = (System.nanoTime() - began) / 1_000_000
             if (raw == null) { missed.incrementAndGet(); return@thenApply Outcome(null, "no answer in time", ms) }
             when (val verdict = filter.check(raw, me.name, others, prompt)) {
-                is ChatFilter.Line -> { used.incrementAndGet(); Outcome(called(verdict.text, me.name, others), "ok", ms) }
+                is ChatFilter.Line ->
+                    if (ChatPrompt.stale(verdict.text, said, names)) { repeats.incrementAndGet(); Outcome(null, "said that already: \"${verdict.text}\"", ms) }
+                    else if (ChatPrompt.stale(verdict.text, around, names)) { repeats.incrementAndGet(); Outcome(null, "somebody just said that: \"${verdict.text}\"", ms) }
+                    else { used.incrementAndGet(); Outcome(called(verdict.text, me.name, others), "ok", ms) }
                 is ChatFilter.Silent -> Outcome(null, "would say nothing", ms, silent = true)
                 is ChatFilter.Rejected -> { refused.incrementAndGet(); Outcome(null, "${verdict.why}: \"${raw.take(80)}\"", ms) }
             }
@@ -423,7 +439,7 @@ object ChatModelService {
         val file = if (borrowed) "somebody else's" else File(if (small) settings.smallModel else settings.model).name.ifEmpty { "no model set" }
         "${if (ready) "up" else "not up"} at ${settings.url}, $file, writes ${if (small) settings.smallScope else settings.scope}; " +
             "picked ${writer.key}, word filter ${if (filtering) "on" else "off"}, ${ownWords().size} own words; " +
-            "asked ${asked.get()}, said ${used.get()}, refused ${refused.get()}, too slow ${missed.get()}" +
+            "asked ${asked.get()}, said ${used.get()}, refused ${refused.get()}, said before ${repeats.get()}, too slow ${missed.get()}" +
             (video()?.let { "; video memory ${it.free} MiB free of ${it.total}" } ?: "")
     }
 

@@ -79,9 +79,30 @@ object BotConversationService : KoinComponent, Listener {
     private class Heard {
         val lines = ArrayDeque<ChatPrompt.Said>()
         var wording: java.util.concurrent.CompletableFuture<Void?> = java.util.concurrent.CompletableFuture.completedFuture(null)
-        fun note(name: String, text: String) { lines.addLast(ChatPrompt.Said(name, text.take(120))); while (lines.size > 8) lines.removeFirst() }
+        /** What each of them has typed here, the last few lines of it: what a model is told not to have that bot say again. */
+        private val own = HashMap<String, ArrayDeque<String>>()
+        fun note(name: String, text: String) {
+            lines.addLast(ChatPrompt.Said(name, text.take(120))); while (lines.size > 8) lines.removeFirst()
+            own.getOrPut(name.lowercase()) { ArrayDeque() }.let { it.addLast(text.take(120)); while (it.size > 6) it.removeFirst() }
+        }
         fun said(text: String) = lines.any { it.text == text }
+        fun mine(name: String): List<String> = own[name.lowercase()]?.toList().orEmpty()
+        /**
+         * What everybody typed in [from] counts as typed here too: a bot that said "i need a win" in
+         * the lobby is the same one in the match two minutes later, and back in the lobby after it.
+         */
+        fun carry(from: Heard) = from.own.forEach { (name, theirs) ->
+            own.getOrPut(name) { ArrayDeque() }.let { mine -> theirs.filter { it !in mine }.forEach(mine::addLast); while (mine.size > 6) mine.removeFirst() }
+        }
     }
+    /**
+     * The scripted line of [reply], for when the model's is not used; or nothing, when it is a
+     * remark of the bot's own that it has made already, near enough ([mine], [ChatPrompt.stale]):
+     * better no line than the same complaint a third time. What somebody asked for is answered
+     * whether it has been said before or not.
+     */
+    private fun unsaid(reply: BotDialogue.Reply, mine: List<String>, names: List<String>): String =
+        if (reply.urgent || reply.brief?.kind != BotDialogue.Brief.Kind.REMARK || !ChatPrompt.stale(reply.text, mine, names)) reply.text else ""
     /** The pause between one chat line landing and the next bot starting to type. */
     private const val READING_TICKS = 14
     /** How often a line whose typist was hit while typing it goes out unfinished. */
@@ -102,6 +123,8 @@ object BotConversationService : KoinComponent, Listener {
         Session(game.settings.teamUps).also {
             it.dialogue.mode = game.settings.botPersonality
             it.dialogue.tally = { killer, victim -> it.kills[killer to victim] ?: 0 }
+            // (What the bots said in the lobby this match was started from is what they have said.)
+            lobbies[game.lobbyId]?.let { l -> it.heard.carry(l.heard) }
             it.rage = RageQuit(kotlin.random.Random.Default, game.host?.let { host -> MiscSettings.on(host, MiscSettings.Option.RAGE_QUITS) } == true)
         }
     }
@@ -328,10 +351,40 @@ object BotConversationService : KoinComponent, Listener {
             val staying = facts.filter { it.bot && (it.name.lowercase() in wanted || kotlin.random.Random.nextDouble() < BotCharacter.of(it.name).stays) }
             val leaving = if (people.isEmpty()) emptySet() else facts.filter { it.bot && it !in staying }.map { it.id }.toSet()
             // The match is over and the bots are standing still anyway: no typing pause.
-            sendParting(game, s.dialogue.finishAll(winners, facts, now(), map, leaving))
-            if (people.isNotEmpty()) remember(game, s, facts, winners, map, staying.map { it.name })
+            val parting = s.dialogue.finishAll(winners, facts, now(), map, leaving)
+            sendParting(game, parting)
+            if (people.isNotEmpty()) {
+                val gone = facts.filter { it.id in leaving }
+                sendQuits(game, gone, parting)
+                remember(game, s, facts, winners, map, staying.map { it.name }, gone.map { it.name })
+            }
         }
         close(game)
+    }
+
+    /**
+     * The bots that are not staying for another match leave the server, as far as anybody can
+     * tell: "Quit> name" for each of [gone], to whoever was in the match with them, while the
+     * winner is still being shown (and after that bot's own last line, if it had one: nobody types
+     * "gtg" from outside). Whoever comes in for them is announced when everybody is back in the
+     * lobby ([LobbyBotService.staying]).
+     */
+    private fun sendQuits(game: BrawlMinigame, gone: List<BotDialogue.Fighter>, parting: List<BotDialogue.Parting>) {
+        if (gone.isEmpty()) return
+        val audience = game.allPlayers().mapNotNull { it.player }
+            .filter { it.isOnline && !BotManager.isBot(it) && games.getMinigameForPlayer(it) === game }
+        val lastWords = HashMap<UUID, Long>()
+        var at = 0L
+        for (line in parting) { at += line.afterMs; lastWords[line.reply.speaker] = at }
+        for (bot in gone) {
+            val after = maxOf(kotlin.random.Random.nextLong(3000, 7001), (lastWords[bot.id] ?: 0L) + kotlin.random.Random.nextLong(1200, 2501))
+            val message = lang.t("messages.players.quitServer") { "playerName" to bot.name }
+            Bukkit.getScheduler().runTaskLater(plugin, Runnable {
+                if (!running) return@Runnable
+                if (BotManager.debug) plugin.logger.info("[chatdbg] Quit> ${bot.name}")
+                audience.filter { it.isOnline }.forEach { it.sendMessage(message) }
+            }, after / 50)
+        }
     }
 
     /**
@@ -363,7 +416,8 @@ object BotConversationService : KoinComponent, Listener {
      * talk about ([LobbyTalk]), and the bots that are staying for another one will be standing
      * there when everybody gets back ([LobbyBotService.staying]).
      */
-    private fun remember(game: BrawlMinigame, s: Session, facts: List<BotDialogue.Fighter>, winners: Set<UUID>, map: String, staying: List<String>) {
+    private fun remember(game: BrawlMinigame, s: Session, facts: List<BotDialogue.Fighter>, winners: Set<UUID>, map: String, staying: List<String>,
+                         gone: List<String> = emptyList()) {
         for (b in facts.filter { it.bot }) for (p in facts.filter { !it.bot }) {
             val said = s.mouthed[p.id].orEmpty()
             BotMemory.shared.record(b.name, p.id, s.kills[p.id to b.id] ?: 0, s.kills[b.id to p.id] ?: 0, p.id in winners, b.id in winners,
@@ -374,9 +428,10 @@ object BotConversationService : KoinComponent, Listener {
         val scores = facts.map { f -> LobbyTalk.Score(f.name, f.bot, s.kills.filterKeys { it.first == f.id }.values.sum(), s.deaths[f.id] ?: 0, f.id in winners, f.side) }
         val kills = HashMap<Pair<String, String>, Int>()
         s.kills.forEach { (pair, count) -> val a = names[pair.first]; val b = names[pair.second]; if (a != null && b != null) kills[a to b] = count }
-        lobby(game.lobbyId).talk.matchOver(LobbyTalk.LastMatch(now(), map, scores, kills))
-        LobbyBotService.staying(game.lobbyId, staying)
+        lobby(game.lobbyId).let { it.talk.matchOver(LobbyTalk.LastMatch(now(), map, scores, kills)); it.heard.carry(s.heard) }
+        LobbyBotService.staying(game.lobbyId, staying, gone)
         if (BotManager.debug) plugin.logger.info("[chatdbg] match over on $map: staying for another ${staying.joinToString().ifEmpty { "nobody" }}; " +
+            "leaving ${gone.joinToString().ifEmpty { "nobody" }}; " +
             scores.joinToString { "${it.name} ${it.kills}-${it.deaths}${if (it.won) " won" else ""}" })
     }
 
@@ -441,12 +496,12 @@ object BotConversationService : KoinComponent, Listener {
         val me = members.find { it.id == reply.speaker }
         if (brief == null || me == null || !ChatModelService.ready) { if (reply.text.isNotEmpty()) typeLobby(id, l, reply); return }
         val ask = ChatModelService.write(ChatPrompt.persona(me.name, "", BotCharacter.of(me.name).nature.takeIf { l.talk.mode == BotPersonality.RANDOM } ?: l.talk.mode),
-            ChatPrompt.lobby(me, members, host), l.heard.lines.toList(), brief, reply.text, members.filter { it.id != me.id }.map { it.name })
+            ChatPrompt.lobby(me, members, host), l.heard.lines.toList(), brief, reply.text, members.filter { it.id != me.id }.map { it.name }, l.heard.mine(me.name))
         l.heard.wording = l.heard.wording.thenCombine(ask) { _, outcome -> outcome }.thenAccept { outcome ->
             Bukkit.getScheduler().runTask(plugin, Runnable {
                 if (!running || lobbies[id] !== l) return@Runnable
                 val worded = outcome.text?.takeIf { !l.heard.said(it) }
-                val text = worded ?: reply.text
+                val text = worded ?: unsaid(reply, l.heard.mine(me.name), members.map { it.name })
                 if (BotManager.debug) plugin.logger.info("[chatai] (lobby $id) ${me.name}: " + (if (worded != null) "\"$worded\" in ${outcome.ms} ms" else "no (${outcome.note})") +
                     "; scripted: " + reply.text.ifEmpty { "nothing" })
                 if (text.isNotEmpty()) typeLobby(id, l, reply.copy(text = text))
@@ -588,7 +643,7 @@ object BotConversationService : KoinComponent, Listener {
         val map = game.worldManager.getWorld()?.data?.let { it.displayName ?: it.id } ?: ""
         val name = BotManager.displayNameOf(speaker)
         val ask = ChatModelService.write(ChatPrompt.persona(me.name, me.kit, s.dialogue.personalityOf(me.id)), ChatPrompt.match(me, facts, map),
-            s.heard.lines.toList(), brief, reply.text, facts.filter { it.id != me.id }.map { it.name })
+            s.heard.lines.toList(), brief, reply.text, facts.filter { it.id != me.id }.map { it.name }, s.heard.mine(me.name))
         // The model takes a moment (the bot is thinking of what to say); lines still come out in the order they were decided on.
         s.heard.wording = s.heard.wording.thenCombine(ask) { _, outcome -> outcome }.thenAccept { outcome ->
             Bukkit.getScheduler().runTask(plugin, Runnable {
@@ -596,7 +651,7 @@ object BotConversationService : KoinComponent, Listener {
                 // The same words twice in a few lines read as a script, whoever wrote them.
                 val worded = outcome.text?.takeIf { !s.heard.said(it) }
                 // Where the script had a line, a model that would rather say nothing does not get its way; where it had none, it does.
-                val text = worded ?: reply.text
+                val text = worded ?: unsaid(reply, s.heard.mine(me.name), facts.map { it.name })
                 if (BotManager.debug) plugin.logger.info("[chatai] $name: " + (if (worded != null) "\"$worded\" in ${outcome.ms} ms" else "no (${outcome.note})") +
                     "; scripted: " + reply.text.ifEmpty { "nothing" })
                 if (text.isNotEmpty()) type(game, speaker, reply.copy(text = text), audience, typed)

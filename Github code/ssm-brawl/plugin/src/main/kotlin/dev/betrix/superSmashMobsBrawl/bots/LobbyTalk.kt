@@ -34,7 +34,8 @@ class LobbyTalk(private val random: Random = Random.Default, memory: LineMemory 
     data class LastMatch(val endedAt: Long, val map: String, val scores: List<Score>, val kills: Map<Pair<String, String>, Int>)
 
     /** [why]: what the line is for, in plain words, when a model may word it ([BotDialogue.Brief]). */
-    private data class Line(val speaker: UUID, val text: String, val due: Long, val why: String? = null)
+    private data class Line(val speaker: UUID, val text: String, val due: Long, val why: String? = null,
+                            val kind: BotDialogue.Brief.Kind = BotDialogue.Brief.Kind.REMARK)
     private class Asked(val player: UUID, val text: String, val due: Long, val expires: Long)
 
     private val lines = BotLines(random, memory)
@@ -119,7 +120,7 @@ class LobbyTalk(private val random: Random = Random.Default, memory: LineMemory 
         queue.firstOrNull()?.takeIf { now >= it.due }?.let { next ->
             queue.removeFirst()
             val speaker = talkers.find { it.id == next.speaker }
-            if (speaker != null && now - next.due < 6000) return send(speaker, next.text, now, next.why)
+            if (speaker != null && now - next.due < 6000) return send(speaker, next.text, now, next.why, next.kind)
             // (Whoever was going to say it has left.)
             queue.clear()
         }
@@ -226,10 +227,12 @@ class LobbyTalk(private val random: Random = Random.Default, memory: LineMemory 
         // (What is said back about the match comes from somebody else who was in it.)
         val other = pick((if (sour) played else talkers).filter { it.id != speaker.id })
         val mate = mine?.side?.let { s -> match?.scores?.find { it.bot && it.name.equals(other?.name, true) }?.side == s } == true
+        // (One bot answering another: as written by hand, unless a model is let that far.)
         if (other != null && chance(0.35)) later(other, voice(other, members).lobbyEcho(sour, mate), now, 1500, 3500,
             if (!sour) null
             else if (mate) "${speaker.name}, who was on your team in the last match, has just said something about it. You agree."
-            else "${speaker.name} has just said something about the last match, which you were in too. You react to it.")
+            else "${speaker.name} has just said something about the last match, which you were in too. You react to it.",
+            BotDialogue.Brief.Kind.BANTER)
         return reply
     }
 
@@ -313,10 +316,11 @@ class LobbyTalk(private val random: Random = Random.Default, memory: LineMemory 
         return reply
     }
 
-    private fun later(speaker: BotDialogue.Fighter, text: String?, now: Long, from: Long, until: Long, why: String? = null) {
+    private fun later(speaker: BotDialogue.Fighter, text: String?, now: Long, from: Long, until: Long, why: String? = null,
+                      kind: BotDialogue.Brief.Kind = BotDialogue.Brief.Kind.REMARK) {
         if (text == null || queue.size >= MAX_QUEUED) return
         val after = maxOf(now, queue.lastOrNull()?.due ?: now)
-        queue.addLast(Line(speaker.id, text, after + random.nextLong(from, until + 1), why))
+        queue.addLast(Line(speaker.id, text, after + random.nextLong(from, until + 1), why, kind))
     }
 
     /**

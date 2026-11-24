@@ -80,6 +80,9 @@ class ChatFilter(banned: Collection<String> = emptyList(), swearing: Boolean = f
         // ("?" and "??" are whole messages in these lobbies.)
         if (!text.all { it == '?' } && text.count { it.isLetterOrDigit() } < (text.length + 1) / 2) return Rejected("not words")
         banned(text, others + speaker)?.let { return Rejected("a word that is not said here") }
+        // Nobody here knows who is a he and who is a she: people are called by name, by kit, or "u".
+        // (Told so, the model still wrote "finally got him".)
+        if (gendered.containsMatchIn(text)) return Rejected("calls somebody he or she")
         // A number is a claim: lives, kills, seconds. It has to be one the model was given. ("1v1" is a challenge, not a count.)
         val known = numbers.findAll(facts).map { it.value }.toSet()
         numbers.findAll(text.replace("1v1", "")).map { it.value }.firstOrNull { it !in known }?.let { return Rejected("a number it was not given ($it)") }
@@ -92,6 +95,7 @@ class ChatFilter(banned: Collection<String> = emptyList(), swearing: Boolean = f
         private val spaces = Regex("\\s+")
         private val notWord = Regex("[^a-z0-9]+")
         private val numbers = Regex("\\d+")
+        private val gendered = Regex("\\b(he|she|him|her|hes|shes|his|hers|himself|herself)\\b")
         /** Everything but letters, digits, spaces and the few marks players use ([BotSlang.style] then takes the commas and periods). */
         private val dropped = Regex("[^a-z0-9 ?*/:()<>_,.'\\-]")
         private val padding = Regex("\\b(literally|honestly|actually|basically|seriously though)\\b")

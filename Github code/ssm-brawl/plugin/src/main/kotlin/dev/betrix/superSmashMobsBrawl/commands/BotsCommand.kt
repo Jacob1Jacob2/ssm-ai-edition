@@ -342,6 +342,18 @@ class BotsCommand : KoinComponent {
         }
     }
 
+    @Execute(name = "lobbydiff")
+    @Description("Debug: the stand-in player of a lobby test sets the difficulty its bots play at (any for each its own)")
+    fun lobbyDiff(@Context sender: CommandSender, @Arg difficulty: String) {
+        if (!allowed(sender)) return
+        for (id in BotManager.standIns) {
+            val host = org.bukkit.Bukkit.getPlayer(id) ?: continue
+            val setup = dev.betrix.superSmashMobsBrawl.services.GameSetupService.setupOf(host)
+            setup.difficulty = if (difficulty.equals("any", true)) null else BotDifficulty.parse(difficulty)
+            plugin.logger.info("[lobbytest] ${BotManager.displayNameOf(host)} sets the difficulty to ${setup.difficulty?.name?.lowercase() ?: "each its own"}")
+        }
+    }
+
     @Execute(name = "lobbysay")
     @Description("Debug: the stand-in player of a lobby test says this in chat, in the lobby or in its match ({bot} stands for the name of one of the bots with it)")
     fun lobbySay(@Context sender: CommandSender, @dev.rollczi.litecommands.annotations.join.Join("text") text: String) {
@@ -349,11 +361,13 @@ class BotsCommand : KoinComponent {
         for (id in BotManager.standIns) {
             val host = org.bukkit.Bukkit.getPlayer(id) ?: continue
             val game = minigameService.getMinigameForPlayer(host)
-            val bots = (game?.allPlayers()?.mapNotNull { it.player }?.filter { it != host }
-                ?: dev.betrix.superSmashMobsBrawl.services.LobbyBotService.botsIn(dev.betrix.superSmashMobsBrawl.services.LobbyService.lobbyOf(host)))
-                .map { BotManager.displayNameOf(it) }
+            val there = game?.allPlayers()?.mapNotNull { it.player }?.filter { it != host }
+                ?: dev.betrix.superSmashMobsBrawl.services.LobbyBotService.botsIn(dev.betrix.superSmashMobsBrawl.services.LobbyService.lobbyOf(host))
+            val bots = there.map { BotManager.displayNameOf(it) }
             val said = text.replace("{bot}", bots.firstOrNull() ?: "nobody")
-            plugin.logger.info("[lobbytest] ${BotManager.displayNameOf(host)} types \"$said\" (${if (game == null) "lobby" else "match"}; with ${bots.joinToString()})")
+            // (With the level each shows in chat: it is to be the same in the lobby and in the match.)
+            plugin.logger.info("[lobbytest] ${BotManager.displayNameOf(host)} types \"$said\" (${if (game == null) "lobby" else "match"}; with " +
+                there.joinToString { "${BotManager.displayNameOf(it)} ${BotManager.profileOf(it)?.level ?: "?"}" } + ")")
             dev.betrix.superSmashMobsBrawl.services.BotConversationService.say(host, said)
         }
     }
@@ -367,7 +381,8 @@ class BotsCommand : KoinComponent {
             if (minigameService.isPlayerInMinigame(host)) { plugin.logger.info("[lobbytest] ${BotManager.displayNameOf(host)} is still in a match"); continue }
             val bots = dev.betrix.superSmashMobsBrawl.services.LobbyBotService.botsIn(dev.betrix.superSmashMobsBrawl.services.LobbyService.lobbyOf(host))
             dev.betrix.superSmashMobsBrawl.services.MapVoteService.setVote(host.uniqueId, map)
-            plugin.logger.info("[lobbytest] ${BotManager.displayNameOf(host)} starts a match on $map; in the lobby: ${bots.joinToString { BotManager.displayNameOf(it) }}")
+            plugin.logger.info("[lobbytest] ${BotManager.displayNameOf(host)} starts a match on $map; in the lobby: " +
+                bots.joinToString { "${BotManager.displayNameOf(it)} ${BotManager.profileOf(it)?.level ?: "?"}" })
             dev.betrix.superSmashMobsBrawl.services.GameSetupService.startGame(host)
         }
     }

@@ -202,6 +202,18 @@ class BotDialogueTest : StringSpec({
             }
             BotVoice.of(name).bro shouldBe BotVoice.of(name).bro
         }
+        // A bot of the roster keeps the level of what it is listed as, whatever a match has it play
+        // at: the same number in the lobby and in an Expert match two minutes later.
+        BotIdentity.natural = { if (it.equals("dino", true)) BotDifficulty.HARD else null }
+        try {
+            val level = BotIdentity.levelOf("Dino", BotDifficulty.HARD)
+            (level in BotIdentity.levels(BotDifficulty.HARD)) shouldBe true
+            for (difficulty in BotDifficulty.entries) BotIdentity.levelOf("Dino", difficulty) shouldBe level
+            // (Somebody the roster does not know still goes by the match.)
+            (BotIdentity.levelOf("cqsey", BotDifficulty.EXPERT) in BotIdentity.levels(BotDifficulty.EXPERT)) shouldBe true
+        } finally {
+            BotIdentity.natural = { null }
+        }
         // The talkative are picked to speak more often than the quiet, and nobody is never picked.
         val quiet = (1..400).map { "Player$it" }.first { BotCharacter.of(it).chatty < 0.5 }
         val loud = (1..400).map { "Player$it" }.first { BotCharacter.of(it).chatty >= 1.0 }

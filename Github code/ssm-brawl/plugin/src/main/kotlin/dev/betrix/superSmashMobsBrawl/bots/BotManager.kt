@@ -139,6 +139,9 @@ object BotManager : KoinComponent {
                 .decodeFromString(RosterFile.serializer(), text)
         rankStyles = file.rankStyles.mapKeys { it.key.lowercase() }
         roster = file.bots.map { BotProfile(it.name, it.rank.lowercase(), BotDifficulty.parse(it.difficulty)) }
+        // A bot's level goes with what it is listed as, not with what a match has it play at.
+        val listed = roster.associate { it.name.lowercase() to it.difficulty }
+        BotIdentity.natural = { listed[it.lowercase()] }
         plugin.logger.info(
             "Loaded ${roster.size} AI bots (" +
                 roster.groupingBy { it.difficulty }.eachCount().entries.joinToString { "${it.key.name.lowercase()}=${it.value}" } +

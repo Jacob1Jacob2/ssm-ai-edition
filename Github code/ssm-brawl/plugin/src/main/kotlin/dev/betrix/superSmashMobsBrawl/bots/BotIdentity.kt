@@ -14,10 +14,19 @@ object BotIdentity {
     }
     fun rollLevel(difficulty: BotDifficulty) = levels(difficulty).random()
     /**
-     * The level the bot called [name] has when it plays at [difficulty]: the same every time it
-     * turns up, as a player's is ([BotCharacter]). It used to be rolled afresh at every match.
+     * The difficulty a bot of the roster is by nature (the one it is listed with), whatever a match
+     * has it play at; nothing for a name that is not on the roster. Set when the roster is read.
      */
-    fun levelOf(name: String, difficulty: BotDifficulty): Int = levels(difficulty).let { range ->
+    var natural: (String) -> BotDifficulty? = { null }
+
+    /**
+     * The level of the bot called [name]: the same every time it turns up, as a player's is
+     * ([BotCharacter]). It used to be rolled afresh at every match, and after that it still went
+     * with the difficulty of the match: the user saw Atoximed at level 57 in the lobby and at 72 in
+     * the match two minutes later (2026-11-24). Now it goes with what the bot is by [natural], and
+     * [difficulty] only counts for a bot the roster does not know (one a player made).
+     */
+    fun levelOf(name: String, difficulty: BotDifficulty): Int = levels(natural(name) ?: difficulty).let { range ->
         range.first + (BotCharacter.of(name).standing * (range.last - range.first + 1)).toInt().coerceIn(0, range.last - range.first)
     }
     fun levelColor(level: Int): NamedTextColor = when {

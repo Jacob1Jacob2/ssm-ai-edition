@@ -25,6 +25,13 @@ object LobbyBotService : KoinComponent {
     private val labels = mutableMapOf<UUID, TextDisplay>()
     /** Per lobby: the bots of the match just played that are staying for another, and until when that counts. */
     private val stayers = mutableMapOf<Int, Pair<List<String>, Long>>()
+    /** Per lobby: the bots of the match just played that walked off after it, and until when they are not the ones brought in to fill it up. */
+    private val leavers = mutableMapOf<Int, Pair<List<String>, Long>>()
+    /** Lobbies a match has just been played out of, whose players are not back yet: [stayers] is who they expect to find there. */
+    private val returning = mutableSetOf<Int>()
+    /** Per lobby: the bots whoever is waiting there has seen standing in it, by name. A change to it is a "Join>" or a "Quit>" ([comings]). */
+    private val shown = mutableMapOf<Int, List<String>>()
+    private val lang: LangService by inject()
     private var task: BukkitTask? = null
     private var ticks = 0L
     private var reconciling = false
@@ -48,9 +55,39 @@ object LobbyBotService : KoinComponent {
     /**
      * The match played out of lobby [id] is over, and these of its bots are not leaving: when
      * everybody is back they are the ones standing there, before anybody new is brought in. (A
-     * lobby that is all strangers after every match is no lobby.)
+     * lobby that is all strangers after every match is no lobby.) [left] are those that walked off:
+     * somebody else comes in for each of them, with a "Join>" line ([comings]).
      */
-    fun staying(id: Int, names: List<String>) { stayers[id] = names to ticks + STAYS_TICKS }
+    fun staying(id: Int, names: List<String>, left: List<String> = emptyList()) {
+        stayers[id] = names to ticks + STAYS_TICKS
+        leavers[id] = left to ticks + STAYS_TICKS
+        returning += id
+    }
+
+    /**
+     * The bots of lobby [id] have changed while somebody stood there to see it, from [before] to
+     * who is there now: those people are told who joined and who quit, in the server's own words
+     * for it. Until 2026-11-24 a bot was simply there or not there: one walked in after a match and
+     * said "hi all" with no "Join>" before it, which nobody on a server does.
+     */
+    private fun comings(id: Int, before: List<String>) {
+        val (joined, left) = LobbyRoster.comings(before, botsIn(id).map(BotManager::displayNameOf))
+        var after = 0L
+        fun tell(name: String, key: String, stillTrue: () -> Boolean) {
+            val line = Runnable {
+                if (!stillTrue()) return@Runnable
+                if (BotManager.debug) plugin.logger.info("[chatdbg] (lobby $id) ${if (key == "joinServer") "Join" else "Quit"}> $name")
+                val message = lang.t("messages.players.$key") { "playerName" to name }
+                LobbyService.hub(id)?.world?.players.orEmpty().filter { !BotManager.isBot(it) && !games.isPlayerInMinigame(it) }.forEach { it.sendMessage(message) }
+            }
+            // (People do not all arrive in the same instant.)
+            if (after == 0L) line.run() else Bukkit.getScheduler().runTaskLater(plugin, line, after)
+            after += (8..30).random()
+        }
+        fun here(name: String) = botsIn(id).any { BotManager.displayNameOf(it).equals(name, true) }
+        left.forEach { name -> tell(name, "quitServer") { !here(name) } }
+        joined.forEach { name -> tell(name, "joinServer") { here(name) } }
+    }
 
     /** Somebody a lobby is kept for: a real player, or a bot standing in for one in a test. */
     private fun person(p: Player) = !BotManager.isBot(p) || p.uniqueId in BotManager.lobbyStandIns
@@ -72,6 +109,9 @@ object LobbyBotService : KoinComponent {
                     botsIn(id).forEach(BotManager::despawn)
                     if (waiting.isEmpty()) hosts.remove(id)
                     if (LobbyService.busy(id)) transferringUntil.remove(id)
+                    // (Nobody is looking: whoever walks in next finds the bots that are there, without a word about it.)
+                    shown.remove(id)
+                    if (stayers[id]?.let { it.second > ticks } != true) returning -= id
                     continue
                 }
                 if ((transferringUntil[id] ?: 0) > ticks && BotManager.onlineBots().any {
@@ -79,7 +119,13 @@ object LobbyBotService : KoinComponent {
                 }) continue
                 transferringUntil.remove(id)
                 val host = waiting.find { it.uniqueId == hosts[id] } ?: waiting.first().also { hosts[id] = it.uniqueId }
+                // Who the people waiting here know to be about: the bots they have watched standing
+                // in this lobby, or, just back from a match, those of it that said they would stay.
+                val before = shown[id] ?: stayers[id]?.takeIf { id in returning && it.second > ticks }?.first
+                returning -= id
                 reconcileGroup(id, GameSetupService.setupOf(host))
+                if (before != null) comings(id, before)
+                shown[id] = botsIn(id).map(BotManager::displayNameOf)
             }
             refreshVisibility()
         } finally { reconciling = false }
@@ -93,7 +139,8 @@ object LobbyBotService : KoinComponent {
         // Whoever is standing here already stays; after a match, so do the bots that said they would.
         val back = stayers[id]?.takeIf { it.second > ticks }?.first.orEmpty()
         val desired = LobbyRoster.choose(settings.bots, settings.wantedBotNames,
-            current.map(BotManager::displayNameOf) + back, built.shuffled().map { it.name }, custom.map { it.name })
+            current.map(BotManager::displayNameOf) + back, built.shuffled().map { it.name }, custom.map { it.name },
+            gone = leavers[id]?.takeIf { it.second > ticks }?.first.orEmpty())
         val chosen = desired.mapNotNull { profiles[it.lowercase()] }.map { profile ->
             val difficulty = if (CustomBotService.isCustom(profile.name)) profile.difficulty else settings.difficulty ?: profile.difficulty
             profile.copy(difficulty = difficulty)
@@ -179,7 +226,7 @@ object LobbyBotService : KoinComponent {
     private const val STAYS_TICKS = 20L * 120
 
     fun teardown() {
-        stayers.clear()
+        stayers.clear(); leavers.clear(); returning.clear(); shown.clear()
         task?.cancel(); task = null
         labels.values.forEach { it.remove() }; labels.clear()
         Bukkit.getOnlinePlayers().forEach { viewer ->
