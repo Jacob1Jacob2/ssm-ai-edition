@@ -46,6 +46,7 @@ advancements/
 /test-server/plugins/super-smash-mobs-brawl/wins.json
 /test-server/plugins/super-smash-mobs-brawl/kit-stats.properties
 /test-server/plugins/super-smash-mobs-brawl/auto-l.properties
+/test-server/plugins/super-smash-mobs-brawl/bot-memory.properties
 # every event of every match of a /bots balance run: megabytes each; the reports made from them are in /reports
 /test-server/plugins/super-smash-mobs-brawl/item-stats/
 # worlds of finished matches

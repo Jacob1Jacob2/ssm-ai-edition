@@ -52,6 +52,12 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
     private val cast = mutableMapOf<UUID, BotPersonality>()
     /** Bot -> the fighter it said it would go after, and until when. */
     private val grudges = mutableMapOf<UUID, Pair<UUID, Long>>()
+    /** What the bot called so remembers of a player from the matches before this one ([BotMemory]); nothing, unless it is given. */
+    var recall: (String, UUID) -> Acquaintance? = { _, _ -> null }
+    /** The time of day, in milliseconds since 1970: what "last game" is measured against (the match clock starts anywhere). */
+    var clock: () -> Long = System::currentTimeMillis
+    /** Bots that have had their say about getting a remembered player back, this match. */
+    private val settled = HashSet<UUID>()
     /** This match's team-ups (see [TeamUps]) when it is played in that mode: who is teaming on whom decides some answers. */
     var teamUps: TeamUps? = null
     /** The match's setting: one personality for every bot, or Random for one each. */
@@ -76,7 +82,8 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
     private fun enroll(fighters: List<Fighter>) {
         if (mode != BotPersonality.RANDOM) return
         val fresh = fighters.filter { it.bot && it.id !in cast }.map { it.id }
-        if (fresh.isNotEmpty()) cast += BotPersonality.deal(fresh, cast, random)
+        // Everybody is who they always are ([BotCharacter]): the same bot is not toxic in one match and friendly in the next.
+        if (fresh.isNotEmpty()) cast += BotCharacter.deal(fighters.filter { it.id in fresh }.map { it.id to it.name })
     }
 
     private fun voiced(share: Double) = reactions >= 1.0 || random.nextDouble() < reactions * share
@@ -103,7 +110,7 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
         return offer("chat", player, message.take(256).lowercase().replace('’', '\''), now, 3)
     }
     fun crystal(player: UUID, tier: String, now: Long) = voiced(0.9) && offer("crystal", player, tier.take(48), now, 1)
-    fun start(now: Long) = voiced(0.55) && offer("start", null, "", now, 0)
+    fun start(now: Long) = offer("start", null, "", now, 0)
     fun camp(player: UUID, now: Long) = now >= (quietUntil[player] ?: 0L) && offer("camp", player, "", now, 0)
     fun prompt(now: Long) = offer("status", null, "", now, 0)
     /** [attacker] landed [hits] hits on the bot [victim] that took a large share of its health at once. */
@@ -118,7 +125,7 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
     fun retreat(bot: UUID, threat: UUID?, now: Long) = voiced(0.75) && offer("retreat", bot, "", now, 0, threat)
     fun clear() {
         pending = null; followups.clear(); casts.clear(); hits.clear(); deaths.clear(); topics.clear(); lastBot.clear()
-        recentLines.clear(); ambient.clear(); callouts.clear(); quietUntil.clear(); cast.clear(); grudges.clear()
+        recentLines.clear(); ambient.clear(); callouts.clear(); quietUntil.clear(); cast.clear(); grudges.clear(); settled.clear()
     }
 
     private fun offer(kind: String, actor: UUID?, detail: String, now: Long, priority: Int,
@@ -132,11 +139,8 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
         return true
     }
 
-    private fun names(f: Fighter, text: String): Boolean {
-        fun word(w: String) = Regex("(?<![a-z0-9_])${Regex.escape(w)}(?![a-z0-9_])").containsMatchIn(text)
-        val nick = BotSlang.nick(f.name)
-        return word(f.name.lowercase()) || (nick.length >= 4 && word(nick))
-    }
+    private fun names(f: Fighter, text: String) = BotSlang.names(f.name, text)
+
 
     /** Generate at delivery time, so lives, kits and online participants are never stale. */
     fun poll(now: Long, fighters: List<Fighter>, enemies: (UUID, UUID) -> Boolean): Reply? {
@@ -158,9 +162,15 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
         if (now < request.due || now - lastSpoke < 5000) return null
         pending = null
         val actor = fighters.find { it.id == request.actor }
-        val bots = fighters.filter { it.bot && talks(it.id) && now - (lastBot[it.id] ?: -100_000L) >= if(request.kind == "chat") 5000 else 12000 }
-        if (bots.isEmpty() || (request.actor != null && actor == null)) return null
-        val mentioned = bots.find { names(it, request.detail) }
+        val able = fighters.filter { it.bot && talks(it.id) && now - (lastBot[it.id] ?: -100_000L) >= if(request.kind == "chat") 5000 else 12000 }
+        if (able.isEmpty() || (request.actor != null && actor == null)) return null
+        val mentioned = able.find { names(it, request.detail) }
+        // Some hardly say a word ([BotCharacter.chatty]): they answer to their name, and little else.
+        val crowd = fighters.count { it.bot }
+        val bots = if (reactions >= 1.0) able else able.filter { it.id == mentioned?.id || random.nextDouble() < BotCharacter.chattyAmong(it.name, crowd) }
+        if (bots.isEmpty()) return null
+        // The match starting: with somebody in it that one of them has played before there is more to say than "gl".
+        if (request.kind == "start" && !voiced(if (bots.any { b -> fighters.any { !it.bot && recall(b.name, it.id) != null } }) 1.3 else 0.55)) return null
         // If a message names a bot on cooldown, don't answer as an unrelated bot instead.
         if (request.kind == "chat" && mentioned == null && fighters.any { it.bot && names(it, request.detail) }) return null
         val relevant = actor?.let { a ->
@@ -178,9 +188,16 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
             // Telling someone to come out and fight is for a bot that is still in the match.
             "hold" -> (involved ?: relevant)?.takeIf { it.lives > 0 }
                 ?: bots.filter { it.lives > 0 && it.id != actor?.id }.randomOrNull(random) ?: return null
-            else -> mentioned ?: relevant ?: deathSpeaker ?: bots.random(random)
+            // The match starting: somebody who has played one of the players before has the most to say about it.
+            "start" -> bots.filter { b -> fighters.any { !it.bot && recall(b.name, it.id) != null } }.takeIf { it.isNotEmpty() && (reactions >= 1.0 || random.nextDouble() < 0.8) }
+                ?.let { BotCharacter.pick(it, random) { b -> b.name } } ?: BotCharacter.pick(bots, random) { it.name }!!
+            // (Anybody could say it: the talkative ones do more often than the quiet ones.)
+            else -> mentioned ?: relevant ?: deathSpeaker ?: BotCharacter.pick(bots, random) { it.name }!!
         }
+
         val say = lines.speaker(speaker, fighters, personalityOf(speaker.id))
+        // Somebody this bot says it is coming for, in a line about a match before this one.
+        var owed: UUID? = null
         // What the line is on and who it is about, for any bot that wants to answer it.
         var about: String? = null
         var who: Fighter? = null
@@ -218,12 +235,18 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
                 about = "retreat"; who = threat
                 say.retreat(threat)
             } else null
-            "start" -> say.start(fighters.firstOrNull { !it.bot })
+            "start" -> fighters.firstOrNull { !it.bot && recall(speaker.name, it.id) != null }?.let { human ->
+                val a = recall(speaker.name, human.id)!!
+                // A toxic or a salty one that was farmed last time means what it says about it.
+                if (a.farmedMe && personalityOf(speaker.id) != BotPersonality.CHILL && human.fighting && enemies(speaker.id, human.id)) owed = human.id
+                say.startKnown(human, a, a.fresh(clock()))
+            } ?: say.start(fighters.firstOrNull { !it.bot })
             "status" -> fighters.filter { it.fighting }.maxByOrNull { it.lives }?.let(say::status)
             else -> null
         } ?: return null
         ambient["${request.kind}:${request.actor}"] = now
         val reply = send(speaker, text, now) ?: return null
+        owed?.let { grudges[speaker.id] = it to now + OWED_MS }
         about?.let { banter(speaker, it, who, level, fell, fighters, now, enemies) }
         return reply
     }
@@ -251,7 +274,9 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
             followups.addLast(Followup(f.id, text, at, grudge, allies))
             return true
         }
-        val talkers = fighters.filter { it.bot && it.id != speaker.id && talks(it.id) }
+        val crowd = fighters.count { it.bot }
+        val talkers = fighters.filter { it.bot && it.id != speaker.id && talks(it.id) &&
+            (reactions >= 1.0 || random.nextDouble() < BotCharacter.chattyAmong(it.name, crowd)) }
         // The bot the line was about answers for itself, even from the respawn screen.
         val aimedAt = who?.let { w -> talkers.find { it.id == w.id } }
         // Bystanders: still in the match (a respawning bot can type), not the subject, and not
@@ -491,10 +516,47 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
         if (mode == BotPersonality.SILENT || winners.isEmpty() || now - lastSpoke < 2500) return null
         enroll(fighters)
         val winner = fighters.firstOrNull { it.id in winners } ?: return null
-        val bot = fighters.filter { it.bot && talks(it.id) }.let { list -> list.find { it.id in winners } ?: list.randomOrNull(random) } ?: return null
+        val bot = fighters.filter { it.bot && talks(it.id) }.let { list -> list.find { it.id in winners } ?: BotCharacter.pick(list, random) { it.name } } ?: return null
         val say = lines.speaker(bot, fighters, personalityOf(bot.id))
-        val text = (if (bot.id in winners) say.won() else say.lost(winner, (callouts[winner.id] ?: 0) > 0)) ?: return null
+        // (How many in a row that makes for a player this bot keeps meeting: it has not been told of this win yet.)
+        val streak = if (winner.bot) 0 else (recall(bot.name, winner.id)?.theirStreak ?: 0) + 1
+        val text = (if (bot.id in winners) say.won() else say.lost(winner, (callouts[winner.id] ?: 0) > 0, streak)) ?: return null
         return send(bot, text, now)
+    }
+
+    /** One line of what is said when a match is over, and how long after the line before it. */
+    data class Parting(val reply: Reply, val afterMs: Long)
+
+    /**
+     * Everything the bots say when a match is over: the line [finish] gives, and after it a few of
+     * the others with a "gg" of their own, a second or so apart, the way a lobby of people does
+     * (not everybody, and the quiet ones least). One of the losers may ask for another match, one
+     * may have something to say about [map], and one of [leaving] (the bots that are not staying
+     * for the next match) may say it is off.
+     */
+    fun finishAll(winners: Set<UUID>, fighters: List<Fighter>, now: Long, map: String = "", leaving: Set<UUID> = emptySet()): List<Parting> {
+        val first = finish(winners, fighters, now) ?: return emptyList()
+        val out = arrayListOf(Parting(first, 0))
+        var asked = false
+        var moaned = false
+        for (f in fighters.filter { it.bot && talks(it.id) && it.id != first.speaker }.shuffled(random)) {
+            if (out.size >= MAX_PARTING) break
+            if (reactions < 1.0 && random.nextDouble() > BotCharacter.chattyAmong(f.name, fighters.count { it.bot }) * 0.7) continue
+            val say = lines.speaker(f, fighters, personalityOf(f.id))
+            val won = f.id in winners
+            val raw = when {
+                f.id in leaving && random.nextDouble() < 0.6 -> say.leaving()
+                // (Nobody asks for another one and then walks off.)
+                !won && !asked && f.id !in leaving && random.nextDouble() < 0.3 -> say.rematch().also { asked = true }
+                !won && !moaned && map.isNotEmpty() && random.nextDouble() < 0.15 -> say.mapMoan(map).also { moaned = true }
+                else -> say.after(won)
+            } ?: continue
+            val text = BotSlang.style(raw.substringBefore(" / "))
+            if (text.isEmpty()) continue
+            lastBot[f.id] = now
+            out += Parting(Reply(f.id, text), random.nextLong(500, 1901))
+        }
+        return out
     }
 
     /** Styles a line and sends its first message; a second message after " / " follows a moment later. */
@@ -521,6 +583,11 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
         }
         if (bot.id == killer?.id) {
             topics[victim.id] = Topic(bot.id, "kill:${death.ability}", now)
+            // Somebody who ran their mouth at it last time, or kept killing it: this kill is the answer, once.
+            if (!victim.bot && bot.id !in settled) recall(bot.name, victim.id)?.takeIf { it.mouthed || it.farmedMe }?.let { a ->
+                settled += bot.id
+                return say.payback(victim, a, a.fresh(clock()))
+            }
             return say.killed(victim, death.ability)
         }
         return null
@@ -561,8 +628,8 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
                 else if (theirs != null) say.theirSpam(theirs.first, theirs.second)
                 else say.notCamping(player)
         }
-        if (has("\\b(hack|hacks|hacker|hacking|cheat|cheats|cheater|cheating|aimbot|reach|kill ?aura|client)\\b")) return say.notHacking()
-        if (has("\\b(ez+|easy|trash|bad|suck|sucks|noob|nub|cope|skill issue|washed|loser|bozo|garbage|dogwater|get good|git gud|mad|cry|lmao|lmfao)\\b|^l+(?:\\s|$)|\\b(shut up|stfu|you lost|u lost|you'?re dead|ur dead|i win|i won|winning)\\b")) {
+        if (has(BotSlang.CHEATS)) return say.notHacking()
+        if (has(BotSlang.INSULT)) {
             topic("score")
             if (death?.victim == bot.id) return say.oneKill(death.ability)
             if (death?.victim == player.id) return say.youDied(death.ability)
@@ -602,10 +669,15 @@ class BotDialogue(private val random: Random = Random.Default, memory: LineMemor
     companion object {
         /** How long a bot keeps going after the fighter it said it would. */
         const val GRUDGE_MS = 30_000L
+        /** How long a bot that said at the start it was coming for somebody keeps at it. */
+        const val OWED_MS = 45_000L
+
         /** Minimum time between two arguments in one lobby. */
         const val ARGUMENT_GAP_MS = 18_000L
         /** The most lines a conversation between bots can queue up. */
         const val MAX_CONVERSATION = 7
+        /** At most this many lines when a match is over: a few people say gg, not the whole lobby one after another. */
+        const val MAX_PARTING = 4
         /** A player asking why they are being targeted, or saying that they are being teamed on. */
         private const val TEAMING = "\\b(stop|why|quit)\\b.*\\b(target|targeting|attack|attacking|chasing|chase|focus|focusing|hitting)\\b|" +
             "\\b(teaming|teamers|teamer|teamed|team on|[2-9]v1|targeting me|ganging|gang up|all on me)\\b"

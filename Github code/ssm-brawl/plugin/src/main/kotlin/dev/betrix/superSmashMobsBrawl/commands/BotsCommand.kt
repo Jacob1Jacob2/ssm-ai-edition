@@ -282,6 +282,56 @@ class BotsCommand : KoinComponent {
             dev.betrix.superSmashMobsBrawl.services.ClassicChatService.nameTag(p).replace('§', '&')}'")
     }
 
+    @Execute(name = "lobbytest")
+    @Description("Debug: a bot stands in for a player waiting in lobby 1 (personality: toxic, salty, chill, silent, random; players: the size of its match), so the lobby's bots turn up and talk; what they say is logged as [chatdbg] (lobby 1)")
+    fun lobbyTest(@Context sender: CommandSender, @Arg personality: String, @Arg players: Int) {
+        if (!allowed(sender)) return
+        val mode = dev.betrix.superSmashMobsBrawl.bots.BotPersonality.entries.find { it.name.equals(personality, true) }
+            ?: return sender.sendMessage("Personality is one of toxic, salty, chill, silent, random")
+        BotManager.debug = true
+        // (Not somebody off the roster: the lobby could then bring in a second one of the same name.)
+        val bot = BotManager.spawn(BotManager.BotProfile("JacobTest", "none", BotDifficulty.EXPERT), "skeleton")
+            ?: return sender.sendMessage("Could not spawn the stand-in (is one there already?)")
+        BotManager.standIns.clear(); BotManager.lobbyStandIns.clear()
+        BotManager.standIns += bot.uniqueId; BotManager.lobbyStandIns += bot.uniqueId
+        dev.betrix.superSmashMobsBrawl.services.LobbyService.assign(bot, 1)
+        dev.betrix.superSmashMobsBrawl.services.HubService.tryTeleportToDefaultHub(bot)
+        dev.betrix.superSmashMobsBrawl.services.GameSetupService.setupOf(bot).apply {
+            botPersonality = mode; this.players = players.coerceIn(2, 16); lives = 2; items = false; crystals = false; difficulty = null
+        }
+        plugin.logger.info("[lobbytest] ${BotManager.displayNameOf(bot)} stands in for a player in lobby 1 (${mode.label}, matches of ${players.coerceIn(2, 16)})")
+    }
+
+    @Execute(name = "lobbysay")
+    @Description("Debug: the stand-in player of a lobby test says this in chat, in the lobby or in its match ({bot} stands for the name of one of the bots with it)")
+    fun lobbySay(@Context sender: CommandSender, @dev.rollczi.litecommands.annotations.join.Join("text") text: String) {
+        if (!allowed(sender)) return
+        for (id in BotManager.standIns) {
+            val host = org.bukkit.Bukkit.getPlayer(id) ?: continue
+            val game = minigameService.getMinigameForPlayer(host)
+            val bots = (game?.allPlayers()?.mapNotNull { it.player }?.filter { it != host }
+                ?: dev.betrix.superSmashMobsBrawl.services.LobbyBotService.botsIn(dev.betrix.superSmashMobsBrawl.services.LobbyService.lobbyOf(host)))
+                .map { BotManager.displayNameOf(it) }
+            val said = text.replace("{bot}", bots.firstOrNull() ?: "nobody")
+            plugin.logger.info("[lobbytest] ${BotManager.displayNameOf(host)} types \"$said\" (${if (game == null) "lobby" else "match"}; with ${bots.joinToString()})")
+            dev.betrix.superSmashMobsBrawl.services.BotConversationService.say(host, said)
+        }
+    }
+
+    @Execute(name = "lobbystart")
+    @Description("Debug: the stand-in player of a lobby test starts its match on this map, against the bots standing in the lobby with it")
+    fun lobbyStart(@Context sender: CommandSender, @Arg map: String) {
+        if (!allowed(sender)) return
+        for (id in BotManager.standIns) {
+            val host = org.bukkit.Bukkit.getPlayer(id) ?: continue
+            if (minigameService.isPlayerInMinigame(host)) { plugin.logger.info("[lobbytest] ${BotManager.displayNameOf(host)} is still in a match"); continue }
+            val bots = dev.betrix.superSmashMobsBrawl.services.LobbyBotService.botsIn(dev.betrix.superSmashMobsBrawl.services.LobbyService.lobbyOf(host))
+            dev.betrix.superSmashMobsBrawl.services.MapVoteService.setVote(host.uniqueId, map)
+            plugin.logger.info("[lobbytest] ${BotManager.displayNameOf(host)} starts a match on $map; in the lobby: ${bots.joinToString { BotManager.displayNameOf(it) }}")
+            dev.betrix.superSmashMobsBrawl.services.GameSetupService.startGame(host)
+        }
+    }
+
     @Execute(name = "leavesummons")
     @Description("Debug: bots leave alone what an opponent's kit has sent to fight for it (a Wither Image, a bear cub), as before they hit it back (to measure the difference); again to switch back")
     fun leaveSummons(@Context sender: CommandSender) {

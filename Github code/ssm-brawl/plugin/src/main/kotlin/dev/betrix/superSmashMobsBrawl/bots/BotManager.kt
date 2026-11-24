@@ -36,7 +36,7 @@ object BotManager : KoinComponent {
     private val dataService: DataService by inject()
     private val minigameService: MinigameService by inject()
 
-    data class BotProfile(val name: String, val rank: String, val difficulty: BotDifficulty, val level: Int = BotIdentity.rollLevel(difficulty))
+    data class BotProfile(val name: String, val rank: String, val difficulty: BotDifficulty, val level: Int = BotIdentity.levelOf(name, difficulty))
 
     @Serializable
     private data class RosterFile(
@@ -66,6 +66,13 @@ object BotManager : KoinComponent {
      * their team-ups they are a player like any other (somebody to answer, and to gang up on).
      */
     val standIns: MutableSet<UUID> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    /**
+     * Debug: the stand-in of a lobby test (`bots lobbytest`). It counts as a player waiting in its
+     * lobby too, so the lobby's bots turn up for it and it can start matches with them. (Not every
+     * stand-in does: the bots of an ordinary test match wait in a lobby for a second before it
+     * starts, and a lobby that took one of them for a player cleared the others away.)
+     */
+    val lobbyStandIns: MutableSet<UUID> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     /** With [debug]: every tick of an air jump, held up against the flight that was picked for it in the head. */
     @Volatile var debugFlights = false
     /** Debug: Sheep bots try their Wool Mine perch on any opponent well below them, reachable or not. */
@@ -263,7 +270,7 @@ object BotManager : KoinComponent {
             plugin.logger.warning("Error removing bot ${bot.profile.name}: ${e.message}")
         }
         bots.remove(player.uniqueId)
-        standIns.remove(player.uniqueId)
+        standIns.remove(player.uniqueId); lobbyStandIns.remove(player.uniqueId)
         dev.betrix.superSmashMobsBrawl.services.LobbyService.forgetBot(player)
     }
 
@@ -281,7 +288,7 @@ object BotManager : KoinComponent {
     @JvmOverloads fun spawnMatch(count:Int,difficulty:BotDifficulty?,preferred:List<String>,kits:Map<String,String> = emptyMap()):List<Player> {
         // Ended-match bots may linger cosmetically. Reclaim only idle bots, never another match.
         bots.values.toList().map { it.nms.bukkitEntity }.filter {
-            !isLobbyBot(it) && !isReserved(it)
+            !isLobbyBot(it) && !isReserved(it) && it.uniqueId !in lobbyStandIns
         }.forEach(::despawn)
         val custom=dev.betrix.superSmashMobsBrawl.services.CustomBotService.profiles()
         val free=(freeProfiles()+custom.filter {candidate -> bots.values.none {it.profile.name.equals(candidate.name,true)}})
@@ -291,7 +298,7 @@ object BotManager : KoinComponent {
         val fillers=freeProfiles().filter {candidate -> named.none {it.name.equals(candidate.name,true)}}.shuffled()
         return (named+fillers).take(count).mapNotNull {
             val selected=if(custom.any {c -> c.name.equals(it.name,true)})it.difficulty else difficulty ?: it.difficulty
-            spawn(it.copy(difficulty=selected,level=BotIdentity.rollLevel(selected)),kits[it.name.lowercase()] ?: randomKitId())
+            spawn(it.copy(difficulty=selected,level=BotIdentity.levelOf(it.name,selected)),kits[it.name.lowercase()] ?: randomKitId())
         }
     }
 
@@ -301,7 +308,7 @@ object BotManager : KoinComponent {
             .filter { difficulty == null || it.difficulty == difficulty }
             .shuffled()
             .take(count)
-            .mapNotNull { spawn(it.copy(level = BotIdentity.rollLevel(it.difficulty))) }
+            .mapNotNull { spawn(it.copy(level = BotIdentity.levelOf(it.name, it.difficulty))) }
 
     // ------------------------------------------------------------------ queue filling
 
@@ -371,7 +378,7 @@ object BotManager : KoinComponent {
             .take(count)
             .mapIndexedNotNull { i, profile ->
                 val plays = if (anyProfile && difficulty != null) difficulty else profile.difficulty
-                spawn(profile.copy(difficulty = plays, level = BotIdentity.rollLevel(plays)), kits.getOrNull(i) ?: randomKitId())
+                spawn(profile.copy(difficulty = plays, level = BotIdentity.levelOf(profile.name, plays)), kits.getOrNull(i) ?: randomKitId())
             }
         spawned.forEach {
             dev.betrix.superSmashMobsBrawl.services.LobbyService.assign(it, lobbyId)
@@ -401,7 +408,8 @@ object BotManager : KoinComponent {
             .distinct()
             .filter { game ->
                 game.getState() == dev.betrix.superSmashMobsBrawl.minigames.MinigameState.IN_PROGRESS &&
-                    game.allPlayers().none { p -> p.isOnline && !isBot(p.uniqueId) && game.connectionManager.isDisconnected(p).not() }
+                    // (A bot standing in for a player in a test counts as one.)
+                    game.allPlayers().none { p -> p.isOnline && (!isBot(p.uniqueId) || p.uniqueId in standIns) && game.connectionManager.isDisconnected(p).not() }
             }
             .forEach { game ->
                 plugin.logger.info("[bots] ending ${game.minigameDef.id}: no real players left")
@@ -411,7 +419,7 @@ object BotManager : KoinComponent {
         val now = System.currentTimeMillis()
         bots.values.toList().forEach { bot ->
             val p = bot.nms.bukkitEntity
-            val busy = bot.lobbyPreview || isReserved(p)
+            val busy = bot.lobbyPreview || isReserved(p) || p.uniqueId in lobbyStandIns
             if (busy) {
                 bot.idleSinceMs = null
                 return@forEach

@@ -17,8 +17,25 @@ object BotSlang {
      */
     fun typingTicks(text: String): Int = (6 + text.length * 6 / 5).coerceIn(8, 44)
 
+    /** Trash talk, as players type it (matched against a line in lower case). */
+    const val INSULT = "\\b(ez+|easy|trash|bad|suck|sucks|noob|nub|cope|skill issue|washed|loser|bozo|garbage|dogwater|get good|git gud|mad|cry|lmao|lmfao)\\b|" +
+        "^l+(?:\\s|$)|\\b(shut up|stfu|you lost|u lost|you'?re dead|ur dead|i win|i won|winning)\\b"
+    /** Calling somebody a cheater. */
+    const val CHEATS = "\\b(hack|hacks|hacker|hacking|cheat|cheats|cheater|cheating|aimbot|reach|kill ?aura|client)\\b"
+    /** Being friendly. */
+    const val NICE = "\\b(gg|ggs|good game|gf|good fight|wp|gl|glhf|good luck|ns|nice|sorry|sry|my bad|mb)\\b"
+
+    /** Does [text] (in lower case) call somebody named [name] by name, or by the short form people would use? */
+    fun names(name: String, text: String): Boolean {
+        fun word(w: String) = Regex("(?<![a-z0-9_])${Regex.escape(w)}(?![a-z0-9_])").containsMatchIn(text)
+        val nick = nick(name)
+        return word(name.lowercase()) || (nick.length >= 4 && word(nick))
+    }
+
     private val chunk = Regex("[A-Z]?[a-z]+|[A-Z]+(?![a-z])")
-    private val notNames = setOf("its", "the", "not", "just", "iam", "you", "mrs", "sir", "xxx")
+    // (Nor is anybody called by a part of their name that reads as an insult: "AnIdiotInATree" is "tree", not "idiot".)
+    private val notNames = setOf("its", "the", "not", "just", "iam", "you", "mrs", "sir", "xxx",
+        "idiot", "stupid", "dumb", "noob", "trash", "loser", "ugly", "fat", "hate", "kill", "die", "dead", "bad")
 
     /** What people actually call someone: "JezusLuver44" is "jezus", "Jacob1Jacob2" is "jacob". */
     fun nick(name: String): String {
@@ -65,7 +82,8 @@ class BotVoice private constructor(seed: Long) {
     val shortMoves = r.nextBoolean()
 
     companion object {
-        fun of(id: UUID) = BotVoice(id.mostSignificantBits xor id.leastSignificantBits)
+        /** By name, not by id: the same bot has a different id in every lobby and is still the same person ([BotCharacter]). */
+        fun of(name: String) = BotVoice(BotCharacter.seedOf(name) xor 0x5DEECE66DL)
     }
 }
 
@@ -90,7 +108,7 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
 
     inner class Speaker(private val bot: BotDialogue.Fighter, private val fighters: List<BotDialogue.Fighter>,
                         private val personality: BotPersonality) {
-        private val voice = BotVoice.of(bot.id)
+        private val voice = BotVoice.of(bot.name)
         private val bro = voice.bro
         private val lol = voice.lol
         private val names = HashMap<UUID, String>()
@@ -113,7 +131,8 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
             val roll = random.nextDouble()
             when {
                 // "nice chicken missile chicken" reads wrong; use a name next to that kit's own moves.
-                roll < voice.kitNames && kit !in moveInLine && fighters.count { BotSlang.kit(it.kit) == kit } == 1 -> kit
+                // (In the lobby nobody has a kit yet.)
+                roll < voice.kitNames && kit.isNotEmpty() && kit !in moveInLine && fighters.count { BotSlang.kit(it.kit) == kit } == 1 -> kit
                 roll < voice.kitNames + voice.nicknames && fighters.count { BotSlang.nick(it.name) == nick } == 1 -> nick
                 else -> f.name.lowercase()
             }
@@ -290,15 +309,20 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
         fun won(): String? = say("won", listOf("gg ez", "ez", "ggez", "gg", "too ez", "ez game", "gg get good"), listOf("gg", "gg all", "ggs", "gg wp", "that was fun gg"),
             listOf("finally", "gg finally", "about time i won one", "gg that was stressful", "ok finally a win"))
 
-        fun lost(winner: BotDialogue.Fighter, camped: Boolean): String? {
+        /** [streak]: how many matches in a row with this bot in them [winner] has now won, as far as it remembers. */
+        fun lost(winner: BotDialogue.Fighter, camped: Boolean, streak: Int = 0): String? {
             val w = ref(winner)
+            val again = streak >= 2
             return say("lost",
                 listOf("gg", "gg i guess", "ok $w", "whatever gg", "$w got lucky", "rematch", "run it back", "bs game") +
-                    if (camped) listOf("gg $w nice camping", "camped the whole game and won gg") else emptyList(),
-                listOf("gg $w", "gg wp", "wp $w", "ggs", "gg that was close"),
+                    (if (camped) listOf("gg $w nice camping", "camped the whole game and won gg") else emptyList()) +
+                    (if (again) listOf("$streak in a row ok $w", "$w again whatever", "someone beat $w pls", "$w wins again wow") else emptyList()),
+                listOf("gg $w", "gg wp", "wp $w", "ggs", "gg that was close") +
+                    (if (again) listOf("$w again gg", "$streak in a row $w wp", "$w is on a streak gg") else emptyList()),
                 listOf("gg i guess", "ofc", "i never win", "this game hates me", "gg whatever i had the worst luck", "i was lagging the whole game",
                     "everyone targeted me all game", "i hate this kit", "im done") +
-                    if (camped) listOf("$w camped all game ofc", "cant win when $w hides the whole time") else emptyList())
+                    (if (camped) listOf("$w camped all game ofc", "cant win when $w hides the whole time") else emptyList()) +
+                    (if (again) listOf("$w wins every game", "$streak in a row how", "ofc $w again", "does $w ever lose") else emptyList()))
         }
 
         /** A second bot backing up what another bot just said. */
@@ -773,5 +797,228 @@ class BotLines(private val random: Random, private val memory: LineMemory) {
         fun aboutFun() = say("about.fun", listOf("to win", "same reason as u", "bc winning"), listOf("were both trying to win $lol"))
         fun aboutScore(p: BotDialogue.Fighter) = say("about.score", listOf("this round ${p.lives} to ${bot.lives}", "the score ${p.lives} to ${bot.lives}"),
             listOf("this round i mean ${p.lives} to ${bot.lives}", "the score ${p.lives} to ${bot.lives}"))
+
+        // ------------------------------------------------------------ somebody it has played before ([Acquaintance])
+        //
+        // Every number in these is one the bot remembers: how often they killed each other in the
+        // last match they were both in, and who won it. [fresh] is whether that was a moment ago.
+
+        /** The match is starting and [p] is in it again. */
+        fun startKnown(p: BotDialogue.Fighter, a: Acquaintance, fresh: Boolean): String? {
+            val n = ref(p); val k = a.killedMe; val mine = a.killedThem
+            val last = if (fresh) "last game" else "last time"
+            return when {
+                // (Toxic and salty ones mean it: see [BotDialogue.grudge]. Every line of theirs here says so.)
+                a.farmedMe -> say("known.farmed",
+                    listOf("$n ur first", "im coming for u first $n", "payback time $n", "$n u killed me $k times $last ur first",
+                        "not this time $n", "$n again ok bet / ur first", "run $n", "$k times $last $n / not happening again"),
+                    listOf("gl $n go easy this time $lol", "$n pls not $k times again $lol", "round 2 $n gl", "ok $n im ready this time", "gl again $n"),
+                    listOf("ok $n u killed me $k times $last ur first", "im not letting $n farm me again", "$n im so done with u / ur first",
+                        "not again $n im coming for u", "$k times $last $n / never again", "$n ur not doing that to me twice"))
+                a.farmedThem -> say("known.owned",
+                    listOf("$n back for more $lol", "another free one", "$n again ez", "u want another L $n", "$mine times $last $n / want more",
+                        "$n didnt learn $lol", "free kills are back"),
+                    listOf("gl $n rematch", "round 2 $n", "gl again $n", "gl $n ill go easy $lol", "rematch time gl"),
+                    listOf("ok maybe i win again", "pls let it go like $last", "$n again ok that went fine $last", "gl i guess"))
+                a.theyWon && a.theirStreak >= 2 -> say("known.streak",
+                    listOf("$n isnt winning again", "someone stop $n", "everyone get $n first", "${a.theirStreak} in a row $n / not today",
+                        "$n has won ${a.theirStreak} in a row get them", "ok $n ur streak ends here"),
+                    listOf("$n going for ${a.theirStreak + 1} in a row $lol gl", "gl $n ur on a streak", "can someone beat $n this time $lol", "gl all $n is on fire"),
+                    listOf("$n wins every game", "watch $n win again", "$n has won ${a.theirStreak} in a row its so over", "how does $n keep winning",
+                        "not $n again"))
+                a.theyWon -> say("known.lost",
+                    listOf("rematch $n", "u got lucky $last $n", "$n again ok", "not losing to $n twice", "run it back $n", "$n won one game and came back $lol"),
+                    listOf("gg $last $n gl", "gl again $n", "rematch gl $n", "$n again gl hf", "yo $n gl"),
+                    listOf("not $n again", "$n again great", "pls no repeat of $last", "ugh $n won $last", "$n pls let someone else win"))
+                a.iWon -> say("known.won",
+                    listOf("another one for me", "$n wants a rematch $lol", "back for more $n", "same result as $last gl $lol", "ez $last ez now"),
+                    listOf("gg $last gl all", "gl $n rematch", "gl again", "that was fun $last gl"),
+                    listOf("ok i won $last pls again", "one more win pls", "gl i guess", "finally a lobby i can win in"))
+                else -> say("known.again",
+                    listOf("$n again", "oh its $n", "$n again $lol", "yo $n", "this guy again", "gl $n u need it"),
+                    listOf("yo $n again gl", "hey $n gl", "gl again $n", "$n gl hf", "oh hey $n"),
+                    listOf("$n again", "oh no $n", "gl i guess $n", "pls be nice this time $n", "not this lobby again"))
+            }
+        }
+
+        /** This bot has just killed [p], who it had a score to settle with: they ran their mouth last time, or kept killing it. */
+        fun payback(p: BotDialogue.Fighter, a: Acquaintance, fresh: Boolean): String? {
+            val n = ref(p); val last = if (fresh) "last game" else "last time"
+            return if (a.mouthed) say("payback.mouth",
+                listOf("whos trash now $n", "still ez $n?", "say ez again $n", "u were saying $n", "not so loud now $n", "type something now $n $lol",
+                    "all that talk $last $n"),
+                listOf("got u back $n $lol", "there we go gf $n", "that one was for $last $lol", "ok were even $n"),
+                listOf("thats for $last $n", "not so funny now $n", "see $n", "finally shut $n up", "u had a lot to say $last $n"))
+            else say("payback.farm",
+                listOf("thats for $last $n", "payback $n", "how does it feel $n", "told u $n", "not so ez this time $n", "one back $n"),
+                listOf("got u back $n $lol", "finally got one on u $n", "ok were even $lol", "gf $n that was for $last"),
+                listOf("finally", "finally got $n", "thats for $last", "see i can kill u too $n", "one back for the ${a.killedMe} $last"))
+        }
+
+        // ------------------------------------------------------------ the end of a match
+
+        /** The match is over and somebody has said so already: a word after them. [won] is this bot's own result. */
+        fun after(won: Boolean): String? = if (won) say("after.won",
+                listOf("gg", "ggs", "ez", "gg ez", "too ez", "gg $lol"), listOf("gg", "ggs", "gg wp", "gg all", "gf all", "that was fun"),
+                listOf("gg", "finally", "gg finally", "ok gg"))
+            else say("after.lost",
+                listOf("gg", "ggs", "gg i guess", "whatever", "bs", "lucky", "k"),
+                listOf("gg", "ggs", "gg wp", "wp", "gg all", "gf", "close one gg"),
+                listOf("gg", "gg i guess", "ofc", "im so bad", "ugh", "nvm gg"))
+
+        /** Asking for another one. */
+        fun rematch(): String? = say("rematch",
+            listOf("rematch", "run it back", "again", "one more", "1 more", "rematch that was bs", "again i wasnt trying"),
+            listOf("one more?", "again?", "rematch?", "that was fun one more", "1 more?", "go again"),
+            listOf("one more i wasnt ready", "rematch that didnt count", "again", "1 more and no camping", "one more i need a win", "again pls"))
+
+        /** This one is not staying for the next match. */
+        fun leaving(): String? = say("leaving",
+            listOf("gtg", "im out", "gtg gg", "im off", "bye $lol", "last one for me", "gotta go"),
+            listOf("gtg gg all", "last one for me gg", "gotta go cya", "gtg cya", "im off gn", "gg cya all"),
+            listOf("im done", "im done with this game", "nah im off", "gtg", "im out", "last one im so done", "ok im leaving"))
+
+        /** What it thinks of the map that was just played. */
+        fun mapMoan(map: String): String? = map.lowercase().let { m -> say("mapmoan",
+            listOf("$m is so bad", "who picked $m", "trash map", "never $m again", "$m $lol"),
+            listOf("$m is fun", "i like $m", "good map", "$m again?"),
+            listOf("i hate $m", "this map is so bad", "pls not $m again", "i always lose on $m", "who keeps picking $m")) }
+
+        // ------------------------------------------------------------ the lobby, between matches
+
+        /** [p] has come into the lobby this bot is standing in. [a] is what it remembers of them, if anything. */
+        fun lobbyHello(p: BotDialogue.Fighter, a: Acquaintance?, fresh: Boolean): String? {
+            val n = ref(p)
+            if (a == null) return say("lobby.hello",
+                listOf("yo", "sup", "yo $n", "hi", "sup $n", "new guy $lol", "finally someone"),
+                listOf("hi", "hey $n", "yo", "hi $n", "hey", "welcome $n", "sup", "hey hey"),
+                listOf("hi", "yo", "hey", "hi $n", "pls be a normal lobby", "finally someone"))
+            val last = if (fresh) "last game" else "last time"
+            return when {
+                a.farmedMe -> say("lobby.hello.farmed",
+                    listOf("$n again", "oh its $n", "rematch $n", "$n im getting u back", "ur not farming me again $n"),
+                    listOf("oh hey $n", "yo $n go easy on me $lol", "hey $n rematch?", "wb $n", "$n $lol hi"),
+                    listOf("not $n again", "oh no its $n", "ugh $n", "$n pls dont target me this time", "$n killed me ${a.killedMe} times $last"))
+                a.theyWon -> say("lobby.hello.lost",
+                    listOf("$n again", "rematch $n", "u got lucky $last $n", "oh look who it is", "yo $n ur not winning again"),
+                    listOf("yo $n gg $last", "hey $n", "wb $n", "oh hey $n", "hi $n rematch?"),
+                    listOf("oh its $n", "$n again", "hi $n", "ugh $n won $last", "not $n again"))
+                a.farmedThem || a.iWon -> say("lobby.hello.won",
+                    listOf("$n back for more $lol", "yo $n want another L", "oh $n again $lol", "$n $lol", "back already $n"),
+                    listOf("hey $n gg $last", "yo $n", "wb $n", "hi $n again", "hey $n rematch?"),
+                    listOf("hi $n", "oh $n", "yo $n", "$n again ok", "hi again"))
+                else -> say("lobby.hello.again",
+                    listOf("yo $n", "$n again", "sup $n", "oh its $n", "back again $n"),
+                    listOf("hey $n", "wb $n", "yo $n", "hi again $n", "oh hey $n"),
+                    listOf("hi $n", "$n again", "oh hi", "yo"))
+            }
+        }
+
+        /** A second bot saying hello after the first. */
+        fun lobbyHi(): String? = say("lobby.hi", listOf("yo", "sup", "hi", "hey"), listOf("hi", "hey", "yo", "hello", "heyy"), listOf("hi", "yo", "hey"))
+
+        /**
+         * Back in the lobby after a match this bot was in. [winner] is who won it (null: this bot
+         * did), [kills] and [deaths] its own, and [nemesis] whoever killed it most, [times] times.
+         */
+        fun lobbyAfter(winner: BotDialogue.Fighter?, kills: Int, deaths: Int, nemesis: BotDialogue.Fighter?, times: Int): String? {
+            val w = winner?.let(::ref)
+            val x = nemesis?.takeIf { times >= 2 && it.id != winner?.id }?.let(::ref)
+            val toxic = (if (w == null) listOf("ez game", "that was free", "too ez", "carried that lobby", "yall made that ez") +
+                    (if (kills >= 2) listOf("$kills kills $lol") else emptyList())
+                else listOf("$w got lucky", "$w only won bc everyone fought me", "rematch $w", "$w wont win again", "that game was bs")) +
+                if (x != null) listOf("$x only went for me", "$x killed me $times times / ur first next game", "why u targeting me $x") else emptyList()
+            val chill = (if (w == null) listOf("that was fun", "that was a good one", "ggs all", "close game")
+                else listOf("gg $w", "$w was cracked", "wp $w that was clean", "$w deserved that one", "good game $w")) +
+                if (x != null) listOf("$x got me $times times $lol", "$x u had my number") else emptyList()
+            val salty = (if (w == null) listOf("finally won one", "ok that felt good", "about time", "finally a good game")
+                else listOf("i was so close", "$w always wins", "i had no chance", "that game was so bad") +
+                    (if (deaths >= 2) listOf("i died $deaths times how") else emptyList())) +
+                if (x != null) listOf("$x killed me $times times", "$x wouldnt leave me alone", "$x targeted me all game", "why always me $x") else emptyList()
+            return say("lobby.after", toxic, chill, salty)
+        }
+
+        /** Standing about in the lobby waiting for [host] to start the next one. */
+        fun lobbyWait(host: BotDialogue.Fighter): String? {
+            val h = ref(host)
+            return say("lobby.wait",
+                listOf("start", "start already", "$h start", "can we go", "start the game $h", "who are we waiting on", "im winning this one",
+                    "hurry up $h", "go", "this lobby is slow"),
+                listOf("ready when u are", "ready", "im ready", "gl next one everyone", "whenever ur ready $h", "lets go", "r"),
+                listOf("can we start", "start pls", "$h pls start", "i need a win", "pls nobody target me this time", "im gonna lose again arent i",
+                    "ready i guess", "can we go already"))
+        }
+
+        /** About the map: [last] is the one that was just played, if one was. */
+        fun lobbyMap(last: String?): String? = last?.lowercase().let { m ->
+            if (m == null) say("lobby.map", listOf("what map", "pick a good map", "no trash maps pls"), listOf("what map we playing", "any map is fine", "what map"),
+                listOf("what map", "pls a small map", "pls not a huge map", "not a void map pls"))
+            else say("lobby.map.last", listOf("not $m again", "different map this time", "$m again and im leaving $lol", "any map but $m"),
+                listOf("$m again?", "different map?", "$m was fun", "new map this time?"),
+                listOf("pls not $m again", "anything but $m", "if its $m again im done", "i hate $m pick something else"))
+        }
+
+        /** A word from a second bot after something another one said in the lobby. [sour]: that was a complaint or a boast. */
+        fun lobbyEcho(sour: Boolean): String? = if (sour) say("lobby.echo.sour",
+                listOf("cope", "$lol", "nobody asked", "skill issue", "cry", "sure $lol", "excuses"),
+                listOf("lol", "it was close tho", "next one", "gg tho", "u played fine", "happens"),
+                listOf("same", "fr", "same here", "ikr", "this game $lol"))
+            else say("lobby.echo", listOf("fr", "same", "real", "go", "ya start", "$lol"), listOf("same", "ya", "lol", "fr", "ready too"), listOf("same", "fr", "ya pls", "ikr"))
+
+        /** [p] asked whether everybody is ready, or for another match. */
+        fun lobbyReady(p: BotDialogue.Fighter): String? = ref(p).let { n -> say("lobby.ready",
+            listOf("ready", "been ready", "start it", "go", "bet", "r", "ya start", "im ready hurry up", "lets go $n"),
+            listOf("ready", "yep", "im ready", "lets go", "ya go ahead", "ready $n", "r"),
+            listOf("ready i guess", "ok", "ya", "fine one more", "ok but no camping", "ready", "k go")) }
+
+        /** [p] is talking trash in the lobby. [a] is what this bot remembers of them. */
+        fun lobbyComeback(p: BotDialogue.Fighter, a: Acquaintance?, fresh: Boolean): String? {
+            val n = ref(p); val last = if (fresh) "last game" else "last time"
+            val facts: Triple<List<String>, List<String>, List<String>> = when {
+                a == null -> Triple(emptyList(), emptyList(), emptyList())
+                a.killedThem > a.killedMe && a.killedThem >= 2 -> Triple(
+                    listOf("i killed u ${a.killedThem} times $last", "u died to me ${a.killedThem} times relax", "${a.killedThem} to ${a.killedMe} $last $n"),
+                    listOf("i did get u ${a.killedThem} times $last tho $lol"),
+                    listOf("i killed u ${a.killedThem} times $last so", "u died to me ${a.killedThem} times and im the bad one"))
+                a.theyWon -> Triple(
+                    listOf("one win relax", "do it again then", "u won one game $n", "lucky game and now ur typing"),
+                    listOf("ya u won $last gg", "u were good $last ngl", "fair u did win $lol"),
+                    listOf("u got lucky $last", "ok u won one game", "ya u won $last i know"))
+                a.iWon -> Triple(
+                    listOf("i won $last $lol", "who won $last again", "says the one who lost $last"),
+                    listOf("i did win $last tho $lol"),
+                    listOf("i literally won $last", "i won $last and im still getting this"))
+                else -> Triple(emptyList(), emptyList(), emptyList())
+            }
+            return say("lobby.comeback",
+                listOf("ok $n", "talk in game $n", "say that after the game", "shut up $n $lol", "we will see", "keep typing $n", "1v1 me $n", "prove it") + facts.first,
+                listOf("lol ok $n", "we will see $lol", "relax $n its a game", "ok ok $lol", "gl then $n") + facts.second,
+                listOf("leave me alone $n", "ok $n", "why are u like this", "we havent even started", "wow ok", "whatever $n") + facts.third)
+        }
+
+        /** [asker] asked who won the last match. [winner] is null when this bot did. */
+        fun lobbyWhoWon(winner: BotDialogue.Fighter?, asker: BotDialogue.Fighter): String? {
+            if (winner == null) return say("lobby.whowon.me", listOf("me", "me $lol", "i did", "me obviously"), listOf("me $lol", "i did somehow", "me"),
+                listOf("me finally", "i did", "me for once"))
+            if (winner.id == asker.id) return say("lobby.whowon.you", listOf("u did relax", "u", "u won one game calm down"), listOf("u did gg", "u $lol gg", "u wp"),
+                listOf("u did", "u ofc", "u again"))
+            val w = ref(winner)
+            return say("lobby.whowon", listOf("$w", "$w got lucky", "$w somehow"), listOf("$w did", "$w gg", "$w won"), listOf("$w", "$w ofc", "not me"))
+        }
+
+        /** Somebody asked what this bot is going to play. */
+        fun lobbyKit(): String? = say("lobby.kit", listOf("not telling", "u will see", "something that beats u", "idk yet", "random"),
+            listOf("idk yet", "random prob", "not sure yet", "whatever i get"), listOf("idk", "whatever doesnt lose", "random i guess", "idk yet"))
+
+        /** [p] says they are going. */
+        fun lobbyBye(p: BotDialogue.Fighter): String? = ref(p).let { n -> say("lobby.bye", listOf("bye", "cya", "bye $lol", "later", "finally $lol"),
+            listOf("cya $n", "bye $n", "gn", "cya gg", "later $n"), listOf("bye", "cya", "ok bye", "everyone leaves")) }
+
+        /** This bot has just walked into a lobby where the others have come back from a match. */
+        fun lobbyJoined(): String? = say("lobby.joined", listOf("yo", "sup", "who wants to lose", "room for one more", "yo whats this lobby"),
+            listOf("hi", "hey all", "yo", "hi all", "hey can i join", "room for one more?"), listOf("hi", "yo", "hey", "hi is this lobby any good"))
+
+        /** Somebody said something to this bot by name that it can make nothing of. */
+        fun lobbyWhat(): String? = say("lobby.what", listOf("?", "what", "wdym", "huh"), listOf("?", "wdym", "what $lol", "hm?"), listOf("what", "?", "huh"))
     }
 }

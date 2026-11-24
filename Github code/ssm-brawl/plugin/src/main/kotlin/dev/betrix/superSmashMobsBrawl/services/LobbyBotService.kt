@@ -23,6 +23,8 @@ object LobbyBotService : KoinComponent {
     private val hosts = mutableMapOf<Int, UUID>()
     private val transferringUntil = mutableMapOf<Int, Long>()
     private val labels = mutableMapOf<UUID, TextDisplay>()
+    /** Per lobby: the bots of the match just played that are staying for another, and until when that counts. */
+    private val stayers = mutableMapOf<Int, Pair<List<String>, Long>>()
     private var task: BukkitTask? = null
     private var ticks = 0L
     private var reconciling = false
@@ -40,6 +42,19 @@ object LobbyBotService : KoinComponent {
         BotManager.isLobbyBot(it) && LobbyService.lobbyOf(it) == lobbyId
     }.sortedBy { BotManager.displayNameOf(it).lowercase() }
 
+    /** Whose setup lobby [id] is showing at the moment. */
+    fun hostOf(id: Int): UUID? = hosts[id]
+
+    /**
+     * The match played out of lobby [id] is over, and these of its bots are not leaving: when
+     * everybody is back they are the ones standing there, before anybody new is brought in. (A
+     * lobby that is all strangers after every match is no lobby.)
+     */
+    fun staying(id: Int, names: List<String>) { stayers[id] = names to ticks + STAYS_TICKS }
+
+    /** Somebody a lobby is kept for: a real player, or a bot standing in for one in a test. */
+    private fun person(p: Player) = !BotManager.isBot(p) || p.uniqueId in BotManager.lobbyStandIns
+
     fun configure(player: Player) {
         if (BotManager.isBot(player) || !HubService.isPlayerInHub(player) || games.isPlayerInMinigame(player)) return
         hosts[LobbyService.lobbyOf(player)] = player.uniqueId
@@ -52,7 +67,7 @@ object LobbyBotService : KoinComponent {
         try {
             for (id in LobbyRouting.ids) {
                 val hub = LobbyService.hub(id) ?: continue
-                val waiting = hub.world.players.filter { !BotManager.isBot(it) && !games.isPlayerInMinigame(it) }
+                val waiting = hub.world.players.filter { person(it) && !games.isPlayerInMinigame(it) }
                 if (waiting.isEmpty() || LobbyService.busy(id)) {
                     botsIn(id).forEach(BotManager::despawn)
                     if (waiting.isEmpty()) hosts.remove(id)
@@ -75,8 +90,10 @@ object LobbyBotService : KoinComponent {
         val custom = CustomBotService.profiles()
         val profiles = (built + custom).associateBy { it.name.lowercase() }
         val current = botsIn(id)
+        // Whoever is standing here already stays; after a match, so do the bots that said they would.
+        val back = stayers[id]?.takeIf { it.second > ticks }?.first.orEmpty()
         val desired = LobbyRoster.choose(settings.bots, settings.wantedBotNames,
-            current.map(BotManager::displayNameOf), built.shuffled().map { it.name }, custom.map { it.name })
+            current.map(BotManager::displayNameOf) + back, built.shuffled().map { it.name }, custom.map { it.name })
         val chosen = desired.mapNotNull { profiles[it.lowercase()] }.map { profile ->
             val difficulty = if (CustomBotService.isCustom(profile.name)) profile.difficulty else settings.difficulty ?: profile.difficulty
             profile.copy(difficulty = difficulty)
@@ -86,11 +103,11 @@ object LobbyBotService : KoinComponent {
         val positions = ArrayDeque(removed.map { it.location })
         removed.forEach(BotManager::despawn)
         // Reclaim only this lobby's ended-match leftovers; never another lobby's previews or fighters.
-        BotManager.onlineBots().filter { !BotManager.isLobbyBot(it) && LobbyService.lobbyOf(it) == id &&
+        BotManager.onlineBots().filter { !BotManager.isLobbyBot(it) && LobbyService.lobbyOf(it) == id && it.uniqueId !in BotManager.lobbyStandIns &&
             it.world == LobbyService.hub(id)?.world && !BotManager.isReserved(it) }.forEach(BotManager::despawn)
         for (profile in chosen) {
             if (botsIn(id).any { BotManager.displayNameOf(it).equals(profile.name, true) }) continue
-            BotManager.spawn(profile.copy(level = BotIdentity.rollLevel(profile.difficulty)), null, id)?.let {
+            BotManager.spawn(profile.copy(level = BotIdentity.levelOf(profile.name, profile.difficulty)), null, id)?.let {
                 // A changed name/skin replaces the old lobby neighbour where they were standing.
                 positions.removeFirstOrNull()?.let(it::teleport)
                 it.inventory.clear(); it.inventory.heldItemSlot = 0
@@ -156,7 +173,11 @@ object LobbyBotService : KoinComponent {
         }
     }
 
+    /** How long after a match its bots still count as "staying": long enough for everybody to get back. */
+    private const val STAYS_TICKS = 20L * 120
+
     fun teardown() {
+        stayers.clear()
         task?.cancel(); task = null
         labels.values.forEach { it.remove() }; labels.clear()
         Bukkit.getOnlinePlayers().forEach { viewer ->

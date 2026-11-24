@@ -160,30 +160,131 @@ class BotDialogueTest : StringSpec({
     fun BotDialogue.listen(from: Long, until: Long, facts: List<BotDialogue.Fighter>): List<BotDialogue.Reply> =
         (from..until step 250).mapNotNull { poll(it, facts) { a, b -> a != b } }
 
-    "a random deal never leaves more than half the bots silent, and a lone bot always talks" {
-        for (seed in 0..300) for (count in 1..15) {
-            val bots = (1..count).map { UUID(9, it.toLong()) }
-            val dealt = BotPersonality.deal(bots, emptyMap(), Random(seed))
-            dealt.keys shouldBe bots.toSet()
-            dealt.values.forEach { (it == BotPersonality.RANDOM) shouldBe false }
-            (dealt.values.count { it == BotPersonality.SILENT } <= count / 2) shouldBe true
-        }
-        // Bots joining a match that is already half silent can only be talkers.
-        val known = mapOf(UUID(9, 1) to BotPersonality.SILENT, UUID(9, 2) to BotPersonality.TOXIC)
-        for (seed in 0..50) BotPersonality.deal(listOf(UUID(9, 3)), known, Random(seed)).values.single() shouldNotBe BotPersonality.SILENT
+    "nobody is Silent by nature: a quiet bot says little, and in a small lobby even it says something" {
+        val names = (1..400).map { "Player$it" }
+        val dealt = BotCharacter.deal(names.mapIndexed { i, name -> UUID(9, i.toLong()) to name })
+        dealt.size shouldBe names.size
+        dealt.values.toSet() shouldBe setOf(BotPersonality.TOXIC, BotPersonality.SALTY, BotPersonality.CHILL)
+        // About one in five hardly says a word among others...
+        val quiet = names.filter { BotCharacter.of(it).chatty < 0.2 }
+        (quiet.size in 40..130) shouldBe true
+        quiet.forEach { BotCharacter.chattyAmong(it, 5) shouldBe BotCharacter.of(it).chatty }
+        // ...and alone with a player, or with one other bot, it is not a silent match for that.
+        quiet.forEach { (BotCharacter.chattyAmong(it, 1) >= 0.7) shouldBe true; (BotCharacter.chattyAmong(it, 2) >= 0.4) shouldBe true }
+        names.forEach { (BotCharacter.chattyAmong(it, 1) <= 1.0) shouldBe true }
     }
-    "a random lobby mixes personalities and they stay put for the match" {
-        val seen = mutableSetOf<BotPersonality>()
-        for (seed in 0..60) {
+    "in a Random match every bot is who it always is, whatever the match and whatever its id there" {
+        val everybody = mutableSetOf<BotPersonality>()
+        for (seed in 0..20) {
             val d = engine(BotPersonality.RANDOM, seed)
             d.poll(1000, listOf(human, bot, other, third)) { a, b -> a != b }
             val first = d.personalities()
             first.keys shouldBe setOf(bot.id, other.id, third.id)
             d.poll(2000, listOf(human, bot, other, third)) { a, b -> a != b }
             d.personalities() shouldBe first
-            seen += first.values
+            // The same three names under other ids, in another match: the same three people.
+            val again = engine(BotPersonality.RANDOM, seed + 100)
+            val moved = listOf(bot, other, third).map { it.copy(id = UUID(7, it.id.leastSignificantBits)) }
+            again.poll(1000, listOf(human) + moved) { a, b -> a != b }
+            moved.map { again.personalities()[it.id] } shouldBe listOf(bot, other, third).map { first[it.id] }
         }
-        seen shouldBe setOf(BotPersonality.TOXIC, BotPersonality.SALTY, BotPersonality.CHILL, BotPersonality.SILENT)
+        for (i in 1..200) everybody += BotCharacter.of("Player$i").nature
+        everybody shouldBe setOf(BotPersonality.TOXIC, BotPersonality.SALTY, BotPersonality.CHILL)
+    }
+    "a bot's level, how much it talks and its turn of phrase go with its name" {
+        for (name in listOf("Dino", "cqsey", "VirtualTheProto", "HotCold")) {
+            BotCharacter.of(name).nature shouldBe BotCharacter.of(name.uppercase()).nature
+            BotCharacter.of(name).chatty shouldBe BotCharacter.of(name.lowercase()).chatty
+            for (difficulty in BotDifficulty.entries) {
+                val level = BotIdentity.levelOf(name, difficulty)
+                (level in BotIdentity.levels(difficulty)) shouldBe true
+                BotIdentity.levelOf(name, difficulty) shouldBe level
+            }
+            BotVoice.of(name).bro shouldBe BotVoice.of(name).bro
+        }
+        // The talkative are picked to speak more often than the quiet, and nobody is never picked.
+        val quiet = (1..400).map { "Player$it" }.first { BotCharacter.of(it).chatty < 0.5 }
+        val loud = (1..400).map { "Player$it" }.first { BotCharacter.of(it).chatty >= 1.0 }
+        val random = Random(4)
+        val picks = (1..2000).map { BotCharacter.pick(listOf(quiet, loud), random) { it }!! }
+        (picks.count { it == loud } > picks.count { it == quiet } * 2) shouldBe true
+        (picks.count { it == quiet } > 0) shouldBe true
+    }
+
+    // ---------------------------------------------------------------- somebody it has played before
+
+    fun known(killedMe: Int = 0, killedThem: Int = 0, theyWon: Boolean = false, iWon: Boolean = false, streak: Int = 0,
+              mouthed: Boolean = false) = Acquaintance(1, 1_000_000, killedMe, killedThem, theyWon, iWon, streak, mouthed, false, "Skylands")
+    fun BotDialogue.remembering(a: Acquaintance?, by: String = "Dino") = also {
+        it.recall = { name, player -> if (name.equals(by, true) && player == human.id) a else null }
+        it.clock = { 1_000_000 + 60_000 }
+    }
+
+    "a bot that was farmed last game says so when the next one starts, by name and with the number, and goes for them first" {
+        for (seed in 0..30) for (mood in listOf(BotPersonality.TOXIC, BotPersonality.SALTY)) {
+            val d = engine(mood, seed).remembering(known(killedMe = 4))
+            d.start(1000)
+            val line = d.poll(4000, listOf(human, bot, other)) { a, b -> a != b }!!
+            line.speaker shouldBe bot.id
+            line.text shouldSay "jacob|chicken|ur first|payback|4 times|not this time|not again|never again|not happening|twice"
+            d.listen(4250, 9000, listOf(human, bot, other))
+            d.grudge(bot.id, 9000) shouldBe human.id
+            // And it lets go of it again: it does not chase them for the whole match on the strength of one line.
+            d.grudge(bot.id, 4000 + BotDialogue.OWED_MS + 5000) shouldBe null
+        }
+    }
+    "a chill bot remembers too, and does not make a feud of it" {
+        for (seed in 0..30) {
+            val d = engine(BotPersonality.CHILL, seed).remembering(known(killedMe = 4))
+            d.start(1000)
+            d.poll(4000, listOf(human, bot)) { a, b -> a != b }!!.text.shouldNotContain("ur first")
+            d.grudge(bot.id, 5000) shouldBe null
+        }
+    }
+    "what a bot says of last game is what happened in it" {
+        val said = mutableSetOf<String>()
+        for (seed in 0..60) {
+            val d = engine(BotPersonality.TOXIC, seed).remembering(known(theyWon = true, streak = 3))
+            d.start(1000)
+            said += d.poll(4000, listOf(human, bot)) { a, b -> a != b }!!.text
+        }
+        said.any { it.contains("3 in a row") } shouldBe true
+        said.forEach { it.shouldNotContain("killed me") }
+        // Nobody it remembers: the ordinary start of a match.
+        val d = engine().remembering(null)
+        d.start(1000)
+        d.poll(4000, listOf(human, bot)) { a, b -> a != b }!!.text.shouldNotContain("again")
+    }
+    "killing somebody who ran their mouth last game is answered once, and only by the bot that remembers" {
+        for (seed in 0..20) {
+            val d = engine(BotPersonality.TOXIC, seed).remembering(known(mouthed = true))
+            d.death(human.id, bot.id, "Static Laser", 1000)
+            d.poll(4000, listOf(human, bot, other)) { a, b -> a != b }!!.text shouldSay "trash|ez|saying|loud|type something|talk"
+            d.death(human.id, bot.id, "Static Laser", 40_000)
+            d.poll(43_000, listOf(human, bot, other)) { a, b -> a != b }?.text?.let { it.shouldNotContain("whos trash"); it.shouldNotContain("u were saying") }
+            val stranger = engine(BotPersonality.TOXIC, seed).remembering(known(mouthed = true), by = "Fox")
+            stranger.death(human.id, bot.id, "Static Laser", 1000)
+            stranger.poll(4000, listOf(human, bot, other)) { a, b -> a != b }!!.text.let { it.shouldNotContain("whos trash"); it.shouldNotContain("u were saying") }
+        }
+    }
+    "when a match is over a few of the bots say so one after another, the quiet ones included only in a test" {
+        for (seed in 0..30) {
+            val d = engine(BotPersonality.CHILL, seed)
+            val facts = listOf(human, bot, other, third, BotDialogue.Fighter(UUID(0, 5), "Pebble", "Pig", 0, true))
+            val wave = d.finishAll(setOf(human.id), facts, 60_000, "Skylands", setOf(third.id))
+            (wave.size in 2..BotDialogue.MAX_PARTING) shouldBe true
+            wave.first().afterMs shouldBe 0
+            wave.drop(1).forEach { (it.afterMs in 500..1900) shouldBe true }
+            wave.map { it.reply.speaker }.distinct().size shouldBe wave.size
+            wave.forEach { it.reply.text shouldBe BotSlang.style(it.reply.text); (it.reply.speaker == human.id) shouldBe false }
+        }
+        // Silent: not a word, as before.
+        engine(BotPersonality.SILENT).finishAll(setOf(human.id), listOf(human, bot, other), 60_000) shouldBe emptyList()
+        // Somebody who is leaving may say so; nobody who is staying does.
+        val goodbyes = (0..80).flatMap { seed -> engine(BotPersonality.CHILL, seed).finishAll(setOf(human.id), listOf(human, bot, other, third), 60_000, "", setOf(third.id)) }
+            .filter { Regex("gtg|last one|gotta go|im off|cya").containsMatchIn(it.reply.text) }
+        (goodbyes.isNotEmpty()) shouldBe true
+        goodbyes.forEach { it.reply.speaker shouldBe third.id }
     }
     "a bot dealt Silent never says a word, whatever happens to it" {
         for (seed in 0..40) {
@@ -357,6 +458,8 @@ class BotDialogueTest : StringSpec({
     "names shorten the way players shorten them" {
         BotSlang.nick("JezusLuver44") shouldBe "jezus"
         BotSlang.nick("Jacob1Jacob2") shouldBe "jacob"
+        // (Not by a part of the name that reads as an insult.)
+        BotSlang.nick("AnIdiotInATree") shouldBe "tree"
         BotSlang.nick("TongJeung") shouldBe "tong"
         BotSlang.nick("leo_thya") shouldBe "leo"
         BotSlang.nick("Q____Q") shouldBe "q____q"

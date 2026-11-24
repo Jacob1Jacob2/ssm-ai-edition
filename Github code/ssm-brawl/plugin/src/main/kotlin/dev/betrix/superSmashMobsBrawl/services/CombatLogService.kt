@@ -146,6 +146,8 @@ object CombatLogService : KoinComponent {
                 if (AutoL.on(killer.uniqueId)) {
                     val taunt = ClassicChatService.message(killer, Component.text(AutoL.line(BotManager.displayNameOf(victim))))
                     game.allPlayers().mapNotNull { it.player }.forEach { it.sendMessage(taunt) }
+                    // (A bot it was said to remembers it: see BotMemory.)
+                    BotConversationService.taunted(killer, victim)
                 }
             }
         }

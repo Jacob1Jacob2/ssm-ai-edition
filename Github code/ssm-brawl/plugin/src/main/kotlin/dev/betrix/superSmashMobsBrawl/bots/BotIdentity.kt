@@ -13,6 +13,13 @@ object BotIdentity {
         BotDifficulty.EXPERT -> 85..100
     }
     fun rollLevel(difficulty: BotDifficulty) = levels(difficulty).random()
+    /**
+     * The level the bot called [name] has when it plays at [difficulty]: the same every time it
+     * turns up, as a player's is ([BotCharacter]). It used to be rolled afresh at every match.
+     */
+    fun levelOf(name: String, difficulty: BotDifficulty): Int = levels(difficulty).let { range ->
+        range.first + (BotCharacter.of(name).standing * (range.last - range.first + 1)).toInt().coerceIn(0, range.last - range.first)
+    }
     fun levelColor(level: Int): NamedTextColor = when {
         level >= 80 -> NamedTextColor.RED
         level >= 70 -> NamedTextColor.GOLD

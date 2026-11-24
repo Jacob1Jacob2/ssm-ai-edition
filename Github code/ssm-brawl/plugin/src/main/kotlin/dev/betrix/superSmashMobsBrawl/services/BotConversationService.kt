@@ -39,7 +39,17 @@ object BotConversationService : KoinComponent, Listener {
     private val lang: LangService by inject()
     private val plain = PlainTextComponentSerializer.plainText()
     private class Session(teamUps: Boolean) {
-        val dialogue = BotDialogue()
+        val dialogue = BotDialogue().also { it.recall = BotMemory.shared::recall }
+        /**
+         * For what the bots remember of this match afterwards ([BotMemory]) and for the talk in
+         * the lobby: who killed whom how often (killer to victim), how often each fighter died,
+         * which bots each player talked trash at (by name in lower case, "*" for at everybody),
+         * and which players were friendly.
+         */
+        val kills = HashMap<Pair<UUID, UUID>, Int>()
+        val deaths = HashMap<UUID, Int>()
+        val mouthed = HashMap<UUID, MutableSet<String>>()
+        val nice = HashSet<UUID>()
         /** Who the bots have teamed up on, in a Team-Ups match (never anybody in the other modes). */
         val teamUps = TeamUps().also { it.enabled = teamUps }
         private var errorLogged = false
@@ -73,7 +83,7 @@ object BotConversationService : KoinComponent, Listener {
         Bukkit.getPluginManager().registerEvents(this, plugin)
         task = Bukkit.getScheduler().runTaskTimer(plugin, Runnable { tick() }, 10L, 5L)
     }
-    fun shutdown() { running = false; task?.cancel(); task = null; sessions.keys.toList().forEach(::close) }
+    fun shutdown() { running = false; task?.cancel(); task = null; sessions.keys.toList().forEach(::close); lobbies.clear() }
     fun close(game: BrawlMinigame) { sessions.remove(game)?.let { it.bus.clear(); it.dialogue.clear() } }
     private fun session(game: BrawlMinigame): Session = sessions.getOrPut(game) {
         Session(game.settings.teamUps).also { it.dialogue.mode = game.settings.botPersonality }
@@ -95,7 +105,16 @@ object BotConversationService : KoinComponent, Listener {
         publish(victim) { DamageDealt(attacker.uniqueId, victim.uniqueId, amount, max, source, it) }
     }
     fun death(game: BrawlMinigame, victim: Player, killer: UUID?, ability: String) {
-        if (running && game.getState() == MinigameState.IN_PROGRESS) session(game).bus.publish(FighterDied(victim.uniqueId, killer, ability, now()))
+        if (!running || game.getState() != MinigameState.IN_PROGRESS) return
+        val s = session(game)
+        s.deaths.merge(victim.uniqueId, 1, Int::plus)
+        if (killer != null && killer != victim.uniqueId) s.kills.merge(killer to victim.uniqueId, 1, Int::plus)
+        s.bus.publish(FighterDied(victim.uniqueId, killer, ability, now()))
+    }
+    /** [killer] said "L" to [victim] after a kill ([AutoL]): a bot it was said to remembers it. */
+    fun taunted(killer: Player, victim: Player) {
+        val game = game(killer) ?: return
+        if (BotManager.isBot(victim)) session(game).mouthed.getOrPut(killer.uniqueId) { HashSet() } += BotManager.displayNameOf(victim).lowercase()
     }
     fun crystal(player: Player, tier: String) = publish(player) { CrystalActivated(player.uniqueId, tier, it) }
 
@@ -116,12 +135,19 @@ object BotConversationService : KoinComponent, Listener {
     /** A line [player] typed reaches the bots of their match. On the main thread. */
     private fun heard(player: Player, body: String, audience: Set<UUID>) {
         val id = player.uniqueId
-        val game = game(player) ?: return
+        val game = game(player) ?: return heardInLobby(player, body)
         if (game.allPlayers().none { it.uniqueId in audience && BotManager.isBot(it.uniqueId) }) return
         val s = session(game)
         s.dialogue.mode = game.settings.botPersonality
         // Two teams: what a player says to the bots on their own side is first of all something they want done.
         if (teamOrder(game, s, player, body, audience)) return
+        // For what the bots remember of this player afterwards: trash talk (at one of them by name, or at everybody), or a kind word.
+        body.take(256).lowercase().let { low ->
+            if (Regex(BotSlang.INSULT).containsMatchIn(low) || Regex(BotSlang.CHEATS).containsMatchIn(low)) {
+                val at = game.allPlayers().mapNotNull { it.player }.filter { BotManager.isBot(it) }.map { BotManager.displayNameOf(it) }.filter { BotSlang.names(it, low) }
+                s.mouthed.getOrPut(id) { HashSet() } += if (at.isEmpty()) listOf("*") else at.map { it.lowercase() }
+            } else if (Regex(BotSlang.NICE).containsMatchIn(low)) s.nice += id
+        }
         // What a player types counts with the lobby too: trash talk heats it up, an apology cools it.
         s.teamUps.said(id, body.take(256).lowercase(), now())
         if (s.dialogue.chat(id, body, now())) s.chatAudience = audience
@@ -129,7 +155,7 @@ object BotConversationService : KoinComponent, Listener {
 
     /** Debug: [player] (a bot standing in for a player) says [body] to its match, as if typed. */
     fun say(player: Player, body: String) {
-        val game = game(player) ?: return
+        val game = game(player) ?: return heardInLobby(player, body)
         heard(player, body, game.allPlayers().map { it.uniqueId }.toSet())
     }
 
@@ -209,10 +235,126 @@ object BotConversationService : KoinComponent, Listener {
         // Administrative aborts don't get a victory taunt.
         if (event.winners.isNotEmpty()) {
             val s = session(game); s.dialogue.mode = game.settings.botPersonality
+            val facts = fighters(game)
+            val winners = event.winners.map { it.uniqueId }.toSet()
+            val map = game.worldManager.getWorld()?.data?.let { it.displayName ?: it.id } ?: ""
+            val people = facts.filter { !it.bot }
+            // Who of the bots stays in the lobby for another match, and who is off ([BotCharacter.stays]).
+            // Opponents the host picked by name are there because the host wants them: they stay.
+            val wanted = game.host?.let(Bukkit::getPlayer)?.let { GameSetupService.setupOf(it).wantedBotNames }.orEmpty().map { it.lowercase() }.toSet()
+            val staying = facts.filter { it.bot && (it.name.lowercase() in wanted || kotlin.random.Random.nextDouble() < BotCharacter.of(it.name).stays) }
+            val leaving = if (people.isEmpty()) emptySet() else facts.filter { it.bot && it !in staying }.map { it.id }.toSet()
             // The match is over and the bots are standing still anyway: no typing pause.
-            s.dialogue.finish(event.winners.map { it.uniqueId }.toSet(), fighters(game), now())?.let { send(game, it, null, typed = false) }
+            sendParting(game, s.dialogue.finishAll(winners, facts, now(), map, leaving))
+            if (people.isNotEmpty()) remember(game, s, facts, winners, map, staying.map { it.name })
         }
         close(game)
+    }
+
+    /**
+     * What is said when a match is over: the first line at once, the others a second or so apart.
+     * The messages are made now, while the match still stands (in a moment it is torn down, and
+     * the side colours and the bots with it), and go to whoever was in it.
+     */
+    private fun sendParting(game: BrawlMinigame, lines: List<BotDialogue.Parting>) {
+        if (lines.isEmpty() || game.settings.botPersonality == BotPersonality.SILENT) return
+        val audience = game.allPlayers().mapNotNull { it.player }
+            .filter { it.isOnline && !BotManager.isBot(it) && games.getMinigameForPlayer(it) === game }
+        var at = 0L
+        for (line in lines) {
+            val speaker = Bukkit.getPlayer(line.reply.speaker)?.takeIf { BotManager.isBot(it) } ?: continue
+            val message = ClassicChatService.message(speaker, Component.text(line.reply.text))
+            val name = BotManager.displayNameOf(speaker)
+            at += line.afterMs
+            val deliver = Runnable {
+                if (BotManager.debug) plugin.logger.info("[chatdbg] $name: ${line.reply.text}")
+                audience.filter { it.isOnline }.forEach { it.sendMessage(message) }
+            }
+            if (at <= 0L) deliver.run() else Bukkit.getScheduler().runTaskLater(plugin, deliver, (at / 50).coerceAtLeast(1))
+        }
+    }
+
+    /**
+     * A match with players in it is over: every bot that was in it remembers how it went between
+     * itself and each of them ([BotMemory]), the lobby it was played out of knows what there is to
+     * talk about ([LobbyTalk]), and the bots that are staying for another one will be standing
+     * there when everybody gets back ([LobbyBotService.staying]).
+     */
+    private fun remember(game: BrawlMinigame, s: Session, facts: List<BotDialogue.Fighter>, winners: Set<UUID>, map: String, staying: List<String>) {
+        for (b in facts.filter { it.bot }) for (p in facts.filter { !it.bot }) {
+            val said = s.mouthed[p.id].orEmpty()
+            BotMemory.shared.record(b.name, p.id, s.kills[p.id to b.id] ?: 0, s.kills[b.id to p.id] ?: 0, p.id in winners, b.id in winners,
+                "*" in said || b.name.lowercase() in said, p.id in s.nice, map)
+        }
+        BotMemory.shared.save()
+        val names = facts.associate { it.id to it.name.lowercase() }
+        val scores = facts.map { f -> LobbyTalk.Score(f.name, f.bot, s.kills.filterKeys { it.first == f.id }.values.sum(), s.deaths[f.id] ?: 0, f.id in winners) }
+        val kills = HashMap<Pair<String, String>, Int>()
+        s.kills.forEach { (pair, count) -> val a = names[pair.first]; val b = names[pair.second]; if (a != null && b != null) kills[a to b] = count }
+        lobby(game.lobbyId).talk.matchOver(LobbyTalk.LastMatch(now(), map, scores, kills))
+        LobbyBotService.staying(game.lobbyId, staying)
+        if (BotManager.debug) plugin.logger.info("[chatdbg] match over on $map: staying for another ${staying.joinToString().ifEmpty { "nobody" }}; " +
+            scores.joinToString { "${it.name} ${it.kills}-${it.deaths}${if (it.won) " won" else ""}" })
+    }
+
+    // ------------------------------------------------------------------ the lobby, between matches
+
+    private class Lobby {
+        val talk = LobbyTalk(recall = BotMemory.shared::recall)
+        /** Server tick at which the line being typed now will have been sent. */
+        var chatFreeAt = 0
+    }
+    private val lobbies = HashMap<Int, Lobby>()
+    private fun lobby(id: Int) = lobbies.getOrPut(id) {
+        Lobby().also { it.talk.trace = { why -> if (BotManager.debug) plugin.logger.info("[chatdbg] (lobby $id) $why") } }
+    }
+    /** Somebody to talk to: a real player, or a bot standing in for one in a test. */
+    private fun person(p: Player) = !BotManager.isBot(p) || p.uniqueId in BotManager.lobbyStandIns
+    private fun waitingIn(id: Int): List<Player> = LobbyService.hub(id)?.world?.players.orEmpty()
+        .filter { person(it) && !games.isPlayerInMinigame(it) && LobbyService.lobbyOf(it) == id }
+
+    /** What [player] typed while standing in a lobby reaches the bots standing there with them. */
+    private fun heardInLobby(player: Player, body: String) {
+        val id = LobbyService.lobbyOf(player)
+        val why = when {
+            games.isPlayerInMinigame(player) -> "they are in a match that is not being played at the moment"
+            player.world != LobbyService.hub(id)?.world -> "they are not standing in lobby $id"
+            LobbyBotService.botsIn(id).isEmpty() -> "there are no bots in lobby $id"
+            else -> null
+        }
+        if (BotManager.debug) plugin.logger.info("[chatdbg] (lobby $id) ${BotManager.displayNameOf(player)} typed: " + (why?.let { "nobody hears it, $it" } ?: "heard"))
+        if (why == null) lobby(id).talk.chat(player.uniqueId, body, now())
+    }
+
+    private fun tickLobbies() {
+        for (id in LobbyRouting.ids) {
+            val waiting = waitingIn(id)
+            // (A lobby nobody has stood in has nothing to keep track of.)
+            val l = lobbies[id] ?: if (waiting.isEmpty()) continue else lobby(id)
+            // The host first: it is the host the others are waiting on.
+            val host = LobbyBotService.hostOf(id)?.let { h -> waiting.find { it.uniqueId == h } } ?: waiting.firstOrNull()
+            if (host != null) l.talk.mode = GameSetupService.setupOf(host).botPersonality
+            val members = (listOfNotNull(host) + waiting.filter { it != host }).map { BotDialogue.Fighter(it.uniqueId, BotManager.displayNameOf(it), "", 0, false, false) } +
+                LobbyBotService.botsIn(id).map { BotDialogue.Fighter(it.uniqueId, BotManager.displayNameOf(it), "", 0, true, false) }
+            l.talk.poll(now(), members)?.let { sendLobby(id, l, it) }
+        }
+    }
+
+    /** As in a match, a line takes as long to appear as it takes to type, and they come one after another. */
+    private fun sendLobby(id: Int, l: Lobby, reply: BotDialogue.Reply) {
+        val speaker = Bukkit.getPlayer(reply.speaker)?.takeIf { BotManager.isBot(it) && it.isOnline }
+            ?: return l.talk.trace?.invoke("\"${reply.text}\" is not said: its speaker is not there any more") ?: Unit
+        val tick = Bukkit.getCurrentTick()
+        val startIn = (l.chatFreeAt - tick).coerceIn(0, 100)
+        val typing = BotSlang.typingTicks(reply.text)
+        l.chatFreeAt = maxOf(l.chatFreeAt, tick + startIn + typing + READING_TICKS)
+        BotManager.brainOf(speaker)?.typeFor(startIn, typing)
+        Bukkit.getScheduler().runTaskLater(plugin, Runnable {
+            if (!running || !speaker.isOnline) { l.talk.trace?.invoke("\"${reply.text}\" is not said: its speaker left while typing it"); return@Runnable }
+            if (BotManager.debug) plugin.logger.info("[chatdbg] (lobby $id) ${BotManager.displayNameOf(speaker)}: ${reply.text}")
+            val message = ClassicChatService.message(speaker, Component.text(reply.text))
+            waitingIn(id).filter { !BotManager.isBot(it) }.forEach { it.sendMessage(message) }
+        }, (startIn + typing).toLong())
     }
 
     private fun fighters(game: BrawlMinigame): List<BotDialogue.Fighter> = game.allPlayers().mapNotNull { it.player }
@@ -224,6 +366,7 @@ object BotConversationService : KoinComponent, Listener {
         }
     private fun tick() {
         if (!running) return
+        tickLobbies()
         sessions.keys.toList().forEach { game ->
             if (game.getState() != MinigameState.IN_PROGRESS || game !in games.activeMinigames()) { close(game); return@forEach }
             val s = sessions[game] ?: return@forEach
@@ -352,7 +495,7 @@ object BotConversationService : KoinComponent, Listener {
         if (game != null) { game.settings.botPersonality = mode; session(game).dialogue.mode = mode; session(game).chatAudience = null }
         player.playSound(player.location, Sound.UI_BUTTON_CLICK, .5f, 1f)
         player.sendMessage(Component.text(
-            if (mode == BotPersonality.RANDOM) "Bots: a random personality each" else "All bots: ${mode.label}", NamedTextColor.YELLOW))
+            if (mode == BotPersonality.RANDOM) "Bots: each their own personality" else "All bots: ${mode.label}", NamedTextColor.YELLOW))
         return true
     }
     fun openMenu(player: Player, opponentsPage: Int = 0) {
@@ -374,9 +517,9 @@ object BotConversationService : KoinComponent, Listener {
                     BotPersonality.SALTY -> listOf("Complains when things go wrong", "Gets mad at whoever rubs it in")
                     BotPersonality.CHILL -> listOf("Friendly reactions and conversation", "Reacts to fights and your chat")
                     BotPersonality.SILENT -> listOf("Bots do not send chat messages")
-                    BotPersonality.RANDOM -> listOf("Each bot gets its own personality", "They argue, take sides and go after each other", "No more than half are Silent")
+                    BotPersonality.RANDOM -> listOf("Each bot has its own personality", "They argue, take sides and go after each other")
                 }
-                val scope = if (mode == BotPersonality.RANDOM) "Dealt fresh every match" else "Applies to every bot in your match"
+                val scope = if (mode == BotPersonality.RANDOM) "Same bot, same personality" else "Applies to every bot in your match"
                 set(9 + i * 2, ItemStack.of(material).apply { editMeta {
                     it.displayName(Component.text(mode.label, color, TextDecoration.BOLD).decoration(TextDecoration.ITALIC, false))
                     it.lore((description + scope + if(mode == selected) listOf("Selected") else listOf("Click to select")).map { line -> Component.text(line, NamedTextColor.GRAY).decoration(TextDecoration.ITALIC, false) })
